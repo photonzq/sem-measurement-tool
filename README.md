@@ -26,7 +26,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
 ## Working with it
 
-1. **Open an image**: *Open image…*, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, which the panel shows under *Metadata*. The image opens with automatic contrast; *Display* shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
+1. **Open an image**: *Open image…*, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, which the panel shows under *Metadata*. The image opens with automatic contrast; *Display*, at the bottom of the panel, shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
 2. **Check the calibration** under *Scale, tilt and rotation*. Choose the tilt correction:
    - *cross-section* for a FIB face;
    - *tilted surface* for features in a tilted surface;
@@ -88,7 +88,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - Or type the width in the profile window.
   - New profiles take the last width set. A width of one pixel or less is the line alone.
 - **Sampling.** Values are read about one stored pixel apart, both along the line and across the band. They are interpolated bilinearly from the stored grey values, not from the display. Points outside the image, or in its info bar, have no value. MATH.md, Part 6, derives the sampling.
-- **The profile window** (P) plots the selected profile:
+- **The profile window** plots the selected profile. It opens by itself when a profile is made, and on a double click on a profile under *Measurements*; P shows or hides it. It shows:
   - the mean across the band against the distance from the first end;
   - the spread across the band (± one standard deviation), shaded;
   - every contour that crosses the line, as a dashed line in the contour's colour with its name.
@@ -99,7 +99,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
 
 ## Display
 
-*Display* sets how the grey values are shown, with the controls of ImageJ's *Brightness/Contrast* window, on a histogram of the image without its info bar.
+*Display*, the last section of the panel, sets how the grey values are shown, with the controls of ImageJ's *Brightness/Contrast* window, on a histogram of the image without its info bar.
 
 - **Histogram.** It counts the rows above the info bar (see *Microscope files*), in at most 256 bins.
   - **Span.** As in ImageJ, it spans 0–255 for an 8-bit image: grey, palette or colour, and PNG, JPEG or BMP files. For 16- and 32-bit images it spans the values that occur above the info bar.
@@ -244,7 +244,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | H, V | level the selected ruler horizontal or vertical |
 | S, G | snapping on or off; edge map on or off |
 | T | show or hide the vertex window |
-| P | show or hide the profile window |
+| P | show or hide the profile window; it also opens for a new profile, and on a double click on a profile under *Measurements* |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten) |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour) or the selected measurement |
 | Delete | delete the selected vertices, else the selected measurement |

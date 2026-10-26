@@ -149,27 +149,6 @@
     </section>
 
     <section>
-      <h2>Display</h2>
-      <canvas id="histogram" title="Histogram of the image without its info bar.  Drag the black or the white level."></canvas>
-      <div class="grid">
-        <label for="black-level" title="The grey value shown black">black level</label>
-        <input type="number" id="black-level" step="any">
-        <label for="white-level" title="The grey value shown white">white level</label>
-        <input type="number" id="white-level" step="any">
-        <label for="brightness" title="Moves the window between the two levels over the values, keeping its width">brightness</label>
-        <input type="range" id="brightness" min="0" max="1000" step="1" value="500">
-        <label for="contrast" title="Narrows or widens the window between the two levels about its centre">contrast</label>
-        <input type="range" id="contrast" min="1" max="1000" step="1" value="500">
-      </div>
-      <div class="row">
-        <button type="button" id="levels-auto" title="Black and white levels at the 0.5 and 99.5 % percentiles, as when the image opens">Auto</button>
-        <button type="button" id="levels-full" title="Black and white levels at the ends of the histogram: 0 and 255 for an 8-bit image, else the darkest and brightest values">Full range</button>
-        <label class="inline"><input type="checkbox" id="histogram-log"> log counts</label>
-      </div>
-      <div id="histogram-note" class="note"></div>
-    </section>
-
-    <section>
       <h2>Tools</h2>
       <div class="row tools">
         <button type="button" id="tool-pan" aria-pressed="true" title="No tool: drag to pan, wheel or pinch to zoom (also: click the active tool again)">Pan <kbd>0</kbd></button>
@@ -206,7 +185,7 @@
 
     <section>
       <h2>Measurements</h2>
-      <select id="measurement-list" size="5" title="Rulers, angles and profiles; the selected one is drawn in yellow"></select>
+      <select id="measurement-list" size="5" title="Rulers, angles and profiles; the selected one is drawn in yellow.  Double-click a profile to show its plot."></select>
       <div class="row">
         <button type="button" id="rename-measurement">Rename</button>
         <button type="button" id="delete-measurement" title="Delete the selected measurement (Delete)">Delete</button>
@@ -270,6 +249,27 @@
     </section>
 
     <section>
+      <h2>Display</h2>
+      <canvas id="histogram" title="Histogram of the image without its info bar.  Drag the black or the white level."></canvas>
+      <div class="grid">
+        <label for="black-level" title="The grey value shown black">black level</label>
+        <input type="number" id="black-level" step="any">
+        <label for="white-level" title="The grey value shown white">white level</label>
+        <input type="number" id="white-level" step="any">
+        <label for="brightness" title="Moves the window between the two levels over the values, keeping its width">brightness</label>
+        <input type="range" id="brightness" min="0" max="1000" step="1" value="500">
+        <label for="contrast" title="Narrows or widens the window between the two levels about its centre">contrast</label>
+        <input type="range" id="contrast" min="1" max="1000" step="1" value="500">
+      </div>
+      <div class="row">
+        <button type="button" id="levels-auto" title="Black and white levels at the 0.5 and 99.5 % percentiles, as when the image opens">Auto</button>
+        <button type="button" id="levels-full" title="Black and white levels at the ends of the histogram: 0 and 255 for an 8-bit image, else the darkest and brightest values">Full range</button>
+        <label class="inline"><input type="checkbox" id="histogram-log"> log counts</label>
+      </div>
+      <div id="histogram-note" class="note"></div>
+    </section>
+
+    <section>
       <details id="metadata-details">
         <summary>Metadata</summary>
         <pre id="metadata-summary">(no image)</pre>
@@ -296,7 +296,7 @@
           <tr><td><kbd>H</kbd> <kbd>V</kbd></td><td>turn the image so that the selected ruler is horizontal / vertical</td></tr>
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window</td></tr>
-          <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile)</td></tr>
+          <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click on a profile under Measurements</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour) or the selected measurement</td></tr>

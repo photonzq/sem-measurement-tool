@@ -1372,6 +1372,9 @@ function placePoint(x, y, exact) {
     app.selected = app.measurements.length - 1;
     app.pending = null;
     refreshMeasurements();
+    if (kind === "profile") {
+      openProfileWindow();           // a new profile shows its plot at once
+    }
   }
   render();
 }
@@ -2289,6 +2292,12 @@ function toggleProfileWindow() {
     app.profileCursor = null;
     render();
   }
+  refreshProfileWindow();
+}
+
+/** Show the profile window (of the selected profile), if it is not shown already. */
+function openProfileWindow() {
+  el("profile-window").hidden = false;
   refreshProfileWindow();
 }
 
@@ -3439,6 +3448,17 @@ selectEl("measurement-list").addEventListener("change", () => {
   app.selected = selectEl("measurement-list").selectedIndex;
   refreshMeasurements();
   render();
+});
+selectEl("measurement-list").addEventListener("dblclick", () => {
+  const index = selectEl("measurement-list").selectedIndex;
+  if (index !== app.selected) {
+    app.selected = index;
+    refreshMeasurements();
+    render();
+  }
+  if (shownProfile() !== null) {
+    openProfileWindow();             // a double click on a profile brings up its plot
+  }
 });
 for (const id of ["contour-layer", "contour-datatype"]) {
   el(id).addEventListener("change", () => layerInputsChanged());
