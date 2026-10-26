@@ -9,7 +9,7 @@ This document derives what the app computes from an image:
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
 - **Part 6:** line profiles: the band, the samples, and the contours that cross the line.
 
-Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P5) in `js/profile.js`.
+Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P5) in `js/profile.js`.
 
 ## Part 1. Geometry
 
@@ -202,6 +202,24 @@ using $F^{-1} = F$. The zoom drops out. Three cases:
 - **Untilted, unturned, square pixels:** $V = \mathrm{diag}(1, -1)$. Up, $(0, -1)$, gives $\Delta u = (0, -1)$: one row up.
 - **Rows that count $k$ times** (a cross-section, $\alpha = \varphi = 0$): $V = \mathrm{diag}(1, -k)$. Up gives $(0, -1/k)$, so the vertex moves by one pixel width of true distance, 0.788 rows at 52°.
 - **An image turned by 90°:** $V = R(90°)\,\mathrm{diag}(1, -1)$. Up gives $\Delta u = (1, 0)$: the stored $+x$ direction, which the turn has pointed up the screen.
+
+**Zooming about a point (G16).** The wheel, a touchpad pinch and a two-finger pinch change the zoom from $s$ to $s'$, while an image point stays under the cursor or the fingers. The derivation takes three steps:
+
+1. A canvas point $c$ lies on the screen at $s\,FVc + \tau$, so the point under the screen point $q$ is $c = (s\,FV)^{-1}(q - \tau)$.
+2. After the zoom, $c$ lies at $s'\,FVc + \tau'$, and $s'\,FVc = \tfrac{s'}{s}\,s\,FVc = \tfrac{s'}{s}\,(q - \tau)$.
+3. Setting this position equal to the wanted screen point $q'$ gives
+
+$$\tau' = q' - \frac{s'}{s}\,(q - \tau). \qquad \text{(G16)}$$
+
+The two inputs use it as follows:
+
+- **The wheel** keeps the point under the cursor: $q' = q$. A notch of 100 pixels multiplies $s$ by $1.25^{\mp1}$, smaller steps a fraction of that (line and page steps are first converted to pixels).
+- **A pinch** measures everything from its start, so that the image follows the fingers without drift. With $d_0$ and $d$ the distance between the two fingers at the start and now:
+  - $s' = s\,d/d_0$, clipped to 0.01–200;
+  - $q$ and $q'$ are the fingers' midpoints at the start and now;
+  - $s$ and $\tau$ are the zoom and pan at the start.
+
+  The image point that was under the midpoint then stays under it, however the fingers move in between. Moving both fingers together pans; spreading them zooms about their midpoint.
 
 ### 1.10 Measures (G12)
 

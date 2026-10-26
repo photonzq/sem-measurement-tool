@@ -20,6 +20,7 @@
   #app { display: grid; grid-template-columns: 1fr 360px; grid-template-rows: 1fr auto; height: 100vh; }
   #view-wrap { position: relative; background: var(--view); overflow: hidden; min-width: 0; }
   #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  #view.navigate { cursor: grab; }
   #view.panning { cursor: grabbing; }
   #view-wrap.dragover { outline: 3px dashed var(--accent); outline-offset: -6px; }
   #drop-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #bbb;
@@ -171,7 +172,8 @@
     <section>
       <h2>Tools</h2>
       <div class="row tools">
-        <button type="button" id="tool-contour" aria-pressed="true" title="Trace contours">Contour <kbd>1</kbd></button>
+        <button type="button" id="tool-pan" aria-pressed="true" title="No tool: drag to pan, wheel or pinch to zoom (also: click the active tool again)">Pan <kbd>0</kbd></button>
+        <button type="button" id="tool-contour" aria-pressed="false" title="Trace contours">Contour <kbd>1</kbd></button>
         <button type="button" id="tool-ruler" aria-pressed="false" title="Measure a distance: two clicks">Ruler <kbd>2</kbd></button>
         <button type="button" id="tool-angle" aria-pressed="false" title="Angle at a vertex: three clicks">Angle <kbd>3</kbd></button>
         <button type="button" id="tool-line-angle" aria-pressed="false" title="Angle between two lines: four clicks">2 lines <kbd>4</kbd></button>
@@ -277,6 +279,7 @@
         <summary>Mouse and keys</summary>
         <table class="keys">
           <tbody>
+          <tr><td><kbd>0</kbd></td><td>no tool: drag to pan, wheel to zoom (or click the active tool's button again)</td></tr>
           <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile</td></tr>
           <tr><td>click</td><td>contour: add a vertex to the active contour; other tools: place the next point (snapped when Snap is on)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
@@ -284,8 +287,11 @@
           <tr><td><kbd>Alt</kbd>+click</td><td>place the point exactly where clicked, without snapping</td></tr>
           <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not)</td></tr>
           <tr><td>right click</td><td>contour: delete the vertex under the cursor; other tools: delete the measurement under the cursor, or cancel the one being placed</td></tr>
-          <tr><td>wheel</td><td>zoom about the cursor</td></tr>
-          <tr><td>middle drag, <kbd>Space</kbd>+drag</td><td>pan</td></tr>
+          <tr><td>wheel, touchpad pinch</td><td>zoom about the cursor</td></tr>
+          <tr><td>middle drag, <kbd>Space</kbd>+drag; drag with no tool</td><td>pan</td></tr>
+          <tr><td>touch: two fingers</td><td>pinch to zoom, move together to pan</td></tr>
+          <tr><td>touch: one finger</td><td>no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans</td></tr>
+          <tr><td>pen</td><td>as the mouse</td></tr>
           <tr><td><kbd>N</kbd> <kbd>C</kbd></td><td>new contour; close or open the active one</td></tr>
           <tr><td><kbd>H</kbd> <kbd>V</kbd></td><td>turn the image so that the selected ruler is horizontal / vertical</td></tr>
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>

@@ -39,11 +39,13 @@ const ARC_PX = 22;                   // radius of the angle arcs
 const HISTORY = 500;
 const LABEL_FONT = "12px system-ui, -apple-system, 'Segoe UI', Arial, sans-serif";
 
-/** @typedef {"contour"|MeasureKind} Tool */
+/** "pan" is no tool: the mouse, one finger or two only move and zoom the view. @typedef {"pan"|"contour"|MeasureKind} Tool */
 /** @type {Tool[]} */
-const TOOLS = ["contour", "ruler", "angle", "line-angle", "profile"];
+const TOOLS = ["pan", "contour", "ruler", "angle", "line-angle", "profile"];
 /** @type {Record<Tool, string>} */
 const TOOL_HINTS = {
+  pan: "No tool: drag to pan, wheel to zoom; on a touch screen one finger pans and two pinch.  Choose a tool (1-5) " +
+    "to trace or measure; click it again, or press 0, to come back here.",
   contour: "Click: add a vertex to the active contour.  Ctrl+click inserts (hold Ctrl to see where), drag moves, " +
     "right click deletes; click a vertex to select it in the vertex window (T).",
   ruler: "Click both ends of a distance.  Drag an end to move it; right click deletes the ruler.",
@@ -55,6 +57,7 @@ const TOOL_HINTS = {
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = { ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
 const PLOT_COLOR = "#385c9e";        // the profile's mean in its window
+const TAP_PX = 10;                   // a touch that moves less than this is a tap
 
 /** @returns {Frame} */
 function defaultFrame() {
@@ -94,7 +97,14 @@ const app = {
   /** @type {{kind: MeasureKind, points: Point[]}|null} a measurement being placed */
   pending: null,
   /** @type {Tool} */
-  tool: "contour",
+  tool: "pan",
+  /**
+   * A touch gesture on the view: a finger that may still be a tap, one that pans or drags a point,
+   * or two that pinch (G16).
+   * @type {{kind: "tap", id: number, start: Point}|{kind: "pan", id: number, last: Point}|{kind: "drag", id: number}
+   *   |{kind: "pinch", ids: [number, number], d0: number, c0: Point, s0: number, t0: Point}|null}
+   */
+  gesture: null,
   /** @type {Frame} */
   frame: defaultFrame(),
   view: { s: 1, tx: 0, ty: 0 },
@@ -512,7 +522,7 @@ function fit() {
 }
 
 /**
- * Zoom by ``factor`` about the screen point (sx, sy).
+ * Zoom by ``factor`` about the screen point (sx, sy), which keeps the canvas point under it (G16).
  * @param {number} factor
  * @param {number} sx
  * @param {number} sy
@@ -1307,15 +1317,17 @@ function setClosed(closed) {
   }
 }
 
-/** @param {Tool} tool */
+/** @param {Tool} tool   "pan" for no tool */
 function setTool(tool) {
   app.tool = tool;
   app.pending = null;
+  app.preview = null;
   for (const t of TOOLS) {
     const b = buttonEl(`tool-${t}`);
     b.classList.toggle("active", t === tool);
     b.setAttribute("aria-pressed", String(t === tool));
   }
+  canvas.classList.toggle("navigate", tool === "pan");
   el("tool-hint").textContent = TOOL_HINTS[tool];
   render();
 }
@@ -1342,7 +1354,7 @@ function newMeasureName(kind) {
  * @param {boolean} exact
  */
 function placePoint(x, y, exact) {
-  if (app.tool === "contour") {
+  if (app.tool === "contour" || app.tool === "pan") {
     return;
   }
   const kind = app.tool;
@@ -2776,7 +2788,8 @@ function showCursor(x, y) {
 }
 
 /**
- * Right click: cancel the measurement being placed, else delete what is under the cursor.
+ * Right click: cancel the measurement being placed, else delete what is under the cursor; with
+ * no tool, nothing.
  * @param {number} sx
  * @param {number} sy
  */
@@ -2784,6 +2797,9 @@ function rightClick(sx, sy) {
   if (app.pending !== null) {
     app.pending = null;
     render();
+    return;
+  }
+  if (app.tool === "pan") {
     return;
   }
   if (app.tool === "contour") {
@@ -2805,66 +2821,157 @@ function rightClick(sx, sy) {
 }
 
 /**
- * Left click with a measurement tool: the next point of the one being placed, else drag a point
- * of an existing one, else start a new one.
+ * Start dragging what lies under a screen point with the current tool: a vertex (contour tool),
+ * or a profile's width handle or a measurement's point (measurement tools, unless one is being
+ * placed).  Returns whether a drag began.
  * @param {number} sx
  * @param {number} sy
- * @param {PointerEvent} e
+ * @returns {boolean}
  */
-function measurePointerDown(sx, sy, e) {
-  const [x, y] = screenToStored(sx, sy);
-  if (app.pending === null && hitWidthHandle(sx, sy)) {
-    pushHistory();
-    app.drag = { kind: "width", index: app.selected, point: 0, moved: false };
-    return;
-  }
-  if (app.pending === null) {
-    const hit = hitMeasurePoint(sx, sy);
-    if (hit !== null) {
-      pushHistory();
-      app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false };
-      app.selected = hit.index;
-      refreshMeasurements();
-      render();
-      return;
+function startDragAt(sx, sy) {
+  if (app.tool === "contour") {
+    const hit = hitVertex(sx, sy);
+    if (hit === null) {
+      return false;
     }
-  }
-  if (insideImage(x, y)) {
-    placePoint(x, y, e.altKey);
-  }
-}
-
-/**
- * Left click with the contour tool: drag a vertex, else add one.
- * @param {number} sx
- * @param {number} sy
- * @param {PointerEvent} e
- */
-function contourPointerDown(sx, sy, e) {
-  const hit = hitVertex(sx, sy);
-  if (hit !== null) {
     pushHistory();
     app.drag = { kind: "vertex", index: hit.index, point: hit.point, moved: false };
     setActive(hit.index);
     refreshContours();
     render();
+    return true;
+  }
+  if (app.tool === "pan" || app.pending !== null) {
+    return false;
+  }
+  if (hitWidthHandle(sx, sy)) {
+    pushHistory();
+    app.drag = { kind: "width", index: app.selected, point: 0, moved: false };
+    return true;
+  }
+  const hit = hitMeasurePoint(sx, sy);
+  if (hit === null) {
+    return false;
+  }
+  pushHistory();
+  app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false };
+  app.selected = hit.index;
+  refreshMeasurements();
+  render();
+  return true;
+}
+
+/**
+ * A click with the current tool where there is nothing to drag: a vertex of the active contour
+ * (inserted into the nearest segment with ``insert``), or the next point of a measurement;
+ * snapped unless ``exact``.
+ * @param {number} sx
+ * @param {number} sy
+ * @param {boolean} exact
+ * @param {boolean} insert
+ */
+function clickAt(sx, sy, exact, insert) {
+  const [x, y] = screenToStored(sx, sy);
+  if (!insideImage(x, y)) {
     return;
   }
-  const [x, y] = screenToStored(sx, sy);
-  if (insideImage(x, y)) {
-    addVertex(x, y, { exact: e.altKey, insert: e.ctrlKey || e.metaKey });
+  if (app.tool === "contour") {
+    addVertex(x, y, { exact, insert });
+  } else {
+    placePoint(x, y, exact);
   }
 }
 
 /**
- * Whether a click, or the release of what is dragged, would snap now: not for a profile's ends
- * or its band width.
+ * "Set origin": the next click or tap puts the origin there.
+ * @param {number} sx
+ * @param {number} sy
+ */
+function setOriginAt(sx, sy) {
+  pushHistory();
+  app.frame.originPx = screenToStored(sx, sy);
+  app.originMode = false;
+  refreshFrameNotes();
+  refreshContours();
+  render();
+}
+
+/**
+ * Move what is dragged to stored (x, y): a point, or the band width of a profile.
+ * @param {number} x
+ * @param {number} y
+ */
+function dragTo(x, y) {
+  const points = draggedPoints();
+  if (points !== null && app.drag !== null) {
+    points[app.drag.point] = [x, y];
+    app.drag.moved = true;
+  } else if (app.drag !== null && app.drag.kind === "width") {
+    const ms = app.measurements[app.drag.index];
+    ms.width = widthFromPoint(ms.points, app.frame, [x, y]);
+    app.profileWidth = ms.width;
+    app.drag.moved = true;
+  }
+  if (app.drag !== null) {
+    refreshProfileWindow();          // the profile and its crossings follow the drag
+  }
+}
+
+/**
+ * Release what is dragged at stored (x, y).  A point snaps unless ``exact`` (a profile's ends never
+ * do); a vertex let go without moving is selected in the vertex window (added or removed with
+ * ``toggle``).
+ * @param {number} x
+ * @param {number} y
+ * @param {boolean} exact
+ * @param {boolean} toggle
+ */
+function endDrag(x, y, exact, toggle) {
+  const drag = app.drag;
+  const points = draggedPoints();
+  app.drag = null;
+  if (drag === null) {
+    return;
+  }
+  if (!drag.moved) {
+    app.history.pop();             // a click on a point without moving it changed nothing
+    if (drag.kind === "vertex") {
+      pickVertex(drag.point, toggle ? "toggle" : "only");
+    }
+    return;
+  }
+  if (drag.kind === "width" || points === null) {
+    refreshMeasurements();
+    return;
+  }
+  const loose = exact || (drag.kind === "point" && app.measurements[drag.index].kind === "profile");
+  points[drag.point] = (loose ? null : snapTarget(x, y)) ?? [x, y];
+  refreshContours();
+  refreshMeasurements();
+  render();
+}
+
+/** Give up the drag in progress: what it moved goes back where it was. */
+function cancelDrag() {
+  if (app.drag === null) {
+    return;
+  }
+  app.drag = null;
+  const before = app.history.pop();
+  if (before !== undefined) {
+    restore(before);
+  }
+}
+
+/**
+ * Whether a click, or the release of what is dragged, would snap now: not with no tool, nor for
+ * a profile's ends or its band width.
  * @returns {boolean}
  */
 function snapsNow() {
   const d = app.drag;
   if (d === null) {
-    return app.tool !== "profile";
+    return app.tool !== "profile" && app.tool !== "pan";
   }
   return d.kind === "vertex" || (d.kind === "point" && app.measurements[d.index].kind !== "profile");
 }
@@ -2881,8 +2988,158 @@ function draggedPoints() {
   return d.kind === "vertex" ? app.contours[d.index].points : app.measurements[d.index].points;
 }
 
+// ------------------------------------------------------------------------- touch
+//
+// Touch pointers, from a touch screen, are kept apart from the mouse and the pen, which share the
+// handlers further down.  One finger: with no tool it pans; with a tool, a tap acts as a click, a
+// drag that starts on a point moves it, and any other drag pans.  Two fingers pinch: they zoom and
+// pan together (G16), and a second finger landing ends what the first had begun, a moved point
+// going back where it was.  More fingers are ignored.
+
+/** The touch pointers on the view, by id: where they are (canvas CSS pixels). @type {Map<number, Point>} */
+const touches = new Map();
+
+/** (G16) at the start of a pinch: the zoom, the pan, the fingers' midpoint and distance. */
+function startPinch() {
+  const [[a, pa], [b, pb]] = [...touches];
+  app.gesture = {
+    kind: "pinch", ids: [a, b], d0: Math.max(Math.hypot(pb[0] - pa[0], pb[1] - pa[1]), 1),
+    c0: [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2], s0: app.view.s, t0: [app.view.tx, app.view.ty],
+  };
+}
+
+/**
+ * (G16) for two fingers: the zoom follows their distance, and the canvas point that was under
+ * their midpoint at the start stays under the midpoint now.
+ */
+function pinchMoved() {
+  const g = app.gesture;
+  if (g === null || g.kind !== "pinch") {
+    return;
+  }
+  const pa = touches.get(g.ids[0]);
+  const pb = touches.get(g.ids[1]);
+  if (pa === undefined || pb === undefined) {
+    return;
+  }
+  const d = Math.max(Math.hypot(pb[0] - pa[0], pb[1] - pa[1]), 1);
+  const s = Math.min(200, Math.max(0.01, (g.s0 * d) / g.d0));
+  const f = s / g.s0;
+  app.view.s = s;
+  app.view.tx = (pa[0] + pb[0]) / 2 - f * (g.c0[0] - g.t0[0]);
+  app.view.ty = (pa[1] + pb[1]) / 2 - f * (g.c0[1] - g.t0[1]);
+  render();
+}
+
+/** @param {PointerEvent} e */
+function touchDown(e) {
+  const p = eventPoint(e);
+  touches.set(e.pointerId, p);
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch {
+    // a scripted pointer cannot be captured
+  }
+  if (touches.size === 1) {
+    const edits = app.tool !== "pan" || app.originMode;
+    if (edits && !app.originMode && startDragAt(p[0], p[1])) {
+      app.gesture = { kind: "drag", id: e.pointerId };
+    } else {
+      app.gesture = edits ? { kind: "tap", id: e.pointerId, start: p } : { kind: "pan", id: e.pointerId, last: p };
+    }
+  } else if (touches.size === 2) {
+    cancelDrag();                    // a second finger: what the first began gives way to a pinch
+    app.preview = null;
+    startPinch();
+  }
+}
+
+/** @param {PointerEvent} e */
+function touchMove(e) {
+  if (!touches.has(e.pointerId)) {
+    return;
+  }
+  const p = eventPoint(e);
+  touches.set(e.pointerId, p);
+  let g = app.gesture;
+  if (g !== null && g.kind === "pinch") {
+    pinchMoved();
+    return;
+  }
+  if (g === null || g.id !== e.pointerId) {
+    return;
+  }
+  if (g.kind === "tap" && Math.hypot(p[0] - g.start[0], p[1] - g.start[1]) > TAP_PX) {
+    g = { kind: "pan", id: g.id, last: g.start };    // moved too far for a tap: it pans
+    app.gesture = g;
+  }
+  if (g.kind === "pan") {
+    app.view.tx += p[0] - g.last[0];
+    app.view.ty += p[1] - g.last[1];
+    g.last = p;
+    render();
+  } else if (g.kind === "drag") {
+    const [x, y] = screenToStored(p[0], p[1]);
+    dragTo(x, y);
+    app.preview = insideImage(x, y) && snapsNow() ? snapTarget(x, y) : null;
+    showCursor(x, y);
+    render();
+  }
+}
+
+/**
+ * A finger lifted (``cancelled``: taken away by the system).  A tap acts, a drag ends (or, when
+ * cancelled, is undone); when a pinch loses a finger, a finger left keeps panning.
+ * @param {PointerEvent} e
+ * @param {boolean} cancelled
+ */
+function touchUp(e, cancelled) {
+  if (!touches.delete(e.pointerId)) {
+    return;
+  }
+  const g = app.gesture;
+  if (g !== null && g.kind === "pinch") {
+    if (g.ids.includes(e.pointerId)) {
+      if (touches.size >= 2) {
+        startPinch();
+      } else {
+        const rest = [...touches][0];
+        app.gesture = rest === undefined ? null : { kind: "pan", id: rest[0], last: rest[1] };
+      }
+    }
+    return;
+  }
+  if (g === null || g.id !== e.pointerId) {
+    return;
+  }
+  app.gesture = null;
+  app.preview = null;
+  if (g.kind === "drag") {
+    if (cancelled) {
+      cancelDrag();
+    } else {
+      const [sx, sy] = eventPoint(e);
+      const [x, y] = screenToStored(sx, sy);
+      endDrag(x, y, false, false);
+    }
+  } else if (g.kind === "tap" && !cancelled) {
+    if (app.originMode) {
+      setOriginAt(g.start[0], g.start[1]);
+    } else {
+      clickAt(g.start[0], g.start[1], false, false);
+    }
+  }
+  render();
+}
+
+// ------------------------------------------------------------------------- mouse and pen
+
 canvas.addEventListener("pointerdown", (e) => {
   if (app.image === null) {
+    return;
+  }
+  if (e.pointerType === "touch") {
+    touchDown(e);
     return;
   }
   const [sx, sy] = eventPoint(e);
@@ -2891,7 +3148,11 @@ canvas.addEventListener("pointerdown", (e) => {
   } catch {
     // a pointer the browser does not track (e.g. a scripted event) cannot be captured
   }
-  if (e.button === 1 || (e.button === 0 && app.space)) {
+  if (e.button === 0 && app.originMode) {
+    setOriginAt(sx, sy);
+    return;
+  }
+  if (e.button === 1 || (e.button === 0 && (app.space || app.tool === "pan"))) {
     app.pan = { x: sx, y: sy };
     canvas.classList.add("panning");
     e.preventDefault();
@@ -2901,26 +3162,16 @@ canvas.addEventListener("pointerdown", (e) => {
     rightClick(sx, sy);
     return;
   }
-  if (e.button !== 0) {
-    return;
-  }
-  if (app.originMode) {
-    pushHistory();
-    app.frame.originPx = screenToStored(sx, sy);
-    app.originMode = false;
-    refreshFrameNotes();
-    refreshContours();
-    render();
-    return;
-  }
-  if (app.tool === "contour") {
-    contourPointerDown(sx, sy, e);
-  } else {
-    measurePointerDown(sx, sy, e);
+  if (e.button === 0 && !startDragAt(sx, sy)) {
+    clickAt(sx, sy, e.altKey, e.ctrlKey || e.metaKey);
   }
 });
 
 canvas.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "touch") {
+    touchMove(e);
+    return;
+  }
   const [sx, sy] = eventPoint(e);
   if (app.pan !== null) {
     app.view.tx += sx - app.pan.x;
@@ -2936,57 +3187,35 @@ canvas.addEventListener("pointermove", (e) => {
   app.cursor = [x, y];
   app.cursorScreen = [sx, sy];
   trackModifiers(e);
-  const points = draggedPoints();
-  if (points !== null && app.drag !== null) {
-    points[app.drag.point] = [x, y];
-    app.drag.moved = true;
-  } else if (app.drag !== null && app.drag.kind === "width") {
-    const ms = app.measurements[app.drag.index];
-    ms.width = widthFromPoint(ms.points, app.frame, [x, y]);
-    app.profileWidth = ms.width;
-    app.drag.moved = true;
-  }
-  if (app.drag !== null) {
-    refreshProfileWindow();          // the profile and its crossings follow the drag
-  }
+  dragTo(x, y);
   app.preview = insideImage(x, y) && !e.altKey && snapsNow() ? snapTarget(x, y) : null;
   showCursor(x, y);
   render();
 });
 
 canvas.addEventListener("pointerup", (e) => {
+  if (e.pointerType === "touch") {
+    touchUp(e, false);
+    return;
+  }
   if (app.pan !== null) {
     app.pan = null;
     canvas.classList.remove("panning");
     return;
   }
-  const drag = app.drag;
-  const points = draggedPoints();
-  app.drag = null;
-  if (drag !== null && drag.kind === "width") {
-    if (drag.moved) {
-      refreshMeasurements();
-    } else {
-      app.history.pop();
-    }
-    return;
-  }
-  if (drag === null || points === null) {
-    return;
-  }
-  if (!drag.moved) {
-    app.history.pop();             // a click on a point without moving it changed nothing
-    if (drag.kind === "vertex") {
-      pickVertex(drag.point, e.shiftKey ? "toggle" : "only");
-    }
-    return;
-  }
   const [sx, sy] = eventPoint(e);
   const [x, y] = screenToStored(sx, sy);
-  const exact = e.altKey || (drag.kind === "point" && app.measurements[drag.index].kind === "profile");
-  points[drag.point] = (exact ? null : snapTarget(x, y)) ?? [x, y];
-  refreshContours();
-  refreshMeasurements();
+  endDrag(x, y, e.altKey, e.shiftKey);
+});
+
+canvas.addEventListener("pointercancel", (e) => {
+  if (e.pointerType === "touch") {
+    touchUp(e, true);
+    return;
+  }
+  app.pan = null;
+  canvas.classList.remove("panning");
+  cancelDrag();
   render();
 });
 
@@ -3000,7 +3229,9 @@ canvas.addEventListener("pointerleave", () => {
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   const [sx, sy] = eventPoint(e);
-  zoomAt(Math.pow(1.25, -Math.sign(e.deltaY) * Math.min(3, Math.abs(e.deltaY) / 100 || 1)), sx, sy);
+  // pixels; Firefox reports lines (deltaMode 1) for some mice, and pages are possible (2)
+  const dy = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 800 : 1);
+  zoomAt(Math.pow(1.25, -Math.sign(dy) * Math.min(3, Math.abs(dy) / 100 || 1)), sx, sy);
 }, { passive: false });
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -3046,6 +3277,7 @@ function backspace() {
 
 /** Plain keys and what they do (letters in lower case). @type {Record<string, () => void>} */
 const KEY_ACTIONS = {
+  0: () => setTool("pan"),
   1: () => setTool("contour"),
   2: () => setTool("ruler"),
   3: () => setTool("angle"),
@@ -3191,7 +3423,8 @@ for (const id of ["image-file", "session-file"]) {
   });
 }
 for (const tool of TOOLS) {
-  el(`tool-${tool}`).addEventListener("click", () => setTool(tool));
+  // a click on the active tool puts it down: no tool
+  el(`tool-${tool}`).addEventListener("click", () => setTool(app.tool === tool ? "pan" : tool));
 }
 selectEl("contour-list").addEventListener("change", () => {
   setActive(selectEl("contour-list").selectedIndex);
@@ -3359,7 +3592,7 @@ refreshFrameInputs();
 refreshContours();
 refreshMeasurements();
 refreshDisplay();
-setTool("contour");
+setTool("pan");                     // the app opens with no tool: the view pans and zooms
 
 /** The page's state and actions, for scripts that drive it (tests, automation). */
 Object.assign(window, {

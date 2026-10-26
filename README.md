@@ -26,7 +26,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
 ## Working with it
 
-1. **Open an image**: *Open image…*, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, which the panel shows under *Metadata*. The image opens with automatic contrast; *Display* shows its histogram and sets the levels by hand.
+1. **Open an image**: *Open image…*, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, which the panel shows under *Metadata*. The image opens with automatic contrast; *Display* shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
 2. **Check the calibration** under *Scale, tilt and rotation*. Choose the tilt correction:
    - *cross-section* for a FIB face;
    - *tilted surface* for features in a tilted surface;
@@ -34,7 +34,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
    Set the origin if the micrometres should start somewhere particular.
 3. **Turn on snapping** (S) and, to see where clicks will snap to, the edge map (G).
-4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4) and *Profile* (5).
+4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4) and *Profile* (5). *Pan* (0), or a click on the active tool, puts the tool down again.
 5. **Level the image** if you like. Draw a ruler along something that should be horizontal, such as the substrate, select it and press *Level: horizontal* (H) or *Level: vertical* (V). Lengths and angles do not change; directions and the exported coordinates turn with the image.
 6. **Keep the work**: *Save session* (Ctrl+S). *Export polygons* writes the contours for a mode solver, *Export GDS…* writes them as a GDSII layout, each on its layer, and *Export measurements* writes the rulers and angles. To continue later, open the image, then *Open session…*.
 
@@ -42,6 +42,7 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 
 ## Tools
 
+- **Pan** (0): no tool. A drag pans and the wheel zooms, and no click edits anything. The app opens with it, and a click on the active tool's button also returns to it.
 - **Contour.**
   - A click adds a vertex at the end of the active contour (amber); the other contours are cyan.
   - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or exact with Alt. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
@@ -203,10 +204,29 @@ Tested on two GeminiSEM TIFFs (1024 × 768, 8-bit grey palette). Their zones sta
 
 **Other images.** Other TIFFs open without metadata: 8, 16 or 32 bits, grey, palette or RGB, in the compressions UTIF.js decodes. Only uncompressed FEI and Zeiss files were tested. PNG, JPEG and BMP open too, decoded by the browser. Enter the pixel size by hand.
 
+## Touch screens, pens and touchpads
+
+The view takes touch, pen and touchpad input through the browser's pointer events, as Edge and Chrome deliver them on Windows. The page itself never scrolls or zooms under the fingers.
+
+- **Two fingers**, with any tool, pinch to zoom and move together to pan. The image point under their midpoint stays under it (MATH.md, (G16)).
+- **One finger** with no tool pans. With a tool:
+  - a tap acts as a click: it adds a vertex or places a measurement's next point, snapped as a click would be;
+  - a drag that starts on a point moves it, as a mouse drag does;
+  - any other drag pans; a touch that moves less than 10 px is still a tap.
+
+  A second finger landing turns what the first began into a pinch, and a point it was moving goes back where it was.
+- **A pen** acts as the mouse: precise taps and drags, and the snap preview while it hovers. Its barrel button should act as a right click.
+- **A touchpad** pinch zooms, as the wheel does; two-finger scrolling also zooms. To pan with a touchpad, choose no tool and drag, or hold Space and drag.
+
+Touch has no hover, so the previews that follow the cursor (snap, insert with Ctrl) belong to the mouse and the pen.
+
+These were checked with pointer events simulated in Chromium. They have not yet been tried on a real touch screen or with a real pen.
+
 ## Mouse and keys
 
 | Input | Action |
 |:--|:--|
+| 0 | no tool: drag to pan, wheel to zoom (also a click on the active tool's button) |
 | 1 2 3 4 5 | tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile |
 | click | contour: add a vertex; other tools: place the next point (snapped with Snap on, except a profile's ends) |
 | Ctrl+click | contour: insert a vertex into the nearest segment |
@@ -216,8 +236,10 @@ Tested on two GeminiSEM TIFFs (1024 × 768, 8-bit grey palette). Their zones sta
 | drag a point | move a vertex or a measurement point; it snaps when released (Alt: not; a profile's ends never) |
 | drag the white square | widen or narrow the band of the selected profile |
 | right click | contour: delete the vertex; other tools: delete the measurement, or cancel the one being placed |
-| wheel | zoom about the cursor |
-| middle drag, Space+drag | pan |
+| wheel, touchpad pinch | zoom about the cursor |
+| middle drag, Space+drag; drag with no tool | pan |
+| two fingers | pinch to zoom, move together to pan |
+| one finger | no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans |
 | N, C | new contour; close or open the active one |
 | H, V | level the selected ruler horizontal or vertical |
 | S, G | snapping on or off; edge map on or off |
@@ -260,7 +282,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `js/vertices.js` | the vertex window's operations on a contour's vertex list |
 | `js/display.js` | the display: levels, brightness and contrast, the histogram's bins; derivations (D1)–(D4) in the header |
 | `js/profile.js` | line profiles: the band, the samples, the contour crossings; derivations (P1)–(P5) in the header |
-| `js/app.js` | the user interface |
+| `js/app.js` | the user interface, mouse, pen and touch input; zooming about a point, (G16), in its comments |
 | `vendor/` | UTIF.js and pako (inflate), unmodified, with their licences |
 | `types/vendor.d.ts` | types of UTIF.js for the type check |
 | `tests/` | static checks and core tests; `local_data.example.json`, the form of the git-ignored file that names your test images |
