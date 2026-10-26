@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEM measurement tool</title>
+<style>
+  :root {
+    --panel: #f6f6f4;
+    --line: #d4d4d0;
+    --text: #272727;
+    --muted: #6f6f6f;
+    --accent: #385c9e;
+    --warn: #9e403d;
+    --view: #1e1e1e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; color: var(--text); background: var(--panel); }
+  #app { display: grid; grid-template-columns: 1fr 360px; grid-template-rows: 1fr auto; height: 100vh; }
+  #view-wrap { position: relative; background: var(--view); overflow: hidden; min-width: 0; }
+  #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  #view.panning { cursor: grabbing; }
+  #view-wrap.dragover { outline: 3px dashed var(--accent); outline-offset: -6px; }
+  #drop-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #bbb;
+               font-size: 15px; pointer-events: none; text-align: center; padding: 24px; }
+  #busy { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.75); color: #fff;
+          padding: 6px 12px; border-radius: 4px; display: none; pointer-events: none; }
+  #panel { grid-row: 1 / 3; grid-column: 2; overflow-y: auto; border-left: 1px solid var(--line); padding: 8px 12px 16px; }
+  #panel h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  #panel section:first-child h2 { margin-top: 4px; }
+  .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+  .row button { flex: 1 1 auto; }
+  .row.tools button { flex: 1 1 0; padding: 4px 4px; }
+  button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--text); cursor: pointer; }
+  button:hover:enabled { border-color: var(--accent); }
+  button:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
+  button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.active kbd { color: var(--text); }
+  .grid { display: grid; grid-template-columns: 1fr 120px; gap: 4px 8px; align-items: center; margin: 6px 0; }
+  input[type=number], select { font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--text); width: 100%; }
+  #contour-list, #measurement-list { width: 100%; }
+  label { user-select: none; }
+  .note { color: var(--muted); white-space: pre-line; margin: 4px 0; }
+  .note.warn { color: var(--warn); }
+  #measures, #measurement-details { color: var(--text); }
+  pre { font: 11px/1.35 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; margin: 4px 0; max-height: 320px; overflow: auto;
+        background: #fff; border: 1px solid var(--line); padding: 4px 6px; }
+  details summary { cursor: pointer; color: var(--muted); margin: 10px 0 4px; }
+  kbd { font: 11px ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 3px; background: #fff; }
+  table.keys { border-collapse: collapse; width: 100%; }
+  table.keys td { padding: 2px 4px; vertical-align: top; border-bottom: 1px solid var(--line); }
+  #status { grid-column: 1; font: 12px ui-monospace, Consolas, monospace; padding: 3px 8px; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 22px; }
+  .pair { display: flex; gap: 4px; }
+  #histogram { display: block; width: 100%; height: 96px; background: #fff; border: 1px solid var(--line); border-radius: 3px;
+               cursor: ew-resize; touch-action: none; }
+  input[type=range] { width: 100%; margin: 0; }
+  .row label.inline { align-self: center; white-space: nowrap; }
+  .floating { position: absolute; top: 12px; right: 12px; width: 300px; height: 360px; min-width: 230px; min-height: 170px;
+              max-width: calc(100% - 24px); max-height: calc(100% - 24px); display: flex; flex-direction: column;
+              background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+              resize: both; overflow: hidden; z-index: 5; }
+  .floating[hidden] { display: none; }
+  .floating header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 10px;
+                     background: var(--accent); color: #fff; cursor: move; user-select: none; touch-action: none; }
+  .floating header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .floating header button { padding: 0 7px; line-height: 1.3; }
+  .floating .row { margin: 6px 6px 4px; gap: 4px; }
+  .floating .row button { padding: 2px 6px; font-size: 12px; }
+  .table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0 6px; border: 1px solid var(--line); background: #fff; }
+  #vertex-table { border-collapse: collapse; width: 100%; font: 12px ui-monospace, Consolas, monospace; }
+  #vertex-table th { position: sticky; top: 0; background: var(--panel); text-align: right; padding: 2px 8px; border-bottom: 1px solid var(--line); }
+  #vertex-table td { text-align: right; padding: 1px 8px; cursor: default; }
+  #vertex-table tr.picked td { background: #e1d8ff; }
+  #vertex-table td input { width: 100%; font: inherit; text-align: right; padding: 0 2px; }
+  #vertex-note { margin: 4px 8px 6px; }
+  #profile-window { top: auto; right: auto; bottom: 12px; left: 12px; width: 560px; height: 330px; min-width: 300px; min-height: 220px; }
+  #profile-window .row { align-items: center; flex-wrap: nowrap; }
+  #profile-window .row input[type=number] { width: 96px; flex: 0 0 auto; }
+  #profile-window .row button { flex: 0 0 auto; margin-left: auto; }
+  #profile-plot { display: block; flex: 1 1 0; min-height: 0; height: 0; width: calc(100% - 12px); margin: 0 6px;
+                  border: 1px solid var(--line); background: #fff; cursor: crosshair; }
+  #profile-readout { margin: 3px 8px 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #profile-note { margin: 2px 8px 6px; }
+  #about { margin: 18px 0 0; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; }
+  dialog { border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; background: var(--panel); color: var(--text); max-width: 420px; }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+  dialog h2 { font-size: 14px; margin: 0 0 8px; }
+  dialog .grid { grid-template-columns: 1fr 150px; }
+  dialog input[type=text] { font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 3px; width: 100%; }
+  dialog form > label { display: block; margin: 6px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <main id="view-wrap">
+    <canvas id="view"></canvas>
+    <div id="drop-hint">Drop an SEM image here (TIFF from FEI / Thermo Fisher or Zeiss, or PNG, JPEG), then a session or<br>polygon file if you have one; or use "Open image".  Nothing leaves this computer.</div>
+    <div id="busy"></div>
+    <section id="vertex-window" class="floating" aria-label="Vertices of the active contour" hidden>
+      <header id="vertex-bar"><span id="vertex-title">Vertices</span><button type="button" id="vertex-close" title="Close (T)">&times;</button></header>
+      <div class="row">
+        <button type="button" id="vertex-up" title="Move the selected vertices one place earlier in the order">&uarr; Up</button>
+        <button type="button" id="vertex-down" title="Move the selected vertices one place later in the order">&darr; Down</button>
+        <button type="button" id="vertex-drop" title="Drop the selected vertices (Delete)">Drop</button>
+        <button type="button" id="vertex-first" title="Make the selected vertex the first (closed contours)">First</button>
+        <button type="button" id="vertex-reverse" title="Reverse the order (a closed contour keeps its first vertex)">Reverse</button>
+        <button type="button" id="vertex-zoom" title="Zoom to the selected vertices (all when none is selected)">Zoom</button>
+      </div>
+      <div class="table-wrap">
+        <table id="vertex-table">
+          <thead><tr><th>#</th><th id="vertex-x-head">X</th><th id="vertex-y-head">Y</th></tr></thead>
+          <tbody id="vertex-rows"></tbody>
+        </table>
+      </div>
+      <div id="vertex-note" class="note"></div>
+    </section>
+    <section id="profile-window" class="floating" aria-label="Line profile" hidden>
+      <header id="profile-bar"><span id="profile-title">Profile</span><button type="button" id="profile-close" title="Close (P)">&times;</button></header>
+      <div class="row">
+        <label for="profile-width" class="inline" title="Width of the band across the line: the profile is the mean across it">band width</label>
+        <input type="number" id="profile-width" min="0" step="any">
+        <span id="profile-width-unit">µm</span>
+        <button type="button" id="profile-export" title="Save the profile's samples as a CSV file">Export CSV</button>
+      </div>
+      <canvas id="profile-plot"></canvas>
+      <div id="profile-readout" class="note"></div>
+      <div id="profile-note" class="note"></div>
+    </section>
+  </main>
+
+  <aside id="panel">
+    <section>
+      <h2>Files</h2>
+      <div class="row">
+        <button type="button" id="open-image" title="Open an image (Ctrl+O); dropping a file on the view works too">Open image&hellip;</button>
+        <button type="button" id="open-session" title="Take up a session (.json), or load the contours of a polygon file (.csv)">Open session&hellip;</button>
+        <button type="button" id="save-session" title="Save contours, measurements and calibration as a session file (Ctrl+S)">Save session</button>
+      </div>
+      <div class="row">
+        <button type="button" id="export-polygons" title="The contours as a polygon file (CSV), e.g. for a mode solver">Export polygons</button>
+        <button type="button" id="export-measurements" title="The rulers and angles as a CSV file, e.g. for a spreadsheet">Export measurements</button>
+        <button type="button" id="export-gds" title="The contours as a GDSII layout file, each on its layer">Export GDS&hellip;</button>
+      </div>
+      <input type="file" id="image-file" accept=".tif,.tiff,image/tiff,image/png,image/jpeg,image/bmp" hidden>
+      <input type="file" id="session-file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" hidden>
+      <div id="image-info" class="note">No image.</div>
+    </section>
+
+    <section>
+      <h2>Display</h2>
+      <canvas id="histogram" title="Histogram of the image without its info bar.  Drag the black or the white level."></canvas>
+      <div class="grid">
+        <label for="black-level" title="The grey value shown black">black level</label>
+        <input type="number" id="black-level" step="any">
+        <label for="white-level" title="The grey value shown white">white level</label>
+        <input type="number" id="white-level" step="any">
+        <label for="brightness" title="Moves the window between the two levels over the values, keeping its width">brightness</label>
+        <input type="range" id="brightness" min="0" max="1000" step="1" value="500">
+        <label for="contrast" title="Narrows or widens the window between the two levels about its centre">contrast</label>
+        <input type="range" id="contrast" min="1" max="1000" step="1" value="500">
+      </div>
+      <div class="row">
+        <button type="button" id="levels-auto" title="Black and white levels at the 0.5 and 99.5 % percentiles, as when the image opens">Auto</button>
+        <button type="button" id="levels-full" title="Black and white levels at the ends of the histogram: 0 and 255 for an 8-bit image, else the darkest and brightest values">Full range</button>
+        <label class="inline"><input type="checkbox" id="histogram-log"> log counts</label>
+      </div>
+      <div id="histogram-note" class="note"></div>
+    </section>
+
+    <section>
+      <h2>Tools</h2>
+      <div class="row tools">
+        <button type="button" id="tool-contour" aria-pressed="true" title="Trace contours">Contour <kbd>1</kbd></button>
+        <button type="button" id="tool-ruler" aria-pressed="false" title="Measure a distance: two clicks">Ruler <kbd>2</kbd></button>
+        <button type="button" id="tool-angle" aria-pressed="false" title="Angle at a vertex: three clicks">Angle <kbd>3</kbd></button>
+        <button type="button" id="tool-line-angle" aria-pressed="false" title="Angle between two lines: four clicks">2 lines <kbd>4</kbd></button>
+        <button type="button" id="tool-profile" aria-pressed="false" title="Line profile, averaged across a band of adjustable width: two clicks">Profile <kbd>5</kbd></button>
+      </div>
+      <div id="tool-hint" class="note"></div>
+    </section>
+
+    <section>
+      <h2>Contours</h2>
+      <select id="contour-list" size="5" title="The active contour receives new vertices"></select>
+      <div class="row">
+        <button type="button" id="new-contour" title="Start a new contour (N)">New</button>
+        <button type="button" id="rename-contour">Rename</button>
+        <button type="button" id="delete-contour">Delete</button>
+      </div>
+      <label><input type="checkbox" id="closed" checked> closed polygon <kbd>C</kbd></label>
+      <div class="grid">
+        <label for="contour-layer" title="GDSII layer and datatype of the active contour, for Export GDS">GDS layer / datatype</label>
+        <div class="pair">
+          <input type="number" id="contour-layer" min="0" max="32767" step="1" value="1">
+          <input type="number" id="contour-datatype" min="0" max="32767" step="1" value="0" aria-label="GDS datatype">
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" id="open-vertices" title="Show or hide the vertex window of the active contour (T)">Vertices&hellip;</button>
+      </div>
+      <div id="measures" class="note"></div>
+    </section>
+
+    <section>
+      <h2>Measurements</h2>
+      <select id="measurement-list" size="5" title="Rulers, angles and profiles; the selected one is drawn in yellow"></select>
+      <div class="row">
+        <button type="button" id="rename-measurement">Rename</button>
+        <button type="button" id="delete-measurement" title="Delete the selected measurement (Delete)">Delete</button>
+      </div>
+      <div class="row">
+        <button type="button" id="level-horizontal" title="Turn the image so that the selected ruler is horizontal (H)">Level: horizontal</button>
+        <button type="button" id="level-vertical" title="Turn the image so that the selected ruler is vertical (V)">Level: vertical</button>
+      </div>
+      <div class="row">
+        <button type="button" id="axis-from-ruler" title="Take the selected ruler as parallel to the stage tilt axis, such as the surface line of a cross-section">Tilt axis along ruler</button>
+      </div>
+      <div id="measurement-details" class="note"></div>
+    </section>
+
+    <section>
+      <h2>Snapping to edges</h2>
+      <label><input type="checkbox" id="snap"> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
+      <div class="grid">
+        <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
+        <input type="number" id="sigma" min="0.5" max="20" step="0.5" value="2">
+        <label for="median" title="Median filter before the gradient: removes isolated noisy pixels">median prefilter</label>
+        <select id="median"><option value="0">off</option><option value="3" selected>3 &times; 3</option><option value="5">5 &times; 5</option></select>
+        <label for="radius" title="Edges are searched within this distance of the click, in pixels of the corrected view">search radius (px)</label>
+        <input type="number" id="radius" min="2" max="300" step="1" value="12">
+        <label for="min-contrast" title="A click snaps only to an edge this many times stronger than the median gradient of the image">min. edge strength (&times; median)</label>
+        <input type="number" id="min-contrast" min="1" max="100" step="0.5" value="3">
+      </div>
+      <label><input type="checkbox" id="show-edges"> show the edge map <kbd>G</kbd></label>
+    </section>
+
+    <section>
+      <h2>Scale, tilt and rotation</h2>
+      <div class="grid">
+        <label for="pixel-x">pixel width (nm)</label>
+        <input type="number" id="pixel-x" min="0" step="any" placeholder="unknown">
+        <label for="pixel-y">pixel height (nm)</label>
+        <input type="number" id="pixel-y" min="0" step="any" placeholder="unknown">
+        <label for="tilt">stage tilt &theta; (&deg;)</label>
+        <input type="number" id="tilt" min="-90" max="90" step="any" value="0">
+        <label for="correction" title="none: as imaged.  cross-section: a face normal to the surface that contains the tilt axis (depths x 1/sin tilt).  tilted surface: features in the tilted surface (lengths across the axis x 1/cos tilt).  The image is stretched by k across the tilt axis.">tilt correction</label>
+        <select id="correction">
+          <option value="none">none</option>
+          <option value="cross-section">cross-section (1/sin &theta;)</option>
+          <option value="tilted-surface">tilted surface (1/cos &theta;)</option>
+          <option value="custom">custom k</option>
+        </select>
+        <label for="custom-factor">custom factor k</label>
+        <input type="number" id="custom-factor" min="0" step="any" value="1" disabled>
+        <label for="tilt-axis" title="Direction of the stage tilt axis in the image, counter-clockwise from the horizontal: 0 when the scan is aligned with it.  The correction stretches across it.">tilt axis &alpha; (&deg;)</label>
+        <input type="number" id="tilt-axis" min="-90" max="90" step="any" value="0">
+        <label for="rotation" title="Turns the corrected image counter-clockwise.  Lengths and angles do not change; exported coordinates are in the turned frame.">rotation &phi; (&deg;)</label>
+        <input type="number" id="rotation" min="-180" max="180" step="any" value="0">
+      </div>
+      <div id="factor-note" class="note"></div>
+      <div class="row">
+        <button type="button" id="reset-rotation">Rotation 0&deg;</button>
+        <button type="button" id="set-origin" title="The next click on the image sets the origin of the &micro;m coordinates (Esc cancels)">Set origin</button>
+        <button type="button" id="reset-origin">Reset origin</button>
+      </div>
+      <div id="origin-note" class="note"></div>
+    </section>
+
+    <section>
+      <details id="metadata-details">
+        <summary>Metadata</summary>
+        <pre id="metadata-summary">(no image)</pre>
+        <details><summary>full text from the file</summary><pre id="metadata-raw"></pre></details>
+      </details>
+      <details>
+        <summary>Mouse and keys</summary>
+        <table class="keys">
+          <tbody>
+          <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile</td></tr>
+          <tr><td>click</td><td>contour: add a vertex to the active contour; other tools: place the next point (snapped when Snap is on)</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
+          <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>
+          <tr><td><kbd>Alt</kbd>+click</td><td>place the point exactly where clicked, without snapping</td></tr>
+          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not)</td></tr>
+          <tr><td>right click</td><td>contour: delete the vertex under the cursor; other tools: delete the measurement under the cursor, or cancel the one being placed</td></tr>
+          <tr><td>wheel</td><td>zoom about the cursor</td></tr>
+          <tr><td>middle drag, <kbd>Space</kbd>+drag</td><td>pan</td></tr>
+          <tr><td><kbd>N</kbd> <kbd>C</kbd></td><td>new contour; close or open the active one</td></tr>
+          <tr><td><kbd>H</kbd> <kbd>V</kbd></td><td>turn the image so that the selected ruler is horizontal / vertical</td></tr>
+          <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>
+          <tr><td><kbd>T</kbd></td><td>show or hide the vertex window</td></tr>
+          <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile)</td></tr>
+          <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
+          <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
+          <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour) or the selected measurement</td></tr>
+          <tr><td><kbd>Delete</kbd></td><td>delete the selected vertices, else the selected measurement</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>undo / redo (edits, measurements, calibration)</td></tr>
+          <tr><td><kbd>F</kbd> <kbd>+</kbd> <kbd>-</kbd></td><td>fit to window; zoom</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>open image / save session</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>cancel the measurement being placed, or "Set origin"</td></tr>
+          </tbody>
+        </table>
+      </details>
+    </section>
+    <p id="about" class="note">Made with AI tools. License: public domain; the bundled UTIF.js and pako stay under their MIT terms.</p>
+  </aside>
+
+  <footer id="status">Open an image to start.</footer>
+</div>
+<dialog id="gds-dialog" aria-labelledby="gds-heading">
+  <form method="dialog">
+    <h2 id="gds-heading">Export GDS</h2>
+    <div class="grid">
+      <label for="gds-cell">cell name</label>
+      <input type="text" id="gds-cell" maxlength="32" spellcheck="false">
+      <label for="gds-path-width" title="Open contours are written as paths of this width; 0 gives lines">path width of open contours (&micro;m)</label>
+      <input type="number" id="gds-path-width" min="0" step="any" value="0">
+    </div>
+    <label><input type="checkbox" id="gds-names"> contour names as text labels, on each contour's layer</label>
+    <label><input type="checkbox" id="gds-measurements"> measurements as annotations (lines and their values)</label>
+    <div class="grid">
+      <label for="gds-annotation-layer">annotation layer / datatype</label>
+      <div class="pair">
+        <input type="number" id="gds-annotation-layer" min="0" max="32767" step="1" value="100">
+        <input type="number" id="gds-annotation-datatype" min="0" max="32767" step="1" value="0" aria-label="annotation datatype">
+      </div>
+    </div>
+    <p class="note">Closed contours become polygons and open ones paths, each on its own layer (set under Contours).  Coordinates are those of the polygon file, micrometres in the measurement frame, on a 1 nm grid (user unit 1 &micro;m).</p>
+    <div class="row">
+      <button type="submit" value="export">Export</button>
+      <button type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+<script src="vendor/pako_inflate.min.js"></script>
+<script src="vendor/UTIF.js"></script>
+<script src="js/metadata.js"></script>
+<script src="js/tiff.js"></script>
+<script src="js/edges.js"></script>
+<script src="js/transform.js"></script>
+<script src="js/polygons.js"></script>
+<script src="js/session.js"></script>
+<script src="js/gds.js"></script>
+<script src="js/vertices.js"></script>
+<script src="js/display.js"></script>
+<script src="js/profile.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

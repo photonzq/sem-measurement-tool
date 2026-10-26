@@ -1,0 +1,8 @@
+{
+  "fei_folder": "path/to/a/folder/of/FEI/TIFF/files",
+  "zeiss": [
+    { "file": "path/to/a/Zeiss/image.tif", "pixel_nm": 11.58859, "tilt_deg": 0, "info_bar_rows": 77,
+      "tilt_correction_on": false, "scan_rotation_deg": 0 },
+    { "file": "path/to/another/Zeiss/image.tif" }
+  ]
+}

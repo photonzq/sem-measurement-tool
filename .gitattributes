@@ -1,0 +1,2 @@
+# The vendored libraries are checked against their SHA-256 (vendor/LICENSES.md): keep their bytes as they are.
+vendor/** -text

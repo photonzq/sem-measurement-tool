@@ -1,0 +1,3 @@
+node_modules/
+# your own test images, for npm test (see tests/local_data.example.json)
+tests/local_data.json
