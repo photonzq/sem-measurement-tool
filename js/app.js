@@ -58,6 +58,9 @@ const TOOL_HINTS = {
 const MEASURE_NAMES = { ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
 const PLOT_COLOR = "#385c9e";        // the profile's mean in its window
 const TAP_PX = 10;                   // a touch that moves less than this is a tap
+const TOUCH_HIT_PX = 22;             // HIT_PX for a finger, which covers far more than a cursor tip
+const TOUCH_SNAP = 2.5;              // a finger searches this many times the snap radius for an edge
+const HOLD_MS = 500;                 // a finger held still this long on a point opens its menu
 
 /** @returns {Frame} */
 function defaultFrame() {
@@ -100,11 +103,17 @@ const app = {
   tool: "pan",
   /**
    * A touch gesture on the view: a finger that may still be a tap, one that pans or drags a point,
-   * or two that pinch (G16).
+   * one held for a menu (its lift does nothing), or two that pinch (G16).
    * @type {{kind: "tap", id: number, start: Point}|{kind: "pan", id: number, last: Point}|{kind: "drag", id: number}
-   *   |{kind: "pinch", ids: [number, number], d0: number, c0: Point, s0: number, t0: Point}|null}
+   *   |{kind: "held", id: number}|{kind: "pinch", ids: [number, number], d0: number, c0: Point, s0: number, t0: Point}
+   *   |null}
    */
   gesture: null,
+  /** @type {"mouse"|"pen"|"touch"} what last pressed on the view: it sets how near a point must be to be hit */
+  lastPointer: "mouse",
+  /** @type {{id: number, start: Point, t0: number, timer: number}|null} a finger that may become a press and hold */
+  hold: null,
+  exactOnce: false,                  // the next point placed or released lands exactly, without snapping
   /** @type {Frame} */
   frame: defaultFrame(),
   view: { s: 1, tx: 0, ty: 0 },
@@ -495,7 +504,18 @@ function snapTarget(x, y) {
   if (!settings.snap() || app.edges === null) {
     return null;
   }
-  return app.edges.snap(x, y, settings.radius(), settings.minContrast(), viewMatrix(app.frame));
+  const reach = settings.radius() * (app.lastPointer === "touch" ? TOUCH_SNAP : 1);
+  return app.edges.snap(x, y, reach, settings.minContrast(), viewMatrix(app.frame));
+}
+
+/** @returns {number} screen pixels within which a point is under the pointer: more for a finger */
+function hitPx() {
+  return app.lastPointer === "touch" ? TOUCH_HIT_PX : HIT_PX;
+}
+
+/** @returns {number} how much larger points and handles are drawn after touch input */
+function handleScale() {
+  return app.lastPointer === "touch" ? 1.6 : 1;
 }
 
 // ------------------------------------------------------------------------- view
@@ -560,6 +580,7 @@ function render() {
   if (app.raf === 0) {
     app.raf = requestAnimationFrame(draw);
   }
+  refreshTouchBar();
 }
 
 function draw() {
@@ -610,6 +631,7 @@ function draw() {
   drawPending(toScreen);
   drawInsertPreview(toScreen);
   drawMarks(toScreen);
+  drawHoldRing();
 }
 
 /**
@@ -796,9 +818,10 @@ function drawContour(c, active, toScreen) {
     }
     ctx.stroke();
   }
+  const k = handleScale();
   pts.forEach(([x, y], i) => {
     ctx.beginPath();
-    ctx.arc(x, y, active && i === 0 ? 5.5 : 3.5, 0, 2 * Math.PI);   // the first vertex is larger
+    ctx.arc(x, y, (active && i === 0 ? 5.5 : 3.5) * k, 0, 2 * Math.PI);   // the first vertex is larger
     ctx.fillStyle = active ? "#ffffff" : color;
     ctx.fill();
     ctx.lineWidth = 1.2;
@@ -911,10 +934,11 @@ function drawProfileLine(ms, pts, toScreen, how) {
   const [hx, hy] = toScreen(h);
   const [mx, my] = toScreen(mid);
   if (how.handle) {
+    const r = 4 * handleScale();      // larger for a finger
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(hx - 4, hy - 4, 8, 8);
+    ctx.fillRect(hx - r, hy - r, 2 * r, 2 * r);
     ctx.lineWidth = 1.2;
-    ctx.strokeRect(hx - 4, hy - 4, 8, 8);
+    ctx.strokeRect(hx - r, hy - r, 2 * r, 2 * r);
   }
   if (how.label !== null) {
     const reach = Math.hypot(hx - mx, hy - my);
@@ -996,7 +1020,7 @@ function drawMeasurement(ms, color, toScreen, pending) {
   ctx.setLineDash([]);
   for (const [x, y] of pts) {
     ctx.beginPath();
-    ctx.arc(x, y, 3.5, 0, 2 * Math.PI);
+    ctx.arc(x, y, 3.5 * handleScale(), 0, 2 * Math.PI);
     ctx.fillStyle = color === SELECTED_COLOR ? "#ffffff" : color;
     ctx.fill();
     ctx.lineWidth = 1.2;
@@ -1129,11 +1153,11 @@ function hitWidthHandle(sx, sy) {
     return false;
   }
   const [x, y] = screenMapper()(widthHandle(ms.points, ms.width ?? 1, app.frame));
-  return Math.max(Math.abs(x - sx), Math.abs(y - sy)) <= HIT_PX;
+  return Math.max(Math.abs(x - sx), Math.abs(y - sy)) <= hitPx();
 }
 
 /**
- * Index of the point within HIT_PX of a screen position, the nearest; -1 when none.
+ * Index of the point within hitPx() of a screen position, the nearest; -1 when none.
  * @param {Point[]} points
  * @param {(p: Point) => Point} toScreen
  * @param {number} sx
@@ -1141,7 +1165,7 @@ function hitWidthHandle(sx, sy) {
  * @returns {number}
  */
 function nearestPoint(points, toScreen, sx, sy) {
-  let best = HIT_PX;
+  let best = hitPx();
   let which = -1;
   points.forEach((p, i) => {
     const [x, y] = toScreen(p);
@@ -2195,6 +2219,7 @@ function editCoordinate(cell) {
   const i = Number(row.dataset.i);
   const input = document.createElement("input");
   input.type = "number";
+  input.inputMode = "decimal";       // the number keypad of a touch keyboard
   input.step = "any";
   input.value = cell.textContent ?? "";
   input.setAttribute("aria-label", `${axis.toUpperCase()} of vertex ${i}`);
@@ -2814,12 +2839,7 @@ function rightClick(sx, sy) {
   if (app.tool === "contour") {
     const hit = hitVertex(sx, sy);
     if (hit !== null) {
-      pushHistory();
-      setActive(hit.index);
-      app.contours[hit.index].points.splice(hit.point, 1);
-      forgetVertex(hit.point);
-      refreshContours();
-      render();
+      deleteVertex(hit.index, hit.point);
     }
     return;
   }
@@ -2827,6 +2847,37 @@ function rightClick(sx, sy) {
   if (hit !== null) {
     deleteMeasurement(hit.index);
   }
+}
+
+/**
+ * Delete vertex ``vi`` of contour ``ci`` (an undoable edit); that contour becomes the active one.
+ * @param {number} ci
+ * @param {number} vi
+ */
+function deleteVertex(ci, vi) {
+  pushHistory();
+  setActive(ci);
+  app.contours[ci].points.splice(vi, 1);
+  forgetVertex(vi);
+  refreshContours();
+  render();
+}
+
+/**
+ * Insert a vertex halfway between vertex ``vi`` of contour ``ci`` and the next one (an undoable edit).
+ * @param {number} ci
+ * @param {number} vi
+ */
+function insertVertexAfter(ci, vi) {
+  const c = app.contours[ci];
+  const a = c.points[vi];
+  const b = c.points[(vi + 1) % c.points.length];
+  pushHistory();
+  setActive(ci);
+  c.points.splice(vi + 1, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+  app.picked = app.picked.map((k) => (k > vi ? k + 1 : k));
+  refreshContours();
+  render();
 }
 
 /**
@@ -2881,14 +2932,28 @@ function startDragAt(sx, sy) {
  */
 function clickAt(sx, sy, exact, insert) {
   const [x, y] = screenToStored(sx, sy);
-  if (!insideImage(x, y)) {
+  if (!insideImage(x, y) || app.tool === "pan") {
     return;
   }
+  const loose = takeExact() || exact;
   if (app.tool === "contour") {
-    addVertex(x, y, { exact, insert });
+    addVertex(x, y, { exact: loose, insert });
   } else {
-    placePoint(x, y, exact);
+    placePoint(x, y, loose);
   }
+}
+
+/**
+ * Whether the Exact latch was set; it is used up by the one point it applies to.
+ * @returns {boolean}
+ */
+function takeExact() {
+  if (!app.exactOnce) {
+    return false;
+  }
+  app.exactOnce = false;
+  render();
+  return true;
 }
 
 /**
@@ -2953,7 +3018,7 @@ function endDrag(x, y, exact, toggle) {
     refreshMeasurements();
     return;
   }
-  const loose = exact || (drag.kind === "point" && app.measurements[drag.index].kind === "profile");
+  const loose = takeExact() || exact || (drag.kind === "point" && app.measurements[drag.index].kind === "profile");
   points[drag.point] = (loose ? null : snapTarget(x, y)) ?? [x, y];
   refreshContours();
   refreshMeasurements();
@@ -2973,12 +3038,15 @@ function cancelDrag() {
 }
 
 /**
- * Whether a click, or the release of what is dragged, would snap now: not with no tool, nor for
- * a profile's ends or its band width.
+ * Whether a click, or the release of what is dragged, would snap now: not with no tool, nor with
+ * the Exact latch set, nor for a profile's ends or its band width.
  * @returns {boolean}
  */
 function snapsNow() {
   const d = app.drag;
+  if (app.exactOnce) {
+    return false;
+  }
   if (d === null) {
     return app.tool !== "profile" && app.tool !== "pan";
   }
@@ -2995,6 +3063,270 @@ function draggedPoints() {
     return null;
   }
   return d.kind === "vertex" ? app.contours[d.index].points : app.measurements[d.index].points;
+}
+
+// ------------------------------------------------------------------------- touch tools
+//
+// For a touch screen: a toolbar on the view for what a keyboard or a right button does otherwise
+// (undo, redo, fit, stepping back, snapping, one exact point), larger targets for a finger, and a
+// press and hold on a point for its menu.  The touch layout comes with a touch screen, or with the
+// first touch.
+
+/** The touch layout: larger window bars, buttons and handles, and the touch toolbar. */
+function enterTouchLayout() {
+  if (!document.body.classList.contains("touch")) {
+    document.body.classList.add("touch");
+    el("touch-bar").hidden = false;
+    refreshTouchBar();
+  }
+}
+
+/**
+ * Note what pressed or hovers on the view: a finger takes larger targets and snap reach.
+ * @param {PointerEvent} e
+ */
+function notePointer(e) {
+  const type = e.pointerType === "touch" ? "touch" : e.pointerType === "pen" ? "pen" : "mouse";
+  if (type !== app.lastPointer) {
+    app.lastPointer = type;
+    render();
+  }
+}
+
+/** @returns {boolean} whether Back has something to take back */
+function canStepBack() {
+  return app.pending !== null || app.originMode || (app.tool === "contour" && activeContour().points.length > 0);
+}
+
+/** Back: the last point of the measurement being placed, else "Set origin", else the active contour's last vertex. */
+function stepBack() {
+  if (app.pending !== null) {
+    app.pending.points.pop();
+    if (app.pending.points.length === 0) {
+      app.pending = null;
+    }
+  } else if (app.originMode) {
+    app.originMode = false;
+    refreshFrameNotes();
+  } else if (app.tool === "contour") {
+    deleteLastVertex();
+  }
+  render();
+}
+
+/**
+ * Set a toolbar button's state, touching the page only when it changes.
+ * @param {string} id
+ * @param {boolean} disabled
+ * @param {boolean|null} pressed    null: not a toggle
+ */
+function setBarButton(id, disabled, pressed) {
+  const b = buttonEl(id);
+  if (b.disabled !== disabled) {
+    b.disabled = disabled;
+  }
+  if (pressed !== null && b.getAttribute("aria-pressed") !== String(pressed)) {
+    b.setAttribute("aria-pressed", String(pressed));
+  }
+}
+
+/** The toolbar's buttons, from the state: what can be undone, taken back, snapped. */
+function refreshTouchBar() {
+  if (el("touch-bar").hidden) {
+    return;
+  }
+  setBarButton("touch-undo", app.history.length === 0, null);
+  setBarButton("touch-redo", app.future.length === 0, null);
+  setBarButton("touch-back", !canStepBack(), null);
+  setBarButton("touch-snap", false, settings.snap());
+  setBarButton("touch-exact", app.tool === "pan", app.exactOnce);
+}
+
+/**
+ * A finger came down where a press and hold may open a menu: start the clock (and the ring).
+ * @param {number} id
+ * @param {Point} p
+ */
+function startHold(id, p) {
+  cancelHold();
+  app.hold = { id, start: p, t0: performance.now(), timer: window.setTimeout(holdFired, HOLD_MS) };
+  requestAnimationFrame(animateHold);
+}
+
+function cancelHold() {
+  if (app.hold !== null) {
+    window.clearTimeout(app.hold.timer);
+    app.hold = null;
+    render();
+  }
+}
+
+function animateHold() {
+  if (app.hold !== null) {
+    render();
+    requestAnimationFrame(animateHold);
+  }
+}
+
+/**
+ * The ring that fills while a finger is held still, from a quarter of the time on, so that a
+ * quick tap shows nothing.
+ */
+function drawHoldRing() {
+  const h = app.hold;
+  if (h === null) {
+    return;
+  }
+  const t = (performance.now() - h.t0) / HOLD_MS;
+  if (t < 0.25) {
+    return;
+  }
+  ctx.save();
+  ctx.strokeStyle = PREVIEW_COLOR;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(h.start[0], h.start[1], 30, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(1, t));
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * The finger was held still long enough.  On a point it opens that point's menu, and the drag the
+ * finger had begun is given up; elsewhere nothing happens.  Either way its lift does nothing.
+ */
+function holdFired() {
+  const h = app.hold;
+  app.hold = null;
+  const g = app.gesture;
+  if (h === null || g === null || !(g.kind === "tap" || g.kind === "drag") || g.id !== h.id) {
+    render();
+    return;
+  }
+  const target = app.drag === null ? null : { kind: app.drag.kind, index: app.drag.index, point: app.drag.point };
+  cancelDrag();
+  app.gesture = { kind: "held", id: h.id };
+  app.preview = null;
+  if (target !== null) {
+    openHoldMenu(holdMenuItems(target), h.start);
+  }
+  render();
+}
+
+/**
+ * The actions for the point a finger was held on.
+ * @param {{kind: "vertex"|"point"|"width", index: number, point: number}} target
+ * @returns {Array<{label: string, act: () => void, disabled?: boolean}>}
+ */
+function holdMenuItems(target) {
+  if (target.kind === "vertex") {
+    const c = app.contours[target.index];
+    const i = target.point;
+    const last = c.closed && c.points.length > 2 ? Infinity : c.points.length - 1;
+    return [
+      { label: "Delete vertex", act: () => deleteVertex(target.index, i) },
+      {
+        label: "Select in the vertex window", act: () => {
+          setActive(target.index);
+          refreshContours();
+          pickVertex(i, "only");
+          if (el("vertex-window").hidden) {
+            toggleVertexWindow();
+          }
+        },
+      },
+      { label: "Insert a vertex after", disabled: i >= last, act: () => insertVertexAfter(target.index, i) },
+    ];
+  }
+  const ms = app.measurements[target.index];
+  /** @param {() => void} then @returns {() => void} */
+  const selectThen = (then) => () => {
+    app.selected = target.index;
+    refreshMeasurements();
+    render();
+    then();
+  };
+  const items = [
+    { label: `Delete ${ms.name}`, act: () => deleteMeasurement(target.index) },
+    { label: "Rename...", act: selectThen(() => renameMeasurement()) },
+  ];
+  if (ms.kind === "profile") {
+    items.push({ label: "Show the plot", act: selectThen(() => openProfileWindow()) });
+  }
+  return items;
+}
+
+/**
+ * Show a menu beside a point of the view (not under the finger), kept inside the view.
+ * @param {Array<{label: string, act: () => void, disabled?: boolean}>} items
+ * @param {Point} at     canvas CSS pixels
+ */
+function openHoldMenu(items, at) {
+  const menu = el("hold-menu");
+  menu.replaceChildren(...items.map((item) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.textContent = item.label;
+    b.disabled = item.disabled === true;
+    b.addEventListener("click", () => {
+      closeHoldMenu();
+      item.act();
+    });
+    return b;
+  }));
+  menu.hidden = false;
+  const area = el("view-wrap").getBoundingClientRect();
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(Math.min(at[0] + 28, area.width - box.width - 4), 4)}px`;
+  menu.style.top = `${Math.max(Math.min(at[1] - box.height - 12, area.height - box.height - 4), 4)}px`;
+}
+
+function closeHoldMenu() {
+  el("hold-menu").hidden = true;
+}
+
+/**
+ * Let a floating window be resized from its lower right corner by any pointer, a finger included:
+ * the browser's own resize corner answers the mouse only.
+ * @param {HTMLElement} win
+ */
+function resizableWindow(win) {
+  const grip = document.createElement("div");
+  grip.className = "grip";
+  grip.setAttribute("aria-hidden", "true");
+  win.append(grip);
+  /** @type {{x: number, y: number, w: number, h: number}|null} */
+  let start = null;
+  grip.addEventListener("pointerdown", (e) => {
+    const area = el("view-wrap").getBoundingClientRect();
+    const box = win.getBoundingClientRect();
+    win.style.left = `${box.left - area.left}px`;            // anchored at its top left while it grows
+    win.style.top = `${box.top - area.top}px`;
+    win.style.right = "auto";
+    win.style.bottom = "auto";
+    start = { x: e.clientX, y: e.clientY, w: box.width, h: box.height };
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch {
+      // a scripted pointer cannot be captured
+    }
+    e.preventDefault();
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (start === null) {
+      return;
+    }
+    const area = el("view-wrap").getBoundingClientRect();
+    const box = win.getBoundingClientRect();
+    const style = window.getComputedStyle(win);
+    const w = Math.min(Math.max(start.w + e.clientX - start.x, parseFloat(style.minWidth) || 200), area.right - box.left - 4);
+    const h = Math.min(Math.max(start.h + e.clientY - start.y, parseFloat(style.minHeight) || 150), area.bottom - box.top - 4);
+    win.style.width = `${w}px`;
+    win.style.height = `${h}px`;
+  });
+  grip.addEventListener("pointerup", () => {
+    start = null;
+  });
 }
 
 // ------------------------------------------------------------------------- touch
@@ -3056,7 +3388,11 @@ function touchDown(e) {
     } else {
       app.gesture = edits ? { kind: "tap", id: e.pointerId, start: p } : { kind: "pan", id: e.pointerId, last: p };
     }
+    if (app.tool !== "pan" && !app.originMode) {
+      startHold(e.pointerId, p);     // held still, it opens the menu of the point under it
+    }
   } else if (touches.size === 2) {
+    cancelHold();
     cancelDrag();                    // a second finger: what the first began gives way to a pinch
     app.preview = null;
     startPinch();
@@ -3070,6 +3406,10 @@ function touchMove(e) {
   }
   const p = eventPoint(e);
   touches.set(e.pointerId, p);
+  const h = app.hold;
+  if (h !== null && h.id === e.pointerId && Math.hypot(p[0] - h.start[0], p[1] - h.start[1]) > TAP_PX) {
+    cancelHold();                    // it moves: no press and hold
+  }
   let g = app.gesture;
   if (g !== null && g.kind === "pinch") {
     pinchMoved();
@@ -3105,6 +3445,9 @@ function touchMove(e) {
 function touchUp(e, cancelled) {
   if (!touches.delete(e.pointerId)) {
     return;
+  }
+  if (app.hold !== null && app.hold.id === e.pointerId) {
+    cancelHold();
   }
   const g = app.gesture;
   if (g !== null && g.kind === "pinch") {
@@ -3147,6 +3490,7 @@ canvas.addEventListener("pointerdown", (e) => {
   if (app.image === null) {
     return;
   }
+  notePointer(e);
   if (e.pointerType === "touch") {
     touchDown(e);
     return;
@@ -3181,6 +3525,7 @@ canvas.addEventListener("pointermove", (e) => {
     touchMove(e);
     return;
   }
+  notePointer(e);                    // a mouse or pen hovering after touch takes its own, finer hit radius
   const [sx, sy] = eventPoint(e);
   if (app.pan !== null) {
     app.view.tx += sx - app.pan.x;
@@ -3321,6 +3666,7 @@ const KEY_ACTIONS = {
   Escape: () => {
     app.pending = null;
     app.originMode = false;
+    closeHoldMenu();
     clearPicked();
     refreshFrameNotes();
     refreshVertexWindow();
@@ -3561,11 +3907,50 @@ function movableWindow(win, bar) {
 }
 movableWindow(el("vertex-window"), el("vertex-bar"));
 movableWindow(el("profile-window"), el("profile-bar"));
+resizableWindow(el("vertex-window"));
+resizableWindow(el("profile-window"));
+el("touch-undo").addEventListener("click", () => undo());
+el("touch-redo").addEventListener("click", () => redo());
+el("touch-fit").addEventListener("click", () => fit());
+el("touch-back").addEventListener("click", () => stepBack());
+el("touch-snap").addEventListener("click", () => {
+  toggleCheckbox("snap");
+  snapToggled();
+  render();
+});
+el("touch-exact").addEventListener("click", () => {
+  app.exactOnce = !app.exactOnce;
+  app.preview = null;
+  render();
+});
+window.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "touch") {
+    enterTouchLayout();              // the first touch brings the touch layout
+  }
+  const menu = el("hold-menu");
+  if (!menu.hidden && !(e.target instanceof Node && menu.contains(e.target))) {
+    closeHoldMenu();                 // a press anywhere else closes the menu
+  }
+}, true);
+if (window.matchMedia("(any-pointer: coarse)").matches) {
+  enterTouchLayout();                // a touch screen: the touch layout from the start
+}
 el("profile-close").addEventListener("click", () => toggleProfileWindow());
 el("profile-export").addEventListener("click", () => exportProfile());
 inputEl("profile-width").addEventListener("change", () => setProfileWidth(Number(inputEl("profile-width").value) / unitsPerView()));
+profileCanvas.addEventListener("pointerdown", (e) => {
+  try {
+    profileCanvas.setPointerCapture(e.pointerId);    // a finger can slide along the plot, and off it
+  } catch {
+    // a scripted pointer cannot be captured
+  }
+  profilePlotPointer(e);
+});
 profileCanvas.addEventListener("pointermove", (e) => profilePlotPointer(e));
-profileCanvas.addEventListener("pointerleave", () => {
+profileCanvas.addEventListener("pointerleave", (e) => {
+  if (e.pointerType === "touch") {
+    return;                          // a lifted finger leaves its reading in place
+  }
   app.profileCursor = null;
   showProfileReadout();
   drawProfilePlot();

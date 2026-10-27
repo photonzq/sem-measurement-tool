@@ -220,6 +220,25 @@ The view takes touch, pen and touchpad input through the browser's pointer event
 
 Touch has no hover, so the previews that follow the cursor (snap, insert with Ctrl) belong to the mouse and the pen.
 
+**The touch layout.** On a device with a touch screen, or after the first touch, the app adds what a keyboard or a right button gives otherwise.
+
+- **The touch toolbar**, at the top left of the view:
+  - *Undo* and *Redo*;
+  - *Fit*, the image to the view;
+  - *Back*, which takes back the last point of the measurement being placed, else the active contour's last vertex, or cancels *Set origin*;
+  - *Snap*, the same switch as in the panel;
+  - *Exact*, which places or releases the next point exactly where the finger is, without snapping, and then lets go.
+- **Press and hold** a point for half a second, while a ring fills, to open its menu beside the finger:
+  - a vertex: *Delete vertex*, *Select in the vertex window*, *Insert a vertex after* (halfway to the next one);
+  - a measurement's point: *Delete*, *Rename…*, and for a profile *Show the plot*.
+
+  Held on empty image, nothing happens, and lifting the finger places nothing.
+- **Larger targets.** A finger hits a point within 22 px, where the mouse needs 8. After touch input, points and handles are drawn larger. Snapping searches 2.5 times the search radius for a finger, which covers far more of the image than a cursor.
+- **Floating windows** get title bars and close buttons 44 px tall, and a resize corner that answers a finger; the browser's own corner answers the mouse only.
+- **The profile plot** reads out under a finger dragged along it, and the reading stays after the finger lifts.
+- **Number fields** open the number keypad of the Windows touch keyboard.
+- **A long press on the controls** no longer selects their text.
+
 These were checked with pointer events simulated in Chromium. They have not yet been tried on a real touch screen or with a real pen.
 
 ## Mouse and keys
@@ -240,6 +259,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | middle drag, Space+drag; drag with no tool | pan |
 | two fingers | pinch to zoom, move together to pan |
 | one finger | no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans |
+| press and hold a point (touch) | its menu: delete, select, insert after (a vertex); delete, rename, show the plot (a measurement) |
 | N, C | new contour; close or open the active one |
 | H, V | level the selected ruler horizontal or vertical |
 | S, G | snapping on or off; edge map on or off |

@@ -60,7 +60,7 @@
   .floating { position: absolute; top: 12px; right: 12px; width: 300px; height: 360px; min-width: 230px; min-height: 170px;
               max-width: calc(100% - 24px); max-height: calc(100% - 24px); display: flex; flex-direction: column;
               background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-              resize: both; overflow: hidden; z-index: 5; }
+              overflow: hidden; z-index: 5; }
   .floating[hidden] { display: none; }
   .floating header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 10px;
                      background: var(--accent); color: #fff; cursor: move; user-select: none; touch-action: none; }
@@ -80,10 +80,36 @@
   #profile-window .row input[type=number] { width: 96px; flex: 0 0 auto; }
   #profile-window .row button { flex: 0 0 auto; margin-left: auto; }
   #profile-plot { display: block; flex: 1 1 0; min-height: 0; height: 0; width: calc(100% - 12px); margin: 0 6px;
-                  border: 1px solid var(--line); background: #fff; cursor: crosshair; }
+                  border: 1px solid var(--line); background: #fff; cursor: crosshair; touch-action: none; }
   #profile-readout { margin: 3px 8px 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #profile-note { margin: 2px 8px 6px; }
   #about { margin: 18px 0 0; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; }
+  #touch-bar { position: absolute; left: 8px; top: 12px; z-index: 6; display: flex; flex-direction: column; gap: 6px; }
+  #touch-bar[hidden] { display: none; }
+  #touch-bar button { width: 56px; height: 52px; padding: 2px; display: flex; flex-direction: column; align-items: center;
+                      justify-content: center; font-size: 19px; line-height: 1; background: rgba(246, 246, 244, 0.94);
+                      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
+  #touch-bar button span { font-size: 11px; margin-top: 3px; }
+  #touch-bar button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #hold-menu { position: absolute; z-index: 8; display: flex; flex-direction: column; min-width: 210px; background: var(--panel);
+               border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); overflow: hidden; }
+  #hold-menu[hidden] { display: none; }
+  #hold-menu button { border: none; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left;
+                      min-height: 46px; padding: 10px 16px; font-size: 14px; }
+  #hold-menu button:last-child { border-bottom: none; }
+  .floating .grip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none;
+                    background: linear-gradient(135deg, transparent 50%, var(--muted) 50% 58%, transparent 58% 70%,
+                    var(--muted) 70% 78%, transparent 78%); }
+  /* the touch layout: a touch screen, or a first touch */
+  body.touch .floating header { min-height: 44px; }
+  body.touch .floating header button { min-width: 44px; min-height: 36px; font-size: 18px; }
+  body.touch .floating .row button { min-height: 40px; padding: 4px 10px; }
+  body.touch .floating .grip { width: 30px; height: 30px; }
+  body.touch #profile-window .row input[type=number] { min-height: 36px; }
+  /* no text selection, nor its highlight, on a long press of the controls */
+  #view, #drop-hint, button, label, summary, select, h2, kbd, .floating header, #touch-bar, #hold-menu {
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  button { -webkit-tap-highlight-color: transparent; }
   dialog { border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; background: var(--panel); color: var(--text); max-width: 420px; }
   dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
   dialog h2 { font-size: 14px; margin: 0 0 8px; }
@@ -116,11 +142,20 @@
       </div>
       <div id="vertex-note" class="note"></div>
     </section>
+    <div id="touch-bar" role="toolbar" aria-label="Touch tools" hidden>
+      <button type="button" id="touch-undo" title="Undo (Ctrl+Z)">&#x21B6;<span>Undo</span></button>
+      <button type="button" id="touch-redo" title="Redo (Ctrl+Y)">&#x21B7;<span>Redo</span></button>
+      <button type="button" id="touch-fit" title="Fit the image to the view (F)">&#x2922;<span>Fit</span></button>
+      <button type="button" id="touch-back" title="Take back the last point being placed, or the active contour's last vertex">&#x232B;<span>Back</span></button>
+      <button type="button" id="touch-snap" aria-pressed="false" title="Snap to the strongest nearby edge (S)">&#x2316;<span>Snap</span></button>
+      <button type="button" id="touch-exact" aria-pressed="false" title="Place or release the next point exactly, without snapping">&#x22B9;<span>Exact</span></button>
+    </div>
+    <div id="hold-menu" role="menu" aria-label="Point" hidden></div>
     <section id="profile-window" class="floating" aria-label="Line profile" hidden>
       <header id="profile-bar"><span id="profile-title">Profile</span><button type="button" id="profile-close" title="Close (P)">&times;</button></header>
       <div class="row">
         <label for="profile-width" class="inline" title="Width of the band across the line: the profile is the mean across it">band width</label>
-        <input type="number" id="profile-width" min="0" step="any">
+        <input type="number" inputmode="decimal" id="profile-width" min="0" step="any">
         <span id="profile-width-unit">µm</span>
         <button type="button" id="profile-export" title="Save the profile's samples as a CSV file">Export CSV</button>
       </div>
@@ -173,8 +208,8 @@
       <div class="grid">
         <label for="contour-layer" title="GDSII layer and datatype of the active contour, for Export GDS">GDS layer / datatype</label>
         <div class="pair">
-          <input type="number" id="contour-layer" min="0" max="32767" step="1" value="1">
-          <input type="number" id="contour-datatype" min="0" max="32767" step="1" value="0" aria-label="GDS datatype">
+          <input type="number" inputmode="numeric" id="contour-layer" min="0" max="32767" step="1" value="1">
+          <input type="number" inputmode="numeric" id="contour-datatype" min="0" max="32767" step="1" value="0" aria-label="GDS datatype">
         </div>
       </div>
       <div class="row">
@@ -205,13 +240,13 @@
       <label><input type="checkbox" id="snap"> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
       <div class="grid">
         <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
-        <input type="number" id="sigma" min="0.5" max="20" step="0.5" value="2">
+        <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
         <label for="median" title="Median filter before the gradient: removes isolated noisy pixels">median prefilter</label>
         <select id="median"><option value="0">off</option><option value="3" selected>3 &times; 3</option><option value="5">5 &times; 5</option></select>
         <label for="radius" title="Edges are searched within this distance of the click, in pixels of the corrected view">search radius (px)</label>
-        <input type="number" id="radius" min="2" max="300" step="1" value="12">
+        <input type="number" inputmode="numeric" id="radius" min="2" max="300" step="1" value="12">
         <label for="min-contrast" title="A click snaps only to an edge this many times stronger than the median gradient of the image">min. edge strength (&times; median)</label>
-        <input type="number" id="min-contrast" min="1" max="100" step="0.5" value="3">
+        <input type="number" inputmode="decimal" id="min-contrast" min="1" max="100" step="0.5" value="3">
       </div>
       <label><input type="checkbox" id="show-edges"> show the edge map <kbd>G</kbd></label>
     </section>
@@ -220,11 +255,11 @@
       <h2>Scale, tilt and rotation</h2>
       <div class="grid">
         <label for="pixel-x">pixel width (nm)</label>
-        <input type="number" id="pixel-x" min="0" step="any" placeholder="unknown">
+        <input type="number" inputmode="decimal" id="pixel-x" min="0" step="any" placeholder="unknown">
         <label for="pixel-y">pixel height (nm)</label>
-        <input type="number" id="pixel-y" min="0" step="any" placeholder="unknown">
+        <input type="number" inputmode="decimal" id="pixel-y" min="0" step="any" placeholder="unknown">
         <label for="tilt">stage tilt &theta; (&deg;)</label>
-        <input type="number" id="tilt" min="-90" max="90" step="any" value="0">
+        <input type="number" inputmode="decimal" id="tilt" min="-90" max="90" step="any" value="0">
         <label for="correction" title="none: as imaged.  cross-section: a face normal to the surface that contains the tilt axis (depths x 1/sin tilt).  tilted surface: features in the tilted surface (lengths across the axis x 1/cos tilt).  The image is stretched by k across the tilt axis.">tilt correction</label>
         <select id="correction">
           <option value="none">none</option>
@@ -233,11 +268,11 @@
           <option value="custom">custom k</option>
         </select>
         <label for="custom-factor">custom factor k</label>
-        <input type="number" id="custom-factor" min="0" step="any" value="1" disabled>
+        <input type="number" inputmode="decimal" id="custom-factor" min="0" step="any" value="1" disabled>
         <label for="tilt-axis" title="Direction of the stage tilt axis in the image, counter-clockwise from the horizontal: 0 when the scan is aligned with it.  The correction stretches across it.">tilt axis &alpha; (&deg;)</label>
-        <input type="number" id="tilt-axis" min="-90" max="90" step="any" value="0">
+        <input type="number" inputmode="decimal" id="tilt-axis" min="-90" max="90" step="any" value="0">
         <label for="rotation" title="Turns the corrected image counter-clockwise.  Lengths and angles do not change; exported coordinates are in the turned frame.">rotation &phi; (&deg;)</label>
-        <input type="number" id="rotation" min="-180" max="180" step="any" value="0">
+        <input type="number" inputmode="decimal" id="rotation" min="-180" max="180" step="any" value="0">
       </div>
       <div id="factor-note" class="note"></div>
       <div class="row">
@@ -253,9 +288,9 @@
       <canvas id="histogram" title="Histogram of the image without its info bar.  Drag the black or the white level."></canvas>
       <div class="grid">
         <label for="black-level" title="The grey value shown black">black level</label>
-        <input type="number" id="black-level" step="any">
+        <input type="number" inputmode="decimal" id="black-level" step="any">
         <label for="white-level" title="The grey value shown white">white level</label>
-        <input type="number" id="white-level" step="any">
+        <input type="number" inputmode="decimal" id="white-level" step="any">
         <label for="brightness" title="Moves the window between the two levels over the values, keeping its width">brightness</label>
         <input type="range" id="brightness" min="0" max="1000" step="1" value="500">
         <label for="contrast" title="Narrows or widens the window between the two levels about its centre">contrast</label>
@@ -298,6 +333,7 @@
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window</td></tr>
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click on a profile under Measurements</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
+          <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete, rename or show the plot (a measurement)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour) or the selected measurement</td></tr>
           <tr><td><kbd>Delete</kbd></td><td>delete the selected vertices, else the selected measurement</td></tr>
@@ -321,15 +357,15 @@
       <label for="gds-cell">cell name</label>
       <input type="text" id="gds-cell" maxlength="32" spellcheck="false">
       <label for="gds-path-width" title="Open contours are written as paths of this width; 0 gives lines">path width of open contours (&micro;m)</label>
-      <input type="number" id="gds-path-width" min="0" step="any" value="0">
+      <input type="number" inputmode="decimal" id="gds-path-width" min="0" step="any" value="0">
     </div>
     <label><input type="checkbox" id="gds-names"> contour names as text labels, on each contour's layer</label>
     <label><input type="checkbox" id="gds-measurements"> measurements as annotations (lines and their values)</label>
     <div class="grid">
       <label for="gds-annotation-layer">annotation layer / datatype</label>
       <div class="pair">
-        <input type="number" id="gds-annotation-layer" min="0" max="32767" step="1" value="100">
-        <input type="number" id="gds-annotation-datatype" min="0" max="32767" step="1" value="0" aria-label="annotation datatype">
+        <input type="number" inputmode="numeric" id="gds-annotation-layer" min="0" max="32767" step="1" value="100">
+        <input type="number" inputmode="numeric" id="gds-annotation-datatype" min="0" max="32767" step="1" value="0" aria-label="annotation datatype">
       </div>
     </div>
     <p class="note">Closed contours become polygons and open ones paths, each on its own layer (set under Contours).  Coordinates are those of the polygon file, micrometres in the measurement frame, on a 1 nm grid (user unit 1 &micro;m).</p>
