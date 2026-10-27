@@ -284,7 +284,7 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
 | `saved` | when the file was written (ISO 8601, UTC) |
 | `image` | the image the work belongs to: `name`, `sha256` (or null), `size_px`, `databar_rows` (the info bar, as in the CSV header), `microscope` (or null). The pixels themselves are not in the file. |
 | `frame` | the measurement frame, the keys of the CSV header: `pixel_size_nm` (null when unknown), `tilt_deg`, `correction`, `custom_factor`, `tilt_axis_deg`, `rotation_deg`, `origin_px` |
-| `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`. Optional; the defaults apply without it. |
+| `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`. Optional; without it the defaults apply: snapping on, 2, 3, 12, 3. |
 | `contours` | `name` (unique, on one line), `closed`, `gds_layer` (the GDSII layer and datatype, integers in 0–32767; [1, 0] when absent), `points_px` (pixel coordinates, rounded to 1e-4 px) |
 | `measurements` | `name` (unique), `kind` (`ruler`: 2 points, `angle`: 3, `line-angle`: 4, `profile`: 2, in the order of the measurements file), `points_px`; for a profile, `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent) |
 | `active_contour` | index of the contour that receives new vertices |

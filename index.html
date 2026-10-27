@@ -237,7 +237,7 @@
 
     <section>
       <h2>Snapping to edges</h2>
-      <label><input type="checkbox" id="snap"> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
+      <label><input type="checkbox" id="snap" checked> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
       <div class="grid">
         <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
         <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
@@ -331,7 +331,7 @@
           <tr><td><kbd>H</kbd> <kbd>V</kbd></td><td>turn the image so that the selected ruler is horizontal / vertical</td></tr>
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window</td></tr>
-          <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click on a profile under Measurements</td></tr>
+          <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
           <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete, rename or show the plot (a measurement)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>

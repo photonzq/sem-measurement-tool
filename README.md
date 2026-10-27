@@ -33,7 +33,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
    - *none* for untilted images, or images the microscope corrected itself.
 
    Set the origin if the micrometres should start somewhere particular.
-3. **Turn on snapping** (S) and, to see where clicks will snap to, the edge map (G).
+3. **Snapping** to edges is on from the start; S switches it. The edge map (G) shows what clicks snap to. It is computed as the image opens, in a few seconds for a large image.
 4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4) and *Profile* (5). *Pan* (0), or a click on the active tool, puts the tool down again.
 5. **Level the image** if you like. Draw a ruler along something that should be horizontal, such as the substrate, select it and press *Level: horizontal* (H) or *Level: vertical* (V). Lengths and angles do not change; directions and the exported coordinates turn with the image.
 6. **Keep the work**: *Save session* (Ctrl+S). *Export polygons* writes the contours for a mode solver, *Export GDS…* writes them as a GDSII layout, each on its layer, and *Export measurements* writes the rulers and angles. To continue later, open the image, then *Open session…*.
@@ -47,7 +47,7 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
   - A click adds a vertex at the end of the active contour (amber); the other contours are cyan.
   - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or exact with Alt. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
   - A drag moves a vertex, a right click deletes one, and Backspace deletes the last. A click on a vertex, without dragging, selects it for the vertex window; Shift+click adds or removes it.
-  - N starts a new contour, and C closes or opens the active one.
+  - The first vertex starts *contour 1*; there is no empty contour before it. N starts a new contour, and C closes or opens the active one.
   - The panel shows each contour's perimeter, area and bounding box, the box taken in the turned frame, and its GDS layer and datatype (1/0 unless set).
 - **Ruler.** Two clicks. It shows the length, the components ΔX and ΔY, and the direction, counter-clockwise from +X.
 - **Angle.** Three clicks: the end of one arm, the vertex, the end of the other arm. It gives the angle at the vertex, 0–180°.
@@ -88,7 +88,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - Or type the width in the profile window.
   - New profiles take the last width set. A width of one pixel or less is the line alone.
 - **Sampling.** Values are read about one stored pixel apart, both along the line and across the band. They are interpolated bilinearly from the stored grey values, not from the display. Points outside the image, or in its info bar, have no value. MATH.md, Part 6, derives the sampling.
-- **The profile window** plots the selected profile. It opens by itself when a profile is made, and on a double click on a profile under *Measurements*; P shows or hides it. It shows:
+- **The profile window** plots the selected profile. It opens by itself when a profile is made, and on a double click or double tap on a profile under *Measurements*; P shows or hides it. It shows:
   - the mean across the band against the distance from the first end;
   - the spread across the band (± one standard deviation), shaded;
   - every contour that crosses the line, as a dashed line in the contour's colour with its name.
@@ -142,7 +142,7 @@ The view draws the stored image through the same map, so a change of calibration
 
 ## Snapping
 
-With *Snap* on (S), a click lands on the strongest edge nearby, and a magenta ring shows in advance where it will land. The method is in MATH.md, Part 2:
+With *Snap* on, as it is from the start (S switches it), a click lands on the strongest edge nearby, and a magenta ring shows in advance where it will land. The method is in MATH.md, Part 2:
 
 - **Edge strength.** The gradient of a Gaussian-smoothed image, after an optional 3 × 3 or 5 × 5 median filter: *smoothing σ*, in pixels of the stored image. Larger σ resists noise better, but merges edges closer than about 2σ.
 - **Threshold.** Candidates must be *min. edge strength* times the median gradient of the image. Pure noise exceeds $c$ times the median with the probability $2^{-c^2}$ per independent sample, 0.2 % at the default 3.
@@ -264,7 +264,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | H, V | level the selected ruler horizontal or vertical |
 | S, G | snapping on or off; edge map on or off |
 | T | show or hide the vertex window |
-| P | show or hide the profile window; it also opens for a new profile, and on a double click on a profile under *Measurements* |
+| P | show or hide the profile window; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten) |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour) or the selected measurement |
 | Delete | delete the selected vertices, else the selected measurement |
@@ -277,7 +277,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 
 The costs, measured on the FEI test image of 3072 × 2188 pixels (6.29 Mpx above the data bar), are analysed in [MATH.md, Part 3](MATH.md#part-3-performance):
 
-- **Opening an image** computes for about 0.35 s: decode, checksum, auto levels, histogram and picture. With the screen updates, it took 0.7–1 s from the click.
+- **Opening an image** computes for about 0.35 s: decode, checksum, auto levels, histogram and picture. Snapping is on from the start, so the edge map follows at once, and opening took 2.7 s from the click in all.
 - **A change of levels** repaints the picture in 40–70 ms, one table look-up per pixel, so the sliders and the histogram handles follow the pointer.
 - **The edge map** takes 1.1 s with σ = 2 and no median, 2.1 s with the 3 × 3 median (the default), and 4.2 s with 5 × 5. It is computed only when snapping or the overlay needs it, and again only when σ or the median changes.
 - **A snap search** takes microseconds.

@@ -61,6 +61,7 @@ const TAP_PX = 10;                   // a touch that moves less than this is a t
 const TOUCH_HIT_PX = 22;             // HIT_PX for a finger, which covers far more than a cursor tip
 const TOUCH_SNAP = 2.5;              // a finger searches this many times the snap radius for an edge
 const HOLD_MS = 500;                 // a finger held still this long on a point opens its menu
+const DOUBLE_MS = 500;               // two clicks or taps on one list row within this time are a double click
 
 /** @returns {Frame} */
 function defaultFrame() {
@@ -92,7 +93,7 @@ const app = {
   /** @type {HTMLCanvasElement|null} */
   overlay: null,
   /** @type {Contour[]} */
-  contours: [{ name: "contour 1", closed: true, points: [] }],
+  contours: [],
   active: 0,
   /** @type {Measurement[]} */
   measurements: [],
@@ -420,7 +421,7 @@ async function openImageBuffer(name, buffer) {
   const nm = (m) => Number((m * 1e9).toPrecision(12));
   app.frame = { ...defaultFrame(), pixelNm: cal.pixelSizeM ? [nm(cal.pixelSizeM[0]), nm(cal.pixelSizeM[1])] : null,
     tiltDeg: cal.tiltDeg ?? 0 };
-  app.contours = [{ name: "contour 1", closed: true, points: [] }];
+  app.contours = [];
   app.active = 0;
   clearPicked();
   app.measurements = [];
@@ -639,7 +640,11 @@ function draw() {
  * @param {(p: Point) => Point} toScreen
  */
 function drawPicked(toScreen) {
-  const points = activeContour().points;
+  const c = currentContour();
+  if (c === null) {
+    return;
+  }
+  const points = c.points;
   ctx.save();
   ctx.strokeStyle = PICKED_COLOR;
   ctx.lineWidth = 2.5;
@@ -663,7 +668,10 @@ function drawPicked(toScreen) {
  * @returns {{a: Point, b: Point, p: Point}|null}
  */
 function insertTarget() {
-  const c = activeContour();
+  const c = currentContour();
+  if (c === null) {
+    return null;
+  }
   const n = c.points.length;
   const cursor = app.cursor;
   const screen = app.cursorScreen;
@@ -1045,13 +1053,32 @@ function drawPending(toScreen) {
 
 // ------------------------------------------------------------------------- editing
 
-/** @returns {Contour} */
-function activeContour() {
+/** @returns {Contour|null} the contour that receives new vertices; null before the first one */
+function currentContour() {
   if (app.contours.length === 0) {
-    app.contours.push({ name: "contour 1", closed: true, points: [] });
+    return null;
   }
   app.active = Math.min(Math.max(app.active, 0), app.contours.length - 1);
   return app.contours[app.active];
+}
+
+/** @returns {Contour} the contour that receives new vertices, made ("contour 1") when there is none yet */
+function activeContour() {
+  if (app.contours.length === 0) {
+    app.contours.push({ name: nextContourName(), closed: true, points: [] });
+    app.active = 0;
+  }
+  return /** @type {Contour} */ (currentContour());
+}
+
+/** @returns {string} "contour 2" and so on, unused so far */
+function nextContourName() {
+  const names = new Set(app.contours.map((c) => c.name));
+  let k = app.contours.length + 1;
+  while (names.has(`contour ${k}`)) {
+    k++;
+  }
+  return `contour ${k}`;
 }
 
 /** @returns {string} */
@@ -1263,12 +1290,7 @@ function forgetVertex(index) {
 
 function newContour() {
   pushHistory();
-  const names = new Set(app.contours.map((c) => c.name));
-  let k = app.contours.length + 1;
-  while (names.has(`contour ${k}`)) {
-    k++;
-  }
-  app.contours.push({ name: `contour ${k}`, closed: true, points: [] });
+  app.contours.push({ name: nextContourName(), closed: true, points: [] });
   setActive(app.contours.length - 1);
   refreshContours();
   render();
@@ -1298,7 +1320,10 @@ function askName(current, others, what) {
 }
 
 function renameContour() {
-  const c = activeContour();
+  const c = currentContour();
+  if (c === null) {
+    return;
+  }
   const name = askName(c.name, app.contours.filter((o) => o !== c).map((o) => o.name), "contour");
   if (name !== null) {
     pushHistory();
@@ -1308,20 +1333,20 @@ function renameContour() {
 }
 
 function deleteContour() {
-  pushHistory();
-  app.contours.splice(app.active, 1);
-  if (app.contours.length === 0) {
-    app.contours.push({ name: "contour 1", closed: true, points: [] });
+  if (currentContour() === null) {
+    return;
   }
-  app.active = Math.min(app.active, app.contours.length - 1);
+  pushHistory();
+  app.contours.splice(app.active, 1);              // the last one leaves none: the next vertex makes one
+  app.active = Math.max(Math.min(app.active, app.contours.length - 1), 0);
   clearPicked();
   refreshContours();
   render();
 }
 
 function deleteLastVertex() {
-  const c = activeContour();
-  if (c.points.length > 0) {
+  const c = currentContour();
+  if (c !== null && c.points.length > 0) {
     pushHistory();
     c.points.pop();
     forgetVertex(c.points.length);
@@ -1332,7 +1357,11 @@ function deleteLastVertex() {
 
 /** @param {boolean} closed */
 function setClosed(closed) {
-  const c = activeContour();
+  const c = currentContour();
+  if (c === null) {
+    refreshContours();
+    return;
+  }
   if (c.closed !== closed) {
     pushHistory();
     c.closed = closed;
@@ -1496,23 +1525,52 @@ function showMetadata() {
   el("metadata-raw").textContent = image.metadataText || "(none)";
 }
 
+/**
+ * Fill a list with rows, keeping its option elements: a row clicked twice must stay the same
+ * element for the browser to pair the clicks, and rebuilding the rows on each change broke that.
+ * @param {HTMLSelectElement} list
+ * @param {string[]} texts
+ */
+function fillList(list, texts) {
+  while (list.options.length > texts.length) {
+    list.remove(list.options.length - 1);
+  }
+  texts.forEach((text, i) => {
+    let option = list.options[i];
+    if (option === undefined) {
+      option = document.createElement("option");
+      option.value = String(i);
+      list.append(option);
+    }
+    if (option.textContent !== text) {
+      option.textContent = text;
+    }
+  });
+}
+
 function refreshContours() {
   const list = selectEl("contour-list");
-  list.replaceChildren(...app.contours.map((c, i) => {
-    const option = document.createElement("option");
-    option.value = String(i);
-    const [l, d] = c.layer ?? [1, 0];
-    option.textContent = `${c.name}  (${c.points.length} vertices${c.closed ? "" : ", open"}; GDS ${l}/${d})`;
-    return option;
+  fillList(list, app.contours.map((k) => {
+    const [l, d] = k.layer ?? [1, 0];
+    return `${k.name}  (${k.points.length} vertices${k.closed ? "" : ", open"}; GDS ${l}/${d})`;
   }));
-  const c = activeContour();
+  const c = currentContour();
+  for (const id of ["rename-contour", "delete-contour", "closed", "contour-layer", "contour-datatype"]) {
+    /** @type {HTMLInputElement|HTMLButtonElement} */ (el(id)).disabled = c === null;
+  }
+  refreshVertexWindow();
+  refreshProfileWindow();                // contours that cross the profile
+  if (c === null) {
+    list.selectedIndex = -1;
+    inputEl("closed").checked = true;
+    el("measures").textContent = "No contours yet: the contour tool (1) starts one with its first vertex.";
+    return;
+  }
   list.selectedIndex = app.active;
   inputEl("closed").checked = c.closed;
   const [layer, datatype] = c.layer ?? [1, 0];
   inputEl("contour-layer").value = String(layer);
   inputEl("contour-datatype").value = String(datatype);
-  refreshVertexWindow();
-  refreshProfileWindow();                // contours that cross the profile
   const m = measureContour(c, app.frame);
   const lines = [`${c.name}: ${c.points.length} vertices, ${c.closed ? "closed" : "open"}`];
   if (m === null) {
@@ -1581,12 +1639,7 @@ function describeMeasurement(ms) {
 
 function refreshMeasurements() {
   const list = selectEl("measurement-list");
-  list.replaceChildren(...app.measurements.map((ms, i) => {
-    const option = document.createElement("option");
-    option.value = String(i);
-    option.textContent = `${ms.name}: ${describeMeasurement(ms).brief}`;
-    return option;
-  }));
+  fillList(list, app.measurements.map((ms) => `${ms.name}: ${describeMeasurement(ms).brief}`));
   app.selected = Math.min(app.selected, app.measurements.length - 1);
   list.selectedIndex = app.selected;
   const ms = app.measurements[app.selected];
@@ -1985,7 +2038,7 @@ function loadPolygonText(text, name) {
     contours.push({ name: c.name, closed: c.closed, points });
   }
   pushHistory();
-  app.contours = contours.length ? contours : [{ name: "contour 1", closed: true, points: [] }];
+  app.contours = contours;
   app.active = 0;
   clearPicked();
   changeFrame(() => {
@@ -2014,7 +2067,7 @@ function loadSessionText(text, name) {
     return false;
   }
   pushHistory();
-  app.contours = session.contours.length ? session.contours : [{ name: "contour 1", closed: true, points: [] }];
+  app.contours = session.contours;
   app.active = session.activeContour;
   clearPicked();
   app.measurements = session.measurements;
@@ -2062,7 +2115,11 @@ function layerInputsChanged() {
   const layer = Number(inputEl("contour-layer").value);
   const datatype = Number(inputEl("contour-datatype").value);
   const ok = (/** @type {number} */ v) => Number.isInteger(v) && v >= 0 && v <= 32767;
-  const c = activeContour();
+  const c = currentContour();
+  if (c === null) {
+    refreshContours();
+    return;
+  }
   const [l, d] = c.layer ?? [1, 0];
   if (!ok(layer) || !ok(datatype)) {
     setStatus("A GDS layer and datatype are whole numbers from 0 to 32767.");
@@ -2086,11 +2143,12 @@ function refreshVertexWindow() {
   if (el("vertex-window").hidden) {
     return;
   }
-  const c = activeContour();
+  const current = currentContour();
+  const c = current ?? { name: "", closed: true, points: [] };
   const m = measurementMatrix(app.frame);
   const unit = m === null ? "?" : unitText(m.unit);
   const digits = m !== null && m.unit === "um" ? 4 : 2;
-  el("vertex-title").textContent = `Vertices of ${c.name}`;
+  el("vertex-title").textContent = current === null ? "Vertices: no contour yet" : `Vertices of ${c.name}`;
   el("vertex-x-head").textContent = `X (${unit})`;
   el("vertex-y-head").textContent = `Y (${unit})`;
   const picked = new Set(app.picked);
@@ -2150,8 +2208,8 @@ function pickVertex(i, how) {
  * @param {number[]} picked
  */
 function setVertices(points, picked) {
-  const c = activeContour();
-  if (JSON.stringify(points) === JSON.stringify(c.points)) {
+  const c = currentContour();
+  if (c === null || JSON.stringify(points) === JSON.stringify(c.points)) {
     return;
   }
   pushHistory();
@@ -2163,26 +2221,33 @@ function setVertices(points, picked) {
 
 /** @param {number} step  -1 (up, earlier) or 1 */
 function movePicked(step) {
-  const r = moveSelected(activeContour().points, app.picked, step);
-  setVertices(r.points, r.selected);
+  const c = currentContour();
+  if (c !== null) {
+    const r = moveSelected(c.points, app.picked, step);
+    setVertices(r.points, r.selected);
+  }
 }
 
 function dropPicked() {
-  if (app.picked.length) {
-    setVertices(dropSelected(activeContour().points, app.picked), []);
+  const c = currentContour();
+  if (c !== null && app.picked.length) {
+    setVertices(dropSelected(c.points, app.picked), []);
     app.pickAnchor = -1;
   }
 }
 
 function makePickedFirst() {
-  const c = activeContour();
-  if (app.picked.length === 1 && c.closed) {
+  const c = currentContour();
+  if (c !== null && app.picked.length === 1 && c.closed) {
     setVertices(makeFirst(c.points, app.picked[0]), [0]);
   }
 }
 
 function reversePicked() {
-  const c = activeContour();
+  const c = currentContour();
+  if (c === null) {
+    return;
+  }
   const r = reverseContour(c.points, c.closed, app.picked);
   setVertices(r.points, r.selected);
 }
@@ -2195,11 +2260,11 @@ function reversePicked() {
  * @param {number} value
  */
 function setVertexCoordinate(i, axis, value) {
-  const c = activeContour();
-  const p = c.points[i];
+  const c = currentContour();
+  const p = c === null ? undefined : c.points[i];
   const q = p === undefined ? null : toMeasurement(app.frame, p[0], p[1]);
   const u = q === null ? null : fromMeasurement(app.frame, axis === "x" ? value : q[0], axis === "y" ? value : q[1]);
-  if (u !== null) {
+  if (u !== null && c !== null) {
     const points = c.points.slice();
     points[i] = u;
     setVertices(points, app.picked);
@@ -2250,7 +2315,10 @@ function editCoordinate(cell) {
 
 /** Centre the view on the picked vertices (all of the contour when none), at least 40 view units wide. */
 function zoomToPicked() {
-  const c = activeContour();
+  const c = currentContour();
+  if (c === null) {
+    return;
+  }
   const which = app.picked.length ? app.picked : c.points.map((_, i) => i);
   if (!which.length) {
     return;
@@ -2286,7 +2354,10 @@ function arrowKey(e) {
   e.preventDefault();
   const k = e.shiftKey ? 10 : 1;
   const [sx, sy] = viewStepToStored(app.frame, k * d[0], k * d[1]);
-  const c = activeContour();
+  const c = currentContour();
+  if (c === null) {
+    return false;
+  }
   setVertices(c.points.map((p, i) => (app.picked.includes(i) ? [p[0] + sx, p[1] + sy] : p)), app.picked);
   return true;
 }
@@ -3095,7 +3166,7 @@ function notePointer(e) {
 
 /** @returns {boolean} whether Back has something to take back */
 function canStepBack() {
-  return app.pending !== null || app.originMode || (app.tool === "contour" && activeContour().points.length > 0);
+  return app.pending !== null || app.originMode || (app.tool === "contour" && (currentContour()?.points.length ?? 0) > 0);
 }
 
 /** Back: the last point of the measurement being placed, else "Set origin", else the active contour's last vertex. */
@@ -3639,7 +3710,7 @@ const KEY_ACTIONS = {
   5: () => setTool("profile"),
   p: () => toggleProfileWindow(),
   n: () => newContour(),
-  c: () => setClosed(!activeContour().closed),
+  c: () => setClosed(!(currentContour()?.closed ?? false)),
   h: () => levelSelected("horizontal"),
   v: () => levelSelected("vertical"),
   s: () => {
@@ -3795,14 +3866,20 @@ selectEl("measurement-list").addEventListener("change", () => {
   refreshMeasurements();
   render();
 });
-selectEl("measurement-list").addEventListener("dblclick", () => {
+/** The last click on the measurement list: two on one row within DOUBLE_MS make a double click. */
+let listClick = { index: -1, time: -Infinity };
+selectEl("measurement-list").addEventListener("click", () => {
+  // timed here, for the mouse and a finger alike: a double tap does not always send dblclick
   const index = selectEl("measurement-list").selectedIndex;
+  const now = performance.now();
+  const second = index >= 0 && index === listClick.index && now - listClick.time < DOUBLE_MS;
+  listClick = second ? { index: -1, time: -Infinity } : { index, time: now };
   if (index !== app.selected) {
     app.selected = index;
     refreshMeasurements();
     render();
   }
-  if (shownProfile() !== null) {
+  if (second && shownProfile() !== null) {
     openProfileWindow();             // a double click on a profile brings up its plot
   }
 });

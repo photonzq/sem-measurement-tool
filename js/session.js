@@ -225,7 +225,7 @@ function frameAt(value) {
  */
 function snapAt(value) {
   if (value === undefined) {
-    return { on: false, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3 };
+    return { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3 };
   }
   const s = objectAt(value, "snap");
   return {
