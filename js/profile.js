@@ -187,7 +187,7 @@ function sampleProfile(image, g) {
 /**
  * (P5): where the contours cross the line, in order along it.
  * @param {Point[]} points       u1 and u2
- * @param {Contour[]} contours
+ * @param {Array<{closed: boolean, points: Point[]}>} contours
  * @returns {Array<{contour: number, t: number}>}   t: 0 at u1, 1 at u2
  */
 function profileCrossings(points, contours) {

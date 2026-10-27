@@ -5,10 +5,13 @@ The app reads and writes plain-text files, all UTF-8 without a byte-order mark, 
 | File | Written by | Purpose |
 |:--|:--|:--|
 | session, `<image>_session.json` | **Save session** (Ctrl+S) | the working file: everything needed to take up the work on an image again |
-| polygon file, `<image>_polygons.csv` | **Export polygons** | the interface to a mode solver, or any program that takes the traced contours |
-| measurements file, `<image>_measurements.csv` | **Export measurements** | rulers, angles and line profiles, for a spreadsheet or a report |
-| profile file, `<image>_<profile name>.csv` | **Export CSV** in the profile window | the samples of one line profile; written only |
-| GDSII file, `<image>.gds` | **Export GDS…** | the contours as a layout, for KLayout, gdstk, GDSFactory and other layout tools; written only |
+| polygon file, `<image>_polygons.csv` (several contours) or `<image>_<contour>.csv` (one) | **Download** | the interface to a mode solver, or any program that takes the traced contours |
+| measurements file, `<image>_measurements.csv` (several measurements) or `<image>_<measurement>.csv` (a ruler or an angle) | **Download** | one row per measurement, for a spreadsheet or a report |
+| profile file, `<image>_<profile>.csv` | **Download**, or **Export CSV** in the profile window | the samples of one line profile; written only |
+| profile plot, `<image>_<profile>.png` | **Download**, or **Export PNG** in the profile window | the plot of one line profile, a PNG image of 2400 × 1500 pixels; written only |
+| GDSII file, `<image>.gds` (several contours) or `<image>_<contour>.gds` (one) | **Download** | contours as a layout, for KLayout, gdstk, GDSFactory and other layout tools; written only |
+
+**Download** sits under the list of measurements and offers what the selection can be saved as. A contour alone gives its polygon file or GDSII file, and a profile alone its profile file or its plot. A ruler or an angle alone gives its measurements file. Several measurements give a measurements file with one row each, and the polygon file and GDSII file of the contours among them. Its last entries do the same for all the measurements. A name in angle brackets is the measurement's, with anything other than letters, digits, `.`, `_` and `-` turned into `_`.
 
 **Open session…** reads either a session or a polygon file.
 
@@ -91,6 +94,8 @@ Readers ignore keys they do not know.
 # origin_px: 1536 1024
 # px_to_um: 0.001348947159 0.000007469759442 0.000005885929693 -0.001711931896
 # snap: sigma_px=2 median=3 radius_px=12 min_contrast=3 snap=on
+# measures: rib, perimeter_um 4.207638, area_um2 0.348614
+# measures: slab top, length_um 3.874213
 # (x_um, y_um) = px_to_um (x_px - origin_x, y_px - origin_y), px_to_um = [[a, b], [c, d]] given as a b c d
 contour,closed,vertex,x_um,y_um,x_px,y_px
 rib,1,0,-0.813614,0.288150,933.796,853.611
@@ -102,6 +107,8 @@ slab top,0,1,1.936647,0.109456,2972.000,965.000
 ```
 
 The app wrote this example, for a FIB cross-section imaged on an FEI DualBeam; only the image's file name has been changed, here and in the examples below. Every micrometre value follows from the pixels through `px_to_um`.
+
+**Measures.** Above the columns, one comment line per contour gives its measures, for the record. A closed contour has `# measures: NAME, perimeter_um P, area_um2 A`, and an open one `# measures: NAME, length_um L`. NAME is quoted as a CSV field when it holds a comma or a double quote. Values are written with 6 decimals. Without a pixel size the units are `px` and `px2`, with 3 decimals, and with the correction factor undefined the lines are left out. Readers need not read them: they follow from the vertices, and neither the app nor the reader below uses them.
 
 **Column header.** The first line that is not a comment. Required columns are `contour`, `closed`, `vertex`, `x_um` and `y_um`; `x_px` and `y_px` are optional. Readers find columns by name, so their order may change, and ignore columns they do not know.
 
@@ -152,18 +159,21 @@ def read_polygons(path):
 # origin_px: 1536 1024
 # px_to_um: 0.001348947159 0.000007469759442 0.000005885929693 -0.001711931896
 # unit: um
-# lengths in the unit above, angles in degrees; points in pixels of the image as stored; width and mean_grey: the band of a line profile
-name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey
-rib width,ruler,1.622226,um,1.622208,0.007633,0.270,933.796,853.611,2136.371,853.287,,,,,,
-"foot, left",angle,136.833,deg,,,,100.000,965.000,783.010,965.040,933.796,853.611,,,,
-sidewall,line-angle,43.163,deg,,,,100.000,965.000,700.000,965.000,783.010,965.040,933.796,853.611,,
-profile 1,profile,0.599182,um,0.002614,-0.599176,-89.750,1500.000,750.000,1500.000,1100.000,,,,,0.006745,27367.601
+# lengths in the unit above, areas in its square, angles in degrees; points in pixels of the image as stored; width and mean_grey: the band of a line profile; closed to bbox_height: a contour, whose value is its perimeter (closed) or length (open) and whose vertices are in the polygon file
+name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey,closed,vertices,area,bbox_width,bbox_height
+rib,contour,4.207638,um,,,,,,,,,,,,,,1,4,0.348614,2.028043,0.199279
+slab top,contour,3.874213,um,,,,,,,,,,,,,,0,2,,3.874176,0.016904
+rib width,ruler,1.622226,um,1.622208,0.007633,0.270,933.796,853.611,2136.371,853.287,,,,,,,,,,,
+"foot, left",angle,136.833,deg,,,,100.000,965.000,783.010,965.040,933.796,853.611,,,,,,,,,
+sidewall,line-angle,43.163,deg,,,,100.000,965.000,700.000,965.000,783.010,965.040,933.796,853.611,,,,,,,
+profile 1,profile,0.599182,um,0.002614,-0.599176,-89.750,1500.000,750.000,1500.000,1100.000,,,,,0.006745,27367.601,,,,,
 ```
 
-One row per measurement. The `kind` column decides which other columns are filled:
+One row per measurement, in the order of the list. The `kind` column decides which other columns are filled:
 
 | `kind` | points | `value` | `unit` | `dx`, `dy`, `direction_deg` |
 |:--|:--|:--|:--|:--|
+| `contour` | empty: the vertices are in the polygon file | its perimeter when closed, with the closing segment; its length when open | `um`, or `px` without a pixel size | empty |
 | `ruler` | 1 → 2 | length | `um`, or `px` without a pixel size | the components of point 2 − point 1 in the measurement frame, and its direction, counter-clockwise from +x in (−180°, 180°] |
 | `angle` | arm end, vertex, arm end | the angle at the vertex, in [0°, 180°] | `deg` | empty |
 | `line-angle` | line 1 from, to; line 2 from, to | the angle between the two lines as clicked, in [0°, 180°]; the supplement is the angle with one line reversed | `deg` | empty |
@@ -174,9 +184,14 @@ One row per measurement. The `kind` column decides which other columns are fille
 - `width` is the band width in the unit.
 - `mean_grey` is the mean of all the grey values sampled in the band (MATH.md, 6.4), with eight significant digits. It is empty when no sample lies in the image.
 
-Unused point columns are empty. Lengths in µm carry 6 decimals, in pixels 3; angles carry 3 decimals. All values are empty when the correction factor is undefined.
+`closed`, `vertices`, `area`, `bbox_width` and `bbox_height` are filled for contours only:
 
-Version 1 files written before profiles existed end at `y4_px`. Readers that find columns by name read both.
+- `closed` is `1` for a closed polygon and `0` for an open polyline, as in the polygon file.
+- `vertices` is the number of vertices.
+- `area` is the area enclosed, in the unit squared (MATH.md, (G12)). It is empty for an open contour, and for a closed one of fewer than three vertices.
+- `bbox_width` and `bbox_height` are the extent of the vertices along x and y of the measurement frame, so they turn with the image.
+
+Unused point columns are empty. Lengths and areas in µm carry 6 decimals, in pixels 3; angles carry 3 decimals. All values are empty when the correction factor is undefined, but for a contour's `closed` and `vertices`.
 
 ## Session file, version 1
 
@@ -210,9 +225,10 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
     "radius_px": 12,
     "min_contrast": 3
   },
-  "contours": [
+  "measurements": [
     {
       "name": "rib",
+      "kind": "contour",
       "closed": true,
       "gds_layer": [1, 0],
       "points_px": [
@@ -224,15 +240,14 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
     },
     {
       "name": "slab top",
+      "kind": "contour",
       "closed": false,
       "gds_layer": [2, 0],
       "points_px": [
         [100, 965],
         [2972, 965]
       ]
-    }
-  ],
-  "measurements": [
+    },
     {
       "name": "rib width",
       "kind": "ruler",
@@ -270,7 +285,7 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
       ]
     }
   ],
-  "active_contour": 0,
+  "selected": 0,
   "display": {
     "black_level": 14902,
     "white_level": 51697
@@ -285,9 +300,8 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
 | `image` | the image the work belongs to: `name`, `sha256` (or null), `size_px`, `databar_rows` (the info bar, as in the CSV header), `microscope` (or null). The pixels themselves are not in the file. |
 | `frame` | the measurement frame, the keys of the CSV header: `pixel_size_nm` (null when unknown), `tilt_deg`, `correction`, `custom_factor`, `tilt_axis_deg`, `rotation_deg`, `origin_px` |
 | `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`. Optional; without it the defaults apply: snapping on, 2, 3, 12, 3. |
-| `contours` | `name` (unique, on one line), `closed`, `gds_layer` (the GDSII layer and datatype, integers in 0–32767; [1, 0] when absent), `points_px` (pixel coordinates, rounded to 1e-4 px) |
-| `measurements` | `name` (unique), `kind` (`ruler`: 2 points, `angle`: 3, `line-angle`: 4, `profile`: 2, in the order of the measurements file), `points_px`; for a profile, `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent) |
-| `active_contour` | index of the contour that receives new vertices |
+| `measurements` | the list of measurements, in its order. Each has `name` (unique among all of them, on one line), `kind` and `points_px` (pixel coordinates, rounded to 1e-4 px). The `kind` is `contour` (any number of points), `ruler` (2), `angle` (3), `line-angle` (4) or `profile` (2), the points in the order of the measurements file. A contour adds `closed` (true when absent) and `gds_layer`: its GDSII layer and datatype, integers in 0–32767, [1, 0] when absent. A profile adds `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent). |
+| `selected` | the index of the measurement selected, the one the contour tool extends when it is a contour; null when none |
 | `display` | the display levels when the session was saved: `black_level` and `white_level`, grey values of the stored image, the black level below the white (MATH.md, 5.2). Optional; without it the image opens with the auto levels. The levels change no measure. |
 
 Derived values are not stored but recomputed when the session is opened: lengths, angles, areas and the matrix. The image must be open first. Its SHA-256 is compared with the session's, and the app asks before applying a session saved for another image.
@@ -299,7 +313,7 @@ Derived values are not stored but recomputed when the session is opened: lengths
 - a correction is unknown;
 - a number is not finite or out of range;
 - a point is not a pair;
-- a name is empty or repeated;
+- a name is empty, or used twice among the measurements;
 - a measurement has the wrong number of points for its kind;
 - a GDS layer or datatype is not an integer in 0–32767;
 - the black level does not lie below the white level;
@@ -379,7 +393,8 @@ A binary GDSII stream file (release 6.0) with one library holding one cell. MATH
 | closed contour | a BOUNDARY on the contour's layer and datatype, its first point repeated at the end as GDSII requires |
 | open contour | a PATH (flush ends, pathtype 0) on its layer and datatype, of the width typed in the dialog (0: a line) |
 | contour name (optional) | a TEXT at the first vertex, on the contour's layer, its texttype the contour's datatype |
-| measurement (optional) | its points as PATHs of width 0 (two for an angle between lines), and its name and value as a TEXT (`ruler 1: 0.472136 um`, `angle 1: 111.025 deg`), at the ruler's middle, the angle's vertex or where the lines cross; a profile as one PATH as wide as its band, whose flush ends make it the band itself, labelled with its length and band width; all on the annotation layer and datatype |
+
+The file holds the contours chosen under **Download**: one, those among the selected measurements, or all. The other kinds of measurement are not written; their values are in the measurements file.
 
 Rounding to the 1 nm grid can make neighbouring points coincide; repeated points are dropped. The export then leaves out, and lists:
 

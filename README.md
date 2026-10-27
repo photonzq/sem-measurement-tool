@@ -10,7 +10,7 @@ A web app for metrology on scanning electron micrographs, which runs entirely in
 - list a contour's vertices in a table and edit them there;
 - set the brightness and contrast on a histogram of the image, the microscope's info bar left out.
 
-All of these work through one affine map from the stored pixels, so no calibration change ever moves a point on the image. The work is kept in a session file. Contours are exported as a polygon file, e.g. for a mode solver, and as a GDSII layout; measurements go to a CSV file for a spreadsheet.
+All of these work through one affine map from the stored pixels, so no calibration change ever moves a point on the image. The work is kept in a session file. Contours are measurements like the others, in one list. A contour downloads as a polygon file, e.g. for a mode solver, or as a GDSII layout, and a line profile as its samples or as a plot. Any selection downloads as a CSV file for a spreadsheet, one row per measurement.
 
 **Nothing leaves your computer.** The app is a static page with no server behind it. Images are read with the browser's File API and results are saved as downloads, whether the page comes from GitHub Pages or from disk.
 
@@ -36,7 +36,13 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 3. **Snapping** to edges is on from the start; S switches it. The edge map (G) shows what clicks snap to. It is computed as the image opens, in a few seconds for a large image.
 4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4) and *Profile* (5). *Pan* (0), or a click on the active tool, puts the tool down again.
 5. **Level the image** if you like. Draw a ruler along something that should be horizontal, such as the substrate, select it and press *Level: horizontal* (H) or *Level: vertical* (V). Lengths and angles do not change; directions and the exported coordinates turn with the image.
-6. **Keep the work**: *Save session* (Ctrl+S). *Export polygons* writes the contours for a mode solver, *Export GDS…* writes them as a GDSII layout, each on its layer, and *Export measurements* writes the rulers and angles. To continue later, open the image, then *Open session…*.
+6. **Keep the work**: *Save session* (Ctrl+S). To continue later, open the image, then *Open session…*. *Download*, under *Measurements*, saves what is selected:
+   - a contour: its vertices for a mode solver, or a GDSII layout;
+   - a profile: its samples, or its plot as a PNG image;
+   - a ruler or an angle: its row;
+   - several: one row each, and the vertices or a GDSII layout of the contours among them.
+
+   Its last entries do the same for all the measurements.
 
 Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes points, measurements and calibration changes.
 
@@ -44,11 +50,11 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 
 - **Pan** (0): no tool. A drag pans and the wheel zooms, and no click edits anything. The app opens with it, and a click on the active tool's button also returns to it.
 - **Contour.**
-  - A click adds a vertex at the end of the active contour (amber); the other contours are cyan.
+  - A click adds a vertex at the end of the selected contour, drawn amber; the other contours are cyan, and yellow when they are selected along with it.
+  - With no contour selected, the first click starts a new one: *contour 1*, *contour 2* and so on. There is never an empty contour waiting. N is done with the selected contour, so that the next click starts a new one; it also takes up the contour tool. C closes or opens the selected contour.
   - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or exact with Alt. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
-  - A drag moves a vertex, a right click deletes one, and Backspace deletes the last. A click on a vertex, without dragging, selects it for the vertex window; Shift+click adds or removes it.
-  - The first vertex starts *contour 1*; there is no empty contour before it. N starts a new contour, and C closes or opens the active one.
-  - The panel shows each contour's perimeter, area and bounding box, the box taken in the turned frame, and its GDS layer and datatype (1/0 unless set).
+  - A drag moves a vertex, a right click deletes one, and Backspace deletes the last. A click on a vertex, without dragging, selects it for the vertex window; Shift+click adds or removes it. Touching another contour's vertex selects that contour.
+  - A selected contour shows its measures under *Measurements*: its perimeter (or length, when open), its area and its bounding box, taken in the turned frame. Its *closed* switch and its GDS layer and datatype (1/0 unless set) are there as well.
 - **Ruler.** Two clicks. It shows the length, the components ΔX and ΔY, and the direction, counter-clockwise from +X.
 - **Angle.** Three clicks: the end of one arm, the vertex, the end of the other arm. It gives the angle at the vertex, 0–180°.
 - **2 lines.** Four clicks, two on each line, give the angle between the two lines as clicked, 0–180°, and its supplement. The lines are extended, dashed, to where they cross. This suits corners that are rounded, such as a sidewall meeting a substrate.
@@ -61,11 +67,28 @@ The **points of a measurement** handle as follows:
 - Esc, or a right click, cancels a measurement being placed, and Backspace removes its last point;
 - Alt with any click or release places a point exactly, without snapping.
 
-The *Measurements* list selects, renames and deletes; the selected measurement is drawn in yellow, the others in coral.
+## Measurements
+
+One list under *Measurements* holds them all: contours, rulers, angles and profiles, in the order made, each with its brief measures. Selected measurements are drawn in yellow, the others in coral (contours in cyan).
+
+- **Selecting.** A click or a tap on a row selects that measurement alone. Its box, or Ctrl+click, adds it to the selection or takes it out. Shift+click selects from the row clicked last, and Ctrl+A selects all.
+- **The one edited.** A measurement selected alone is the one edited, marked by a bar at the left of its row. It is the contour the contour tool extends, the profile the profile window shows, and the ruler that *Level* and *Tilt axis along ruler* take. Touching a measurement's point with its tool makes it the one edited.
+- **Double click or double tap**: a profile's plot, or a contour's vertex window. The arrow keys move through the list; Enter does what a double click does.
+- **Rename** a measurement selected alone. **Delete**, or the Delete key, deletes all the selected ones, contours included; Ctrl+Z brings them back.
+- **Download** saves the selection, as the menu offers for what is selected:
+
+  | Selected | Downloads |
+  |:--|:--|
+  | a contour | its vertices, a polygon file (CSV); a GDSII file |
+  | a profile | its samples, a profile file (CSV); its plot (PNG) |
+  | a ruler, an angle, an angle between lines | its row of the measurements file (CSV) |
+  | several | one row each in a measurements file (CSV); the vertices of the contours among them in one polygon file (CSV); a GDSII file of those contours |
+
+  The menu's last entries save all the measurements in the same three ways, without selecting them.
 
 ## Vertex window
 
-*Vertices…* under *Contours*, or T, opens a floating window over the image that lists the active contour's vertices: their number and X, Y in the measurement frame. These are the micrometres of the polygon file, or corrected pixels without a pixel size. Drag the window by its title bar and resize it from its lower right corner.
+*Vertices…*, shown when a contour is selected, opens a floating window over the image. So do T and a double click on a contour in the list. The window lists the selected contour's vertices: their number and X, Y in the measurement frame. These are the micrometres of the polygon file, or corrected pixels without a pixel size. Drag the window by its title bar and resize it from its lower right corner.
 
 - **Selecting.** A click on a row selects that vertex, Ctrl+click adds or removes one, and Shift+click selects a range. A click on a vertex in the image does the same as a click on its row, Shift+click as Ctrl+click. Selected vertices are ringed in violet in the image, with their numbers.
 - **Up, Down.** Move the selected vertices one place earlier or later in the order. Adjacent selected vertices move as a block, and a block at the start or end stays.
@@ -94,8 +117,9 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - every contour that crosses the line, as a dashed line in the contour's colour with its name.
 
   Point at the plot to read the distance, the mean and the spread there; the image marks the same place with a magenta tick. The note under the plot lists the contours crossing the line and where, along it, they cross. Drag the window by its title bar and resize it from its lower right corner.
-- **Export CSV**, in the window, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band and the crossings.
-- **Kept like the other measurements.** A profile is listed under *Measurements*, saved in the session with its band width, and written to the measurements file with its length, band width and mean grey value. In the GDS export it becomes a path as wide as its band.
+- **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band and the crossings.
+- **Export PNG**, in the window or under *Download*, writes the plot as an image of 1200 × 750 pixels at twice that resolution. A title above it names the profile and the image and gives its length and band width.
+- **Kept like the other measurements.** A profile is listed under *Measurements*, saved in the session with its band width, and written to the measurements file with its length, band width and mean grey value.
 
 ## Display
 
@@ -156,23 +180,22 @@ With *Snap* on, as it is from the start (S switches it), a click lands on the st
 
 | File | Use |
 |:--|:--|
-| `<image>_session.json` | the session: image name and SHA-256, calibration, contours, measurements, snap settings, display levels. *Open session…* takes it up again on the open image, and asks first if the image differs. |
-| `<image>_polygons.csv` | the contours in micrometres and pixels, with the calibration and the matrix `px_to_um` in a commented header. *Open session…* also reads it. |
-| `<image>_measurements.csv` | one row per ruler, angle or profile: value, unit, components, points; a profile's band width and mean grey value |
-| `<image>_<profile name>.csv` | the samples of one line profile, from *Export CSV* in the profile window |
-| `<image>.gds` | the contours as a GDSII layout, for KLayout, gdstk, GDSFactory and other layout tools; written only |
+| `<image>_session.json` | the session: image name and SHA-256, calibration, the measurements (contours among them), snap settings, display levels. *Open session…* takes it up again on the open image, and asks first if the image differs. |
+| `<image>_polygons.csv`, `<image>_<contour>.csv` | the vertices of several contours, or of one, in micrometres and pixels, with each contour's measures, the calibration and the matrix `px_to_um` in a commented header. *Open session…* also reads it. |
+| `<image>_measurements.csv`, `<image>_<ruler or angle>.csv` | one row per measurement: value, unit, components, points; a profile's band width and mean grey value; a contour's vertex count, area and bounding box |
+| `<image>_<profile>.csv` | the samples of one line profile |
+| `<image>_<profile>.png` | the plot of one line profile |
+| `<image>.gds`, `<image>_<contour>.gds` | contours as a GDSII layout, for KLayout, gdstk, GDSFactory and other layout tools; written only |
 
-[FORMAT.md](FORMAT.md) specifies them all and includes a dependency-free Python reader for the polygon file.
+*Save session* writes the first; *Download* under *Measurements* writes the others, for the selection or for all. The names in angle brackets are made safe for a file name. [FORMAT.md](FORMAT.md) specifies them all and includes a dependency-free Python reader for the polygon file.
 
 ## GDS export
 
-*Export GDS…* writes the contours as one GDSII cell, in the coordinates of the polygon file: micrometres in the measurement frame, so tilt-corrected, turned and from the origin. Points sit on a 1 nm grid, with the user unit 1 µm. It needs the pixel size.
+*Download*, under *Measurements*, writes a GDSII file of one contour, of the contours among the selected measurements, or of all the contours. The file holds one cell, in the coordinates of the polygon file: micrometres in the measurement frame, so tilt-corrected, turned and from the origin. Points sit on a 1 nm grid, with the user unit 1 µm. It needs the pixel size. Rulers, angles and profiles are not written; their values go to the measurements file.
 
-- **Layers.** Each contour has its own GDS layer and datatype, set under *Contours* (1/0 by default) and kept in the session.
+- **Layers.** Each contour has its own GDS layer and datatype, set under *Measurements* when it is selected (1/0 by default) and kept in the session.
 - **Elements.** A closed contour becomes a polygon (BOUNDARY), and an open one a path (PATH) of the width set in the dialog (0: a line).
-- **Optional, ticked in the dialog:**
-  - each contour's name as a text label at its first vertex, on its layer;
-  - the measurements as annotations on a layer and datatype of their own (100/0 by default): rulers and angles as lines, profiles as paths as wide as their band, with their values as text (e.g. "ruler 1: 0.472136 um").
+- **Optional, ticked in the dialog:** each contour's name as a text label at its first vertex, on its layer.
 - **Cell name.** The image's name by default, cut to the 32 characters GDSII tools expect, with anything other than letters, digits, "_", "?" and "$" replaced by "_".
 - **Left out, and listed after the export:** a polygon with fewer than three distinct points on the 1 nm grid, a layer outside 0–32767, a contour of more than 8190 vertices.
 
@@ -225,14 +248,15 @@ Touch has no hover, so the previews that follow the cursor (snap, insert with Ct
 - **The touch toolbar**, at the top left of the view:
   - *Undo* and *Redo*;
   - *Fit*, the image to the view;
-  - *Back*, which takes back the last point of the measurement being placed, else the active contour's last vertex, or cancels *Set origin*;
+  - *Back*, which takes back the last point of the measurement being placed, else the selected contour's last vertex, or cancels *Set origin*;
   - *Snap*, the same switch as in the panel;
   - *Exact*, which places or releases the next point exactly where the finger is, without snapping, and then lets go.
 - **Press and hold** a point for half a second, while a ring fills, to open its menu beside the finger:
-  - a vertex: *Delete vertex*, *Select in the vertex window*, *Insert a vertex after* (halfway to the next one);
-  - a measurement's point: *Delete*, *Rename…*, and for a profile *Show the plot*.
+  - a contour's vertex: *Delete vertex*, *Select in the vertex window*, *Insert a vertex after* (halfway to the next one);
+  - any measurement's point, a vertex included: *Delete* the measurement, *Rename…*, and for a profile *Show the plot*.
 
   Held on empty image, nothing happens, and lifting the finger places nothing.
+- **The measurement list** takes a tap as a click. A tap on a row selects it alone, a tap on its box adds it to the selection or takes it out, and two taps on a row open its window. Its rows and boxes are larger in the touch layout.
 - **Larger targets.** A finger hits a point within 22 px, where the mouse needs 8. After touch input, points and handles are drawn larger. Snapping searches 2.5 times the search radius for a finger, which covers far more of the image than a cursor.
 - **Floating windows** get title bars and close buttons 44 px tall, and a resize corner that answers a finger; the browser's own corner answers the mouse only.
 - **The profile plot** reads out under a finger dragged along it, and the reading stays after the finger lifts.
@@ -247,7 +271,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 |:--|:--|
 | 0 | no tool: drag to pan, wheel to zoom (also a click on the active tool's button) |
 | 1 2 3 4 5 | tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile |
-| click | contour: add a vertex; other tools: place the next point (snapped with Snap on, except a profile's ends) |
+| click | contour: add a vertex to the selected contour, or start a new one; other tools: place the next point (snapped with Snap on, except a profile's ends) |
 | Ctrl+click | contour: insert a vertex into the nearest segment |
 | hold Ctrl | contour: show the segment that will receive the vertex and where it will land |
 | click, Shift+click a vertex | contour: select it in the vertex window; add or remove it |
@@ -259,19 +283,22 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | middle drag, Space+drag; drag with no tool | pan |
 | two fingers | pinch to zoom, move together to pan |
 | one finger | no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans |
-| press and hold a point (touch) | its menu: delete, select, insert after (a vertex); delete, rename, show the plot (a measurement) |
-| N, C | new contour; close or open the active one |
+| press and hold a point (touch) | its menu: delete, select, insert after (a vertex); delete, rename (any measurement); show the plot (a profile) |
+| click, tap a row of the list | select that measurement alone; twice: a profile's plot, a contour's vertices |
+| its box, Ctrl+click | add it to the selection, or take it out |
+| Shift+click a row; Ctrl+A | select from the row clicked last; select all |
+| N, C | done with the selected contour (the next click starts a new one); close or open the selected contour |
 | H, V | level the selected ruler horizontal or vertical |
 | S, G | snapping on or off; edge map on or off |
-| T | show or hide the vertex window |
+| T | show or hide the vertex window of the selected contour |
 | P | show or hide the profile window; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
-| arrow keys | move the selected vertices by one view unit on screen (Shift: ten) |
-| Backspace | the last point being placed; else the selected vertices, the last vertex (contour) or the selected measurement |
-| Delete | delete the selected vertices, else the selected measurement |
+| arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
+| Backspace | the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements |
+| Delete | delete the selected vertices, else the selected measurements, contours included |
 | Ctrl+Z, Ctrl+Y | undo, redo |
 | F, +, − | fit to the window; zoom |
 | Ctrl+O, Ctrl+S | open an image; save the session |
-| Esc | cancel the measurement being placed, or *Set origin* |
+| Esc | cancel the measurement being placed, or *Set origin*; close a menu |
 
 ## Performance
 

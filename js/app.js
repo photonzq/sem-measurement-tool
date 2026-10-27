@@ -8,12 +8,13 @@
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
    widthFromPoint, formatProfileFile */
 /*
- * The SEM measurement tool: open an image, trace contours and take measurements (rulers, angles, profiles) with
+ * The SEM measurement tool: open an image, take measurements (contours, rulers, angles, profiles) with
  * optional snapping to edges, correct a tilted specimen, turn the image, and keep the work in a
- * session file, with exports for a mode solver, a layout tool (GDSII) and a spreadsheet
- * (FORMAT.md).  A floating window lists the vertices of the active contour in the measurement
- * frame and edits them.  Everything runs in the page; files are read with the File API and saved
- * as downloads.
+ * session file, with downloads for a mode solver, a layout tool (GDSII), a spreadsheet and a report
+ * (FORMAT.md).  One list holds the measurements: a click selects one, its box adds it to a selection
+ * of several, and the downloads follow the selection.  A floating window lists the vertices of the
+ * selected contour in the measurement frame and edits them.  Everything runs in the page; files are
+ * read with the File API and saved as downloads.
  *
  * Coordinates (transform.js).  Contour vertices, measurement points and the origin are kept in
  * pixel-centre coordinates of the image as stored in the file (an info bar included):
@@ -26,10 +27,10 @@
  * a floating window plots the selected one, with the contours that cross it.
  */
 
-const ACTIVE_COLOR = "#ffb000";      // amber: the contour being edited
+const ACTIVE_COLOR = "#ffb000";      // amber: the contour being edited (the selected one)
 const OTHER_COLOR = "#00b4ff";       // cyan: the other contours
-const MEASURE_COLOR = "#ff6464";     // coral: the measurements
-const SELECTED_COLOR = "#ffe14d";    // yellow: the selected measurement and the one being placed
+const MEASURE_COLOR = "#ff6464";     // coral: the other measurements
+const SELECTED_COLOR = "#ffe14d";    // yellow: the measurements selected in the list, and the one being placed
 const PREVIEW_COLOR = "#ff3ec8";     // magenta: where a click lands (with Snap on, or inserting)
 const PICKED_COLOR = "#9b7bff";      // violet: vertices selected in the vertex window
 const ORIGIN_COLOR = "#4cff4c";
@@ -39,15 +40,16 @@ const ARC_PX = 22;                   // radius of the angle arcs
 const HISTORY = 500;
 const LABEL_FONT = "12px system-ui, -apple-system, 'Segoe UI', Arial, sans-serif";
 
-/** "pan" is no tool: the mouse, one finger or two only move and zoom the view. @typedef {"pan"|"contour"|MeasureKind} Tool */
+/** "pan" is no tool: the mouse, one finger or two only move and zoom the view. @typedef {"pan"|MeasureKind} Tool */
 /** @type {Tool[]} */
 const TOOLS = ["pan", "contour", "ruler", "angle", "line-angle", "profile"];
 /** @type {Record<Tool, string>} */
 const TOOL_HINTS = {
   pan: "No tool: drag to pan, wheel to zoom; on a touch screen one finger pans and two pinch.  Choose a tool (1-5) " +
     "to trace or measure; click it again, or press 0, to come back here.",
-  contour: "Click: add a vertex to the active contour.  Ctrl+click inserts (hold Ctrl to see where), drag moves, " +
-    "right click deletes; click a vertex to select it in the vertex window (T).",
+  contour: "Click: add a vertex to the selected contour; with no contour selected, the first click starts a new one " +
+    "(N: done with this one).  Ctrl+click inserts (hold Ctrl to see where), drag moves, right click deletes; click a " +
+    "vertex to select it in the vertex window (T).",
   ruler: "Click both ends of a distance.  Drag an end to move it; right click deletes the ruler.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
@@ -55,7 +57,7 @@ const TOOL_HINTS = {
     "to widen it, an end to move it; P shows the profile window.",
 };
 /** @type {Record<MeasureKind, string>} */
-const MEASURE_NAMES = { ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
+const MEASURE_NAMES = { contour: "contour", ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
 const PLOT_COLOR = "#385c9e";        // the profile's mean in its window
 const TAP_PX = 10;                   // a touch that moves less than this is a tap
 const TOUCH_HIT_PX = 22;             // HIT_PX for a finger, which covers far more than a cursor tip
@@ -92,13 +94,13 @@ const app = {
   edgesBusy: false,
   /** @type {HTMLCanvasElement|null} */
   overlay: null,
-  /** @type {Contour[]} */
-  contours: [],
-  active: 0,
-  /** @type {Measurement[]} */
+  /** @type {Measurement[]} contours, rulers, angles and profiles, in the order of the list */
   measurements: [],
-  selected: -1,
-  /** @type {{kind: MeasureKind, points: Point[]}|null} a measurement being placed */
+  selected: -1,                      // the measurement edited, -1 for none; the contour tool extends it when it is a contour
+  /** @type {number[]} the measurements selected in the list, ascending; ``selected`` is one of them (when any) */
+  checked: [],
+  listAnchor: -1,                    // the row a Shift+click in the list selects from
+  /** @type {{kind: FixedKind, points: Point[]}|null} a measurement being placed */
   pending: null,
   /** @type {Tool} */
   tool: "pan",
@@ -123,7 +125,7 @@ const app = {
   /** @type {string[]} */
   future: [],
   dirty: false,
-  /** @type {{kind: "vertex"|"point"|"width", index: number, point: number, moved: boolean}|null} */
+  /** @type {{kind: "point"|"width", index: number, point: number, moved: boolean}|null} a measurement's point or a profile's band width */
   drag: null,
   profileWidth: 1,                   // band width of new profiles, pixel widths of the corrected view
   /** @type {number|null} where the cursor is on the profile plot: 0 at the start of the line, 1 at its end */
@@ -140,7 +142,7 @@ const app = {
   cursorScreen: null,
   insertHeld: false,                 // Ctrl (or Cmd) is down: a click inserts a vertex
   altHeld: false,                    // Alt is down: a click lands exactly, without snapping
-  /** @type {number[]} vertices of the active contour selected in the vertex window, ascending */
+  /** @type {number[]} vertices of the selected contour picked in the vertex window, ascending */
   picked: [],
   pickAnchor: -1,
   raf: 0,
@@ -421,11 +423,9 @@ async function openImageBuffer(name, buffer) {
   const nm = (m) => Number((m * 1e9).toPrecision(12));
   app.frame = { ...defaultFrame(), pixelNm: cal.pixelSizeM ? [nm(cal.pixelSizeM[0]), nm(cal.pixelSizeM[1])] : null,
     tiltDeg: cal.tiltDeg ?? 0 };
-  app.contours = [];
-  app.active = 0;
-  clearPicked();
   app.measurements = [];
-  app.selected = -1;
+  selectOnly(-1);
+  clearPicked();
   app.pending = null;
   app.history = [];
   app.future = [];
@@ -443,7 +443,6 @@ async function openImageBuffer(name, buffer) {
   showImageInfo();
   showMetadata();
   refreshFrameInputs();
-  refreshContours();
   refreshMeasurements();
   refreshDisplay();
   fit();
@@ -572,7 +571,6 @@ function changeFrame(change) {
     app.view.ty += rect.height / 2 - sy;
   }
   refreshFrameInputs();
-  refreshContours();
   refreshMeasurements();
   render();
 }
@@ -625,9 +623,19 @@ function draw() {
     strokeSegment(a, b);
     ctx.setLineDash([]);
   }
-  app.contours.forEach((c, ci) => drawContour(c, ci === app.active, toScreen));
+  const checked = new Set(app.checked);
+  app.measurements.forEach((ms, i) => {            // the contours first, under the other measurements
+    if (ms.kind === "contour") {
+      drawContour(ms, i === app.selected ? ACTIVE_COLOR : checked.has(i) ? SELECTED_COLOR : OTHER_COLOR, i === app.selected,
+        toScreen);
+    }
+  });
   drawPicked(toScreen);
-  app.measurements.forEach((ms, i) => drawMeasurement(ms, i === app.selected ? SELECTED_COLOR : MEASURE_COLOR, toScreen, false));
+  app.measurements.forEach((ms, i) => {
+    if (ms.kind !== "contour") {
+      drawMeasurement(ms, checked.has(i) ? SELECTED_COLOR : MEASURE_COLOR, toScreen, false, i === app.selected);
+    }
+  });
   drawProfileCursor(toScreen);
   drawPending(toScreen);
   drawInsertPreview(toScreen);
@@ -662,7 +670,7 @@ function drawPicked(toScreen) {
 }
 
 /**
- * Where a click inserts a vertex now: the edge a-b of the active contour that receives it and the
+ * Where a click inserts a vertex now: the edge a-b of the selected contour that receives it and the
  * point p it lands on, exactly as addVertex places it (snapped unless Alt is down); null when a
  * click would not insert (Ctrl up, another tool, a vertex under the cursor, fewer than 2 vertices).
  * @returns {{a: Point, b: Point, p: Point}|null}
@@ -679,7 +687,7 @@ function insertTarget() {
       || app.pan !== null || app.originMode || !insideImage(cursor[0], cursor[1])) {
     return null;
   }
-  if (hitVertex(screen[0], screen[1]) !== null) {
+  if (hitPoint(screen[0], screen[1], true) !== null) {
     return null;                   // the click would move that vertex instead
   }
   /** @type {Point} */
@@ -806,12 +814,13 @@ function drawArc(centre, u, v) {
 }
 
 /**
+ * A contour; the one being edited (``active``) thicker, with filled vertices and its first vertex larger.
  * @param {Contour} c
+ * @param {string} color
  * @param {boolean} active
  * @param {(p: Point) => Point} toScreen
  */
-function drawContour(c, active, toScreen) {
-  const color = active ? ACTIVE_COLOR : OTHER_COLOR;
+function drawContour(c, color, active, toScreen) {
   const pts = c.points.map(toScreen);
   if (pts.length >= 2) {
     ctx.strokeStyle = color;
@@ -840,7 +849,7 @@ function drawContour(c, active, toScreen) {
 
 /**
  * The value of a measurement as its label shows it; "?" when the correction is undefined.
- * @param {Measurement} ms
+ * @param {FixedMeasurement} ms
  * @returns {string}
  */
 function measurementLabel(ms) {
@@ -987,13 +996,15 @@ function drawProfileCursor(toScreen) {
 }
 
 /**
- * A measurement, complete or (``pending``) being placed, possibly with fewer points than its kind.
- * @param {Measurement} ms
+ * A measurement other than a contour, complete or (``pending``) being placed, possibly with fewer
+ * points than its kind; a profile being edited (``handle``) shows the square that sets its width.
+ * @param {FixedMeasurement} ms
  * @param {string} color
  * @param {(p: Point) => Point} toScreen
  * @param {boolean} pending
+ * @param {boolean} [handle]
  */
-function drawMeasurement(ms, color, toScreen, pending) {
+function drawMeasurement(ms, color, toScreen, pending, handle = false) {
   const pts = ms.points.map(toScreen);
   const complete = ms.points.length === MEASURE_POINTS[ms.kind];
   const label = complete ? measurementLabel(ms) : null;
@@ -1006,7 +1017,7 @@ function drawMeasurement(ms, color, toScreen, pending) {
   if (ms.kind === "ruler" && pts.length >= 2) {
     drawRuler(pts, label, color);
   } else if (ms.kind === "profile" && pts.length >= 2) {
-    drawProfileLine(ms, pts, toScreen, { label, color, handle: !pending && color === SELECTED_COLOR });
+    drawProfileLine(ms, pts, toScreen, { label, color, handle: !pending && handle });
   } else if (ms.kind === "angle" && pts.length >= 2) {
     strokeSegment(pts[1], pts[0]);
     if (pts.length >= 3) {
@@ -1051,42 +1062,118 @@ function drawPending(toScreen) {
   drawMeasurement({ name: "", kind: p.kind, points }, SELECTED_COLOR, toScreen, true);
 }
 
+// ------------------------------------------------------------------------- selection
+//
+// The list selects measurements, one or several (``checked``); one of them, or none, is the one
+// edited (``selected``): the contour the contour tool extends, the profile of the profile window,
+// the ruler that levels the image.  A measurement selected alone is the one edited.
+
+/**
+ * Select measurement ``index`` alone (-1: none).
+ * @param {number} index
+ */
+function selectOnly(index) {
+  if (index !== app.selected) {
+    clearPicked();
+  }
+  app.selected = index;
+  app.checked = index >= 0 ? [index] : [];
+  app.listAnchor = index;
+}
+
+/**
+ * After a change of the selection: the one edited stays only while it is selected, and one selected
+ * alone is the one edited.  The vertices picked in the vertex window go with a change of contour.
+ * @param {number} before   the one edited before the change
+ */
+function settleSelection(before) {
+  if (app.checked.length === 1) {
+    app.selected = app.checked[0];
+  } else if (!app.checked.includes(app.selected)) {
+    app.selected = -1;
+  }
+  if (app.selected !== before) {
+    clearPicked();
+  }
+}
+
+/**
+ * Make measurement ``index`` the one edited: within the selection when it is part of it, else alone.
+ * @param {number} index
+ */
+function focusMeasurement(index) {
+  if (!app.checked.includes(index)) {
+    selectOnly(index);
+  } else if (index !== app.selected) {
+    clearPicked();
+    app.selected = index;
+  }
+}
+
+/**
+ * Add measurement ``index`` to the selection, or take it out: its box in the list, or Ctrl+click.
+ * @param {number} index
+ */
+function toggleChecked(index) {
+  const before = app.selected;
+  const set = new Set(app.checked);
+  if (!set.delete(index)) {
+    set.add(index);
+  }
+  app.checked = [...set].sort((a, b) => a - b);
+  app.listAnchor = index;
+  settleSelection(before);
+}
+
+/**
+ * Select the measurements from the row clicked last to ``index``: Shift+click.
+ * @param {number} index
+ */
+function checkRange(index) {
+  const before = app.selected;
+  const from = app.listAnchor >= 0 && app.listAnchor < app.measurements.length ? app.listAnchor : index;
+  const [a, b] = from <= index ? [from, index] : [index, from];
+  app.checked = Array.from({ length: b - a + 1 }, (_, k) => a + k);
+  settleSelection(before);
+}
+
+/** Select all the measurements: Ctrl+A. */
+function checkAll() {
+  const before = app.selected;
+  app.checked = app.measurements.map((_, i) => i);
+  settleSelection(before);
+  refreshMeasurements();
+  render();
+}
+
 // ------------------------------------------------------------------------- editing
 
-/** @returns {Contour|null} the contour that receives new vertices; null before the first one */
+/** @returns {Contour|null} the selected measurement when it is a contour: the one the contour tool extends */
 function currentContour() {
-  if (app.contours.length === 0) {
-    return null;
-  }
-  app.active = Math.min(Math.max(app.active, 0), app.contours.length - 1);
-  return app.contours[app.active];
+  const ms = app.measurements[app.selected];
+  return ms !== undefined && ms.kind === "contour" ? ms : null;
 }
 
-/** @returns {Contour} the contour that receives new vertices, made ("contour 1") when there is none yet */
-function activeContour() {
-  if (app.contours.length === 0) {
-    app.contours.push({ name: nextContourName(), closed: true, points: [] });
-    app.active = 0;
+/**
+ * The contour that receives a new vertex: the selected one, else a new contour ("contour 1" and so
+ * on), then selected alone.
+ * @returns {Contour}
+ */
+function contourForVertex() {
+  const c = currentContour();
+  if (c !== null) {
+    return c;
   }
-  return /** @type {Contour} */ (currentContour());
-}
-
-/** @returns {string} "contour 2" and so on, unused so far */
-function nextContourName() {
-  const names = new Set(app.contours.map((c) => c.name));
-  let k = app.contours.length + 1;
-  while (names.has(`contour ${k}`)) {
-    k++;
-  }
-  return `contour ${k}`;
+  /** @type {Contour} */
+  const made = { name: newMeasureName("contour"), kind: "contour", closed: true, points: [] };
+  app.measurements.push(made);
+  selectOnly(app.measurements.length - 1);
+  return made;
 }
 
 /** @returns {string} */
 function snapshot() {
-  return JSON.stringify({
-    contours: app.contours, active: app.active, measurements: app.measurements, selected: app.selected,
-    frame: app.frame,
-  });
+  return JSON.stringify({ measurements: app.measurements, selected: app.selected, checked: app.checked, frame: app.frame });
 }
 
 /** @param {string} state */
@@ -1094,10 +1181,9 @@ function restore(state) {
   const s = JSON.parse(state);
   app.pending = null;
   clearPicked();
-  app.contours = s.contours;
-  app.active = s.active;
   app.measurements = s.measurements;
   app.selected = s.selected;
+  app.checked = s.checked;
   changeFrame(() => {
     app.frame = s.frame;
   });
@@ -1132,37 +1218,22 @@ function redo() {
 }
 
 /**
- * The contour vertex under a screen position (the active contour first), or null.
+ * The point under a screen position: a contour's vertex (``contour``), else a point of another kind
+ * of measurement; the selected measurement's first, then the later measurements' (drawn on top)
+ * before the earlier.  Null when there is none.
  * @param {number} sx
  * @param {number} sy
+ * @param {boolean} contour
  * @returns {{index: number, point: number}|null}
  */
-function hitVertex(sx, sy) {
-  const toScreen = screenMapper();
-  const order = [app.active, ...app.contours.map((_, i) => i).filter((i) => i !== app.active)];
-  for (const ci of order) {
-    const c = app.contours[ci];
-    const vi = c === undefined ? -1 : nearestPoint(c.points, toScreen, sx, sy);
-    if (vi >= 0) {
-      return { index: ci, point: vi };
-    }
-  }
-  return null;
-}
-
-/**
- * The measurement point under a screen position (the selected measurement first), or null.
- * @param {number} sx
- * @param {number} sy
- * @returns {{index: number, point: number}|null}
- */
-function hitMeasurePoint(sx, sy) {
+function hitPoint(sx, sy, contour) {
   const toScreen = screenMapper();
   const others = app.measurements.map((_, i) => i).filter((i) => i !== app.selected).reverse();
-  for (const mi of app.selected >= 0 ? [app.selected, ...others] : others) {
-    const vi = nearestPoint(app.measurements[mi].points, toScreen, sx, sy);
+  for (const i of app.selected >= 0 ? [app.selected, ...others] : others) {
+    const ms = app.measurements[i];
+    const vi = (ms.kind === "contour") === contour ? nearestPoint(ms.points, toScreen, sx, sy) : -1;
     if (vi >= 0) {
-      return { index: mi, point: vi };
+      return { index: i, point: vi };
     }
   }
   return null;
@@ -1252,7 +1323,7 @@ function addVertex(x, y, how = {}) {
   /** @type {Point} */
   const p = target ?? [x, y];
   pushHistory();
-  const c = activeContour();
+  const c = contourForVertex();
   if (how.insert) {
     const at = insertionIndex(c, p[0], p[1]);
     c.points.splice(at, 0, p);
@@ -1260,19 +1331,8 @@ function addVertex(x, y, how = {}) {
   } else {
     c.points.push(p);
   }
-  refreshContours();
+  refreshMeasurements();
   render();
-}
-
-/**
- * Make contour ``index`` the active one; its vertex selection starts empty.
- * @param {number} index
- */
-function setActive(index) {
-  if (index !== app.active) {
-    app.active = index;
-    clearPicked();
-  }
 }
 
 function clearPicked() {
@@ -1281,26 +1341,28 @@ function clearPicked() {
 }
 
 /**
- * The picked indices after vertex ``index`` of the active contour was removed.
+ * The picked indices after vertex ``index`` of the selected contour was removed.
  * @param {number} index
  */
 function forgetVertex(index) {
   app.picked = app.picked.filter((i) => i !== index).map((i) => (i > index ? i - 1 : i));
 }
 
-function newContour() {
-  pushHistory();
-  app.contours.push({ name: nextContourName(), closed: true, points: [] });
-  setActive(app.contours.length - 1);
-  refreshContours();
+/** N: done with the selected contour.  Nothing is selected, and the contour tool starts a new one. */
+function finishContour() {
+  selectOnly(-1);
+  if (app.tool !== "contour") {
+    setTool("contour");
+  }
+  refreshMeasurements();
   render();
 }
 
 /**
  * Ask for a new name, unique among ``others``; null when cancelled or unchanged.
  * @param {string} current
- * @param {string[]} others
- * @param {string} what      "contour" or "measurement"
+ * @param {string[]} others   the names of the other measurements
+ * @param {string} what       e.g. "contour"
  * @returns {string|null}
  */
 function askName(current, others, what) {
@@ -1313,35 +1375,10 @@ function askName(current, others, what) {
     return null;
   }
   if (others.includes(clean)) {
-    window.alert(`Another ${what} is already called "${clean}".`);
+    window.alert(`Another measurement is already called "${clean}".`);
     return null;
   }
   return clean;
-}
-
-function renameContour() {
-  const c = currentContour();
-  if (c === null) {
-    return;
-  }
-  const name = askName(c.name, app.contours.filter((o) => o !== c).map((o) => o.name), "contour");
-  if (name !== null) {
-    pushHistory();
-    c.name = name;
-    refreshContours();
-  }
-}
-
-function deleteContour() {
-  if (currentContour() === null) {
-    return;
-  }
-  pushHistory();
-  app.contours.splice(app.active, 1);              // the last one leaves none: the next vertex makes one
-  app.active = Math.max(Math.min(app.active, app.contours.length - 1), 0);
-  clearPicked();
-  refreshContours();
-  render();
 }
 
 function deleteLastVertex() {
@@ -1350,7 +1387,7 @@ function deleteLastVertex() {
     pushHistory();
     c.points.pop();
     forgetVertex(c.points.length);
-    refreshContours();
+    refreshMeasurements();
     render();
   }
 }
@@ -1359,13 +1396,13 @@ function deleteLastVertex() {
 function setClosed(closed) {
   const c = currentContour();
   if (c === null) {
-    refreshContours();
+    refreshMeasurements();
     return;
   }
   if (c.closed !== closed) {
     pushHistory();
     c.closed = closed;
-    refreshContours();
+    refreshMeasurements();
     render();
   }
 }
@@ -1416,13 +1453,13 @@ function placePoint(x, y, exact) {
   app.pending = pending;
   if (pending.points.length === MEASURE_POINTS[kind]) {
     pushHistory();
-    /** @type {Measurement} */
+    /** @type {FixedMeasurement} */
     const ms = { name: newMeasureName(kind), kind, points: pending.points };
     if (kind === "profile") {
       ms.width = app.profileWidth;
     }
     app.measurements.push(ms);
-    app.selected = app.measurements.length - 1;
+    selectOnly(app.measurements.length - 1);
     app.pending = null;
     refreshMeasurements();
     if (kind === "profile") {
@@ -1432,24 +1469,40 @@ function placePoint(x, y, exact) {
   render();
 }
 
-/** @param {number} index */
-function deleteMeasurement(index) {
-  if (index < 0 || index >= app.measurements.length) {
+/**
+ * Delete measurements, contours included (an undoable edit); the others keep their place in the
+ * selection.
+ * @param {number[]} indices
+ */
+function deleteMeasurements(indices) {
+  const gone = new Set(indices.filter((i) => i >= 0 && i < app.measurements.length));
+  if (gone.size === 0) {
     return;
   }
   pushHistory();
-  app.measurements.splice(index, 1);
-  app.selected = Math.min(app.selected, app.measurements.length - 1);
+  const before = app.selected;
+  let kept = 0;
+  /** the new index of each measurement; -1 for one deleted */
+  const moved = app.measurements.map((_, i) => (gone.has(i) ? -1 : kept++));
+  app.measurements = app.measurements.filter((_, i) => !gone.has(i));
+  app.checked = app.checked.map((i) => moved[i]).filter((i) => i >= 0);
+  app.selected = app.selected >= 0 ? moved[app.selected] : -1;
+  app.listAnchor = -1;
+  settleSelection(before);
   refreshMeasurements();
   render();
 }
 
-function renameMeasurement() {
-  const ms = app.measurements[app.selected];
+/**
+ * Rename a measurement: by default the one selected, when it is alone.
+ * @param {number} [index]
+ */
+function renameMeasurement(index = app.checked.length === 1 ? app.checked[0] : -1) {
+  const ms = app.measurements[index];
   if (ms === undefined) {
     return;
   }
-  const name = askName(ms.name, app.measurements.filter((o) => o !== ms).map((o) => o.name), "measurement");
+  const name = askName(ms.name, app.measurements.filter((o) => o !== ms).map((o) => o.name), MEASURE_NAMES[ms.kind]);
   if (name !== null) {
     pushHistory();
     ms.name = name;
@@ -1526,67 +1579,70 @@ function showMetadata() {
 }
 
 /**
- * Fill a list with rows, keeping its option elements: a row clicked twice must stay the same
- * element for the browser to pair the clicks, and rebuilding the rows on each change broke that.
- * @param {HTMLSelectElement} list
- * @param {string[]} texts
+ * The rows of the measurement list: a box that adds the row to the selection or takes it out, then
+ * the name and the brief measures.  The rows stay the same elements across refreshes, only their
+ * text and state change: a row clicked twice must be the same element.
  */
-function fillList(list, texts) {
-  while (list.options.length > texts.length) {
-    list.remove(list.options.length - 1);
+function fillMeasurementList() {
+  const list = el("measurement-list");
+  const checked = new Set(app.checked);
+  while (list.children.length > app.measurements.length) {
+    /** @type {Element} */ (list.lastElementChild).remove();
   }
-  texts.forEach((text, i) => {
-    let option = list.options[i];
-    if (option === undefined) {
-      option = document.createElement("option");
-      option.value = String(i);
-      list.append(option);
+  app.measurements.forEach((ms, i) => {
+    let row = list.children[i];
+    if (row === undefined) {
+      row = document.createElement("div");
+      row.className = "item";
+      row.id = `measurement-row-${i}`;
+      row.setAttribute("role", "option");
+      const box = document.createElement("span");
+      box.className = "box";
+      box.title = "Add to the selection, or take out (Ctrl+click)";
+      row.append(box, document.createElement("span"));
+      list.append(row);
     }
-    if (option.textContent !== text) {
-      option.textContent = text;
+    const text = `${ms.name}: ${describeMeasurement(ms).brief}`;
+    const label = /** @type {Element} */ (row.lastElementChild);
+    if (label.textContent !== text) {
+      label.textContent = text;
     }
+    const on = String(checked.has(i));
+    if (row.getAttribute("aria-selected") !== on) {
+      row.setAttribute("aria-selected", on);
+    }
+    row.classList.toggle("edited", i === app.selected);
   });
+  if (app.selected >= 0) {
+    list.setAttribute("aria-activedescendant", `measurement-row-${app.selected}`);
+  } else {
+    list.removeAttribute("aria-activedescendant");
+  }
 }
 
-function refreshContours() {
-  const list = selectEl("contour-list");
-  fillList(list, app.contours.map((k) => {
-    const [l, d] = k.layer ?? [1, 0];
-    return `${k.name}  (${k.points.length} vertices${k.closed ? "" : ", open"}; GDS ${l}/${d})`;
-  }));
-  const c = currentContour();
-  for (const id of ["rename-contour", "delete-contour", "closed", "contour-layer", "contour-datatype"]) {
-    /** @type {HTMLInputElement|HTMLButtonElement} */ (el(id)).disabled = c === null;
-  }
-  refreshVertexWindow();
-  refreshProfileWindow();                // contours that cross the profile
-  if (c === null) {
-    list.selectedIndex = -1;
-    inputEl("closed").checked = true;
-    el("measures").textContent = "No contours yet: the contour tool (1) starts one with its first vertex.";
-    return;
-  }
-  list.selectedIndex = app.active;
-  inputEl("closed").checked = c.closed;
-  const [layer, datatype] = c.layer ?? [1, 0];
-  inputEl("contour-layer").value = String(layer);
-  inputEl("contour-datatype").value = String(datatype);
+/**
+ * The measures of a contour for the panel: a short one for the list and the details.
+ * @param {Contour} c
+ * @returns {{brief: string, details: string}}
+ */
+function describeContour(c) {
+  const shape = `${c.points.length} ${c.points.length === 1 ? "vertex" : "vertices"}`;
   const m = measureContour(c, app.frame);
-  const lines = [`${c.name}: ${c.points.length} vertices, ${c.closed ? "closed" : "open"}`];
   if (m === null) {
-    lines.push("(correction factor undefined: no measures)");
-  } else {
-    const unit = unitText(m.unit);
-    lines.push(`perimeter: ${show(m.perimeter)} ${unit}`);
-    if (c.closed && m.vertices > 2) {
-      lines.push(`area: ${show(m.area)} ${unit}²`);
-    }
-    lines.push(`bounding box: ${show(m.width)} × ${show(m.height)} ${unit}`);
-    if (m.unit === "px" && app.image !== null) {
-      lines.push("(no pixel size: lengths in pixels)");
-    }
+    return { brief: `${shape}${c.closed ? "" : ", open"}`, details: `${shape}\ncorrection factor undefined: no measures` };
   }
-  el("measures").textContent = lines.join("\n");
+  const u = unitText(m.unit);
+  const length = `${c.closed ? "perimeter" : "length"} ${show(m.perimeter)} ${u}`;
+  const area = c.closed && m.vertices > 2 ? `area ${show(m.area)} ${u}²` : null;
+  const lines = [`${shape}, ${c.closed ? "closed" : "open"}`, length];
+  if (area !== null) {
+    lines.push(area);
+  }
+  lines.push(`bounding box ${show(m.width)} × ${show(m.height)} ${u}`);
+  if (m.unit === "px" && app.image !== null) {
+    lines.push("(no pixel size: lengths in pixels)");
+  }
+  return { brief: `${shape}, ${area ?? (c.closed ? length : `open, ${length}`)}`, details: lines.join("\n") };
 }
 
 /**
@@ -1595,6 +1651,9 @@ function refreshContours() {
  * @returns {{brief: string, details: string}}
  */
 function describeMeasurement(ms) {
+  if (ms.kind === "contour") {
+    return describeContour(ms);
+  }
   const undefinedFactor = { brief: "?", details: "correction factor undefined: no measures" };
   if (ms.kind === "ruler" || ms.kind === "profile") {
     const r = measureRuler(ms.points, app.frame);
@@ -1637,23 +1696,56 @@ function describeMeasurement(ms) {
   };
 }
 
+/** The list, the details and the controls of the selection, and the windows that follow it. */
 function refreshMeasurements() {
-  const list = selectEl("measurement-list");
-  fillList(list, app.measurements.map((ms) => `${ms.name}: ${describeMeasurement(ms).brief}`));
-  app.selected = Math.min(app.selected, app.measurements.length - 1);
-  list.selectedIndex = app.selected;
+  const n = app.measurements.length;
+  app.checked = app.checked.filter((i) => i < n);
+  if (app.selected >= n) {
+    app.selected = -1;
+  }
+  fillMeasurementList();
   const ms = app.measurements[app.selected];
-  el("measurement-details").textContent = ms === undefined
-    ? (app.measurements.length ? "Select a measurement." : "No measurements.")
-    : `${ms.name}\n${describeMeasurement(ms).details}`;
+  const count = app.checked.length;
+  el("measurement-details").textContent = selectionText(ms, count, n);
   const ruler = ms !== undefined && ms.kind === "ruler";
   for (const id of ["level-horizontal", "level-vertical", "axis-from-ruler"]) {
     buttonEl(id).disabled = !ruler;
   }
-  for (const id of ["rename-measurement", "delete-measurement"]) {
-    buttonEl(id).disabled = ms === undefined;
+  buttonEl("rename-measurement").disabled = count !== 1;
+  buttonEl("delete-measurement").disabled = count === 0;
+  buttonEl("download").disabled = n === 0;
+  const c = currentContour();
+  el("contour-controls").hidden = c === null;
+  if (c !== null) {
+    inputEl("closed").checked = c.closed;
+    const [layer, datatype] = c.layer ?? [1, 0];
+    inputEl("contour-layer").value = String(layer);
+    inputEl("contour-datatype").value = String(datatype);
   }
+  refreshVertexWindow();
   refreshProfileWindow();
+}
+
+/**
+ * The details under the list: the measurement edited, and how many are selected.
+ * @param {Measurement|undefined} ms     the one edited
+ * @param {number} count                 how many are selected
+ * @param {number} n                     how many there are
+ * @returns {string}
+ */
+function selectionText(ms, count, n) {
+  if (n === 0) {
+    return "No measurements yet: trace a contour (tool 1), or measure with tools 2 to 5.";
+  }
+  if (count === 0) {
+    return "Select a measurement: click or tap it here, or one of its points with its tool.";
+  }
+  const several = count > 1 ? `${count} selected: Download gives one CSV row each.` : "";
+  if (ms === undefined) {
+    return several;
+  }
+  const about = `${ms.name}\n${describeMeasurement(ms).details}`;
+  return several ? `${several}\n\n${about}` : about;
 }
 
 function refreshFrameInputs() {
@@ -1931,36 +2023,44 @@ function imageInfo() {
   };
 }
 
-/** @returns {string} the polygon file of the current contours */
-function polygonText() {
+/**
+ * The polygon file of ``contours``: their vertices, those with any.
+ * @param {Contour[]} contours
+ * @returns {string}
+ */
+function polygonText(contours) {
   const s = snapSettings();
   const snap = `sigma_px=${s.sigmaPx} median=${s.median} radius_px=${s.radiusPx} min_contrast=${s.minContrast} ` +
     `snap=${s.on ? "on" : "off"}`;
-  return formatPolygonFile(imageInfo(), app.frame, app.contours.filter((c) => c.points.length > 0), snap);
+  return formatPolygonFile(imageInfo(), app.frame, contours.filter((c) => c.points.length > 0), snap);
 }
 
-/** @returns {string} the measurements file */
-function measurementText() {
-  return formatMeasurementFile(imageInfo(), app.frame, app.measurements, (ms) => profileMean(ms));
+/**
+ * The measurements file: one row for each of ``list``.
+ * @param {Measurement[]} list
+ * @returns {string}
+ */
+function measurementText(list) {
+  return formatMeasurementFile(imageInfo(), app.frame, list, (ms) => profileMean(ms));
 }
 
 /** @returns {string} the session file */
 function sessionText() {
   return formatSession({
-    image: imageInfo(), frame: app.frame, snap: snapSettings(), contours: app.contours.filter((c) => c.points.length > 0),
-    measurements: app.measurements, activeContour: app.active, display: app.image ? [app.lo, app.hi] : null,
+    image: imageInfo(), frame: app.frame, snap: snapSettings(), measurements: app.measurements, selected: app.selected,
+    display: app.image ? [app.lo, app.hi] : null,
   }, new Date().toISOString());
 }
 
 /**
  * Offer ``content`` as a download named ``name``.
- * @param {string|Uint8Array} content
+ * @param {string|Uint8Array|Blob} content
  * @param {string} name
  * @param {string} type
  */
 function download(content, name, type) {
-  const part = typeof content === "string" ? content : new Uint8Array(content);
-  const url = URL.createObjectURL(new Blob([part], { type }));
+  const blob = content instanceof Blob ? content : new Blob([typeof content === "string" ? content : new Uint8Array(content)], { type });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
@@ -1981,12 +2081,31 @@ function saveSession() {
   app.dirty = false;
 }
 
-function exportPolygons() {
-  download(polygonText(), `${stem()}_polygons.csv`, "text/csv;charset=utf-8");
+/**
+ * A name made safe for a file name.
+ * @param {string} name
+ * @returns {string}
+ */
+function fileSafe(name) {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "_");
 }
 
-function exportMeasurements() {
-  download(measurementText(), `${stem()}_measurements.csv`, "text/csv;charset=utf-8");
+/**
+ * Download the vertices of ``contours`` as a polygon file named ``name``.
+ * @param {Contour[]} contours
+ * @param {string} name
+ */
+function exportPolygons(contours, name) {
+  download(polygonText(contours), name, "text/csv;charset=utf-8");
+}
+
+/**
+ * Download a measurements file named ``name``, one row for each of ``list``.
+ * @param {Measurement[]} list
+ * @param {string} name
+ */
+function exportMeasurements(list, name) {
+  download(measurementText(list), name, "text/csv;charset=utf-8");
 }
 
 /**
@@ -2005,7 +2124,23 @@ function sameImageOrConfirmed(sha256, name) {
 }
 
 /**
- * Load contours (and the frame they were traced in) from a polygon file.
+ * ``name``, or "name (2)" and so on when ``taken`` has it; what it gives is added to ``taken``.
+ * @param {string} name
+ * @param {Set<string>} taken
+ * @returns {string}
+ */
+function uniqueName(name, taken) {
+  let out = name;
+  for (let k = 2; taken.has(out); k++) {
+    out = `${name} (${k})`;
+  }
+  taken.add(out);
+  return out;
+}
+
+/**
+ * Load contours (and the frame they were traced in) from a polygon file: they take the place of
+ * the contours traced so far, and the other measurements stay.
  * @param {string} text
  * @param {string} name
  * @returns {boolean}
@@ -2023,6 +2158,8 @@ function loadPolygonText(text, name) {
     return false;
   }
   const frame = frameFromMeta(file.meta, app.frame);
+  const others = app.measurements.filter((m) => m.kind !== "contour");
+  const taken = new Set(others.map((m) => m.name));
   /** @type {Contour[]} */
   const contours = [];
   for (const c of file.contours) {
@@ -2035,12 +2172,11 @@ function loadPolygonText(text, name) {
       window.alert(`Contour "${c.name}" has neither pixel coordinates nor usable micrometres; it is skipped.`);
       continue;
     }
-    contours.push({ name: c.name, closed: c.closed, points });
+    contours.push({ name: uniqueName(c.name, taken), kind: "contour", closed: c.closed, points });
   }
   pushHistory();
-  app.contours = contours;
-  app.active = 0;
-  clearPicked();
+  app.measurements = [...others, ...contours];
+  selectOnly(-1);
   changeFrame(() => {
     app.frame = frame;
   });
@@ -2049,7 +2185,7 @@ function loadPolygonText(text, name) {
 }
 
 /**
- * Take up a session: frame, contours, measurements and snap settings.
+ * Take up a session: frame, measurements and snap settings.
  * @param {string} text
  * @param {string} name
  * @returns {boolean}
@@ -2067,11 +2203,9 @@ function loadSessionText(text, name) {
     return false;
   }
   pushHistory();
-  app.contours = session.contours;
-  app.active = session.activeContour;
   clearPicked();
   app.measurements = session.measurements;
-  app.selected = session.measurements.length - 1;
+  selectOnly(session.selected);
   const s = session.snap;
   inputEl("snap").checked = s.on;
   inputEl("sigma").value = String(s.sigmaPx);
@@ -2086,7 +2220,7 @@ function loadSessionText(text, name) {
   }
   app.dirty = false;
   refreshEdges();
-  setStatus(`Took up ${name}: ${session.contours.length} contour(s), ${session.measurements.length} measurement(s)`);
+  setStatus(`Took up ${name}: ${session.measurements.length} measurement(s)`);
   return true;
 }
 
@@ -2105,19 +2239,19 @@ async function openFile(file) {
   }
 }
 
-/** @returns {boolean} whether there are contours or measurements */
+/** @returns {boolean} whether any measurement has points */
 function hasWork() {
-  return app.measurements.length > 0 || app.contours.some((c) => c.points.length > 0);
+  return app.measurements.some((m) => m.points.length > 0);
 }
 
-/** Read the active contour's GDS layer and datatype from the panel (an undoable edit). */
+/** Read the selected contour's GDS layer and datatype from the panel (an undoable edit). */
 function layerInputsChanged() {
   const layer = Number(inputEl("contour-layer").value);
   const datatype = Number(inputEl("contour-datatype").value);
   const ok = (/** @type {number} */ v) => Number.isInteger(v) && v >= 0 && v <= 32767;
   const c = currentContour();
   if (c === null) {
-    refreshContours();
+    refreshMeasurements();
     return;
   }
   const [l, d] = c.layer ?? [1, 0];
@@ -2127,7 +2261,7 @@ function layerInputsChanged() {
     pushHistory();
     c.layer = [layer, datatype];
   }
-  refreshContours();
+  refreshMeasurements();
 }
 
 // ------------------------------------------------------------------------- vertex window
@@ -2138,7 +2272,7 @@ function toggleVertexWindow() {
   refreshVertexWindow();
 }
 
-/** The rows of the vertex window: the active contour in the measurement frame, (G8). */
+/** The rows of the vertex window: the selected contour in the measurement frame, (G8). */
 function refreshVertexWindow() {
   if (el("vertex-window").hidden) {
     return;
@@ -2148,7 +2282,7 @@ function refreshVertexWindow() {
   const m = measurementMatrix(app.frame);
   const unit = m === null ? "?" : unitText(m.unit);
   const digits = m !== null && m.unit === "um" ? 4 : 2;
-  el("vertex-title").textContent = current === null ? "Vertices: no contour yet" : `Vertices of ${c.name}`;
+  el("vertex-title").textContent = current === null ? "Vertices: no contour selected" : `Vertices of ${c.name}`;
   el("vertex-x-head").textContent = `X (${unit})`;
   el("vertex-y-head").textContent = `Y (${unit})`;
   const picked = new Set(app.picked);
@@ -2178,7 +2312,7 @@ function refreshVertexWindow() {
 }
 
 /**
- * Pick vertex ``i`` of the active contour: alone, toggled, or the range from the last one picked.
+ * Pick vertex ``i`` of the selected contour: alone, toggled, or the range from the last one picked.
  * @param {number} i
  * @param {"only"|"toggle"|"range"} how
  */
@@ -2203,7 +2337,7 @@ function pickVertex(i, how) {
 }
 
 /**
- * Replace the active contour's points (an undoable edit) and the selection.
+ * Replace the selected contour's points (an undoable edit) and the picked vertices.
  * @param {Point[]} points
  * @param {number[]} picked
  */
@@ -2215,7 +2349,7 @@ function setVertices(points, picked) {
   pushHistory();
   c.points = points;
   app.picked = picked;
-  refreshContours();
+  refreshMeasurements();
   render();
 }
 
@@ -2370,7 +2504,7 @@ const profileCanvas = /** @type {HTMLCanvasElement} */ (el("profile-plot"));
  * @typedef {Object} ProfileData
  * @property {ProfileGeometry} geometry
  * @property {Profile} profile
- * @property {Array<{name: string, contour: number, t: number, distance: number}>} crossings
+ * @property {Array<{name: string, index: number, t: number, distance: number}>} crossings   index: the contour's in the list
  */
 
 /** What the plot shows, and where its axis lies on the canvas (CSS pixels), for the cursor. */
@@ -2397,7 +2531,7 @@ function openProfileWindow() {
   refreshProfileWindow();
 }
 
-/** @returns {Measurement|null} the profile the window shows: the selected measurement, when it is a profile */
+/** @returns {FixedMeasurement|null} the profile the window shows: the selected measurement, when it is a profile */
 function shownProfile() {
   const ms = app.measurements[app.selected];
   return ms !== undefined && ms.kind === "profile" ? ms : null;
@@ -2418,10 +2552,11 @@ function profileData(ms) {
     return null;
   }
   const geometry = profileGeometry(ms.points, ms.width ?? 1, app.frame);
+  const contours = app.measurements.flatMap((m, i) => (m.kind === "contour" ? [{ index: i, contour: m }] : []));
   return {
     geometry, profile: sampleProfile(app.image, geometry),
-    crossings: profileCrossings(ms.points, app.contours).map((c) => ({
-      ...c, name: app.contours[c.contour].name, distance: c.t * geometry.length,
+    crossings: profileCrossings(ms.points, contours.map((c) => c.contour)).map((c) => ({
+      name: contours[c.contour].contour.name, index: contours[c.contour].index, t: c.t, distance: c.t * geometry.length,
     })),
   };
 }
@@ -2464,6 +2599,7 @@ function refreshProfileWindow() {
     width.value = String(Number(data.geometry.width.toPrecision(6)));
   }
   buttonEl("profile-export").disabled = data === null;
+  buttonEl("profile-png").disabled = data === null;
   el("profile-note").textContent = profileNote(data);
   showProfileReadout();
   drawProfilePlot();
@@ -2526,10 +2662,7 @@ function niceTicks(lo, hi, n) {
   return { ticks, digits: Math.max(0, -Math.floor(Math.log10(step) + 1e-9)) };
 }
 
-/**
- * The plot: the mean along the line, its spread across the band shaded, the contours that cross
- * the line as dashed verticals in their colours, and the cursor.
- */
+/** The plot in the profile window, at the window's size and the screen's resolution. */
 function drawProfilePlot() {
   const dpr = window.devicePixelRatio || 1;
   const w = profileCanvas.clientWidth;
@@ -2541,16 +2674,42 @@ function drawProfilePlot() {
   profileCanvas.height = Math.round(h * dpr);
   const g = /** @type {CanvasRenderingContext2D} */ (profileCanvas.getContext("2d"));
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const axis = plotProfile(g, w, h, profilePlot.data, { cursor: app.profileCursor, title: null });
+  profilePlot.left = axis.left;
+  profilePlot.right = axis.right;
+}
+
+/**
+ * A profile plot on ``g``, ``w`` x ``h`` CSS pixels: the mean along the line, its spread across the
+ * band shaded, the contours that cross the line as dashed verticals (those selected amber), the
+ * cursor (0 to 1 along the line, or null) and a title above (or null).  Returns where the axis
+ * lies, for the cursor.
+ * @param {CanvasRenderingContext2D} g
+ * @param {number} w
+ * @param {number} h
+ * @param {ProfileData|null} data
+ * @param {{cursor: number|null, title: string|null}} how
+ * @returns {{left: number, right: number}}
+ */
+function plotProfile(g, w, h, data, how) {
   g.fillStyle = "#ffffff";
   g.fillRect(0, 0, w, h);
+  const top = how.title === null ? 10 : 34;
+  if (how.title !== null) {
+    g.font = `600 ${LABEL_FONT}`;
+    g.fillStyle = "#272727";
+    g.textAlign = "left";
+    g.textBaseline = "top";
+    g.fillText(how.title, 12, 10);
+  }
   g.font = LABEL_FONT;
-  const data = profilePlot.data;
   const length = data === null ? NaN : data.geometry.length;
   if (data === null || !(length > 0)) {
     g.fillStyle = "#6f6f6f";
     g.textAlign = "center";
+    g.textBaseline = "middle";
     g.fillText(data === null ? "no profile selected" : "no length: check the tilt correction", w / 2, h / 2);
-    return;
+    return { left: 0, right: 1 };
   }
   const { profile, crossings, geometry } = data;
   const wide = geometry.offsets.length > 1;
@@ -2568,9 +2727,7 @@ function drawProfilePlot() {
   }
   const pad = hi > lo ? 0.06 * (hi - lo) : 1;
   [lo, hi] = [lo - pad, hi + pad];
-  const [left, right, top, bottom] = [58, w - 12, 10, h - 30];
-  profilePlot.left = left;
-  profilePlot.right = right;
+  const [left, right, bottom] = [58, w - 12, h - 30];
   /** @param {number} s @returns {number} */
   const X = (s) => left + (s / length) * (right - left);
   /** @param {number} v @returns {number} */
@@ -2605,22 +2762,24 @@ function drawProfilePlot() {
     r.forEach((i, k) => (k === 0 ? g.moveTo : g.lineTo).call(g, X(profile.distance[i]), Y(profile.mean[i])));
     g.stroke();
   }
-  drawPlotCrossings(g, crossings.map((c) => ({ x: X(c.distance), name: c.name, active: c.contour === app.active })), top, bottom);
-  if (app.profileCursor !== null) {
-    const x = X(app.profileCursor * length);
+  const checked = new Set(app.checked);
+  drawPlotCrossings(g, crossings.map((c) => ({ x: X(c.distance), name: c.name, active: checked.has(c.index) })), top, bottom);
+  if (how.cursor !== null) {
+    const x = X(how.cursor * length);
     g.strokeStyle = PREVIEW_COLOR;
     g.lineWidth = 1;
     g.beginPath();
     g.moveTo(x, top);
     g.lineTo(x, bottom);
     g.stroke();
-    const i = Math.round(app.profileCursor * (profile.mean.length - 1));
+    const i = Math.round(how.cursor * (profile.mean.length - 1));
     if (profile.count[i] > 0) {
       g.beginPath();
       g.arc(x, Y(profile.mean[i]), 3.5, 0, 2 * Math.PI);
       g.stroke();
     }
   }
+  return { left, right };
 }
 
 /**
@@ -2719,80 +2878,74 @@ function profilePlotPointer(e) {
   render();
 }
 
-function exportProfile() {
-  const ms = shownProfile();
+/**
+ * Download the samples of a profile as a profile file: by default of the one the window shows.
+ * @param {FixedMeasurement|null} [ms]
+ */
+function exportProfile(ms = shownProfile()) {
   const data = ms === null ? null : profileData(ms);
   if (ms === null || data === null) {
     return;
   }
-  const name = ms.name.replace(/[^A-Za-z0-9._-]+/g, "_");
-  download(formatProfileFile(imageInfo(), app.frame, ms, data.profile, data.crossings), `${stem()}_${name}.csv`,
+  download(formatProfileFile(imageInfo(), app.frame, ms, data.profile, data.crossings), `${stem()}_${fileSafe(ms.name)}.csv`,
     "text/csv;charset=utf-8");
+}
+
+/**
+ * Download the plot of a profile as a PNG image, by default of the one the window shows: 1200 x 750
+ * CSS pixels at twice that resolution, titled with the image, the profile, its length and band.
+ * @param {FixedMeasurement|null} [ms]
+ */
+function exportProfilePng(ms = shownProfile()) {
+  const data = ms === null ? null : profileData(ms);
+  if (ms === null || data === null) {
+    return;
+  }
+  const [w, h, scale] = [1200, 750, 2];
+  const c = document.createElement("canvas");
+  c.width = w * scale;
+  c.height = h * scale;
+  const g = /** @type {CanvasRenderingContext2D} */ (c.getContext("2d"));
+  g.setTransform(scale, 0, 0, scale, 0, 0);
+  const { length, width, unit } = data.geometry;
+  const u = unit === null ? "" : ` ${unitText(unit)}`;
+  const about = Number.isFinite(length) ? `: ${show(length)}${u} long, band ${show(width)}${u} wide` : "";
+  plotProfile(g, w, h, data, { cursor: null, title: `${ms.name} on ${app.image ? app.image.name : "no image"}${about}` });
+  const name = `${stem()}_${fileSafe(ms.name)}.png`;
+  c.toBlob((blob) => {
+    if (blob !== null) {
+      download(blob, name, "image/png");
+    }
+  }, "image/png");
 }
 
 // ------------------------------------------------------------------------- GDS
 
 /**
  * The export settings of the GDS dialog.
- * @returns {{cellName: string, pathWidth: number, names: boolean, measurements: boolean, annotation: [number, number]}}
+ * @returns {{cellName: string, pathWidth: number, names: boolean}}
  */
 function gdsOptions() {
   const width = Number(inputEl("gds-path-width").value);
   return {
     cellName: inputEl("gds-cell").value.trim(), pathWidth: Number.isFinite(width) && width > 0 ? width : 0,
-    names: inputEl("gds-names").checked, measurements: inputEl("gds-measurements").checked,
-    annotation: [Number(inputEl("gds-annotation-layer").value), Number(inputEl("gds-annotation-datatype").value)],
+    names: inputEl("gds-names").checked,
   };
 }
 
 /**
- * A measurement's value as GDS text (ASCII).
- * @param {Measurement} ms
- * @returns {string}
- */
-function gdsValue(ms) {
-  if (ms.kind === "ruler" || ms.kind === "profile") {
-    const r = measureRuler(ms.points, app.frame);
-    const band = ms.kind === "profile" ? `, band ${Number(profileGeometry(ms.points, ms.width ?? 1, app.frame).width.toPrecision(6))} um` : "";
-    return r === null ? "?" : `${Number(r.length.toPrecision(6))} um${band}`;
-  }
-  const a = ms.kind === "angle" ? measureAngle(ms.points, app.frame) : (measureLineAngle(ms.points, app.frame)?.angleDeg ?? null);
-  return a === null ? "?" : `${a.toFixed(3)} deg`;
-}
-
-/**
- * Where a measurement's label goes (um): a ruler's middle, an angle's vertex, where two lines
- * cross (or their points' centre when they cross far away or not at all).
- * @param {Measurement} ms
- * @param {Point[]} pts    the measurement's points in um
- * @returns {Point}
- */
-function gdsLabelAt(ms, pts) {
-  const mean = pts.reduce((acc, p) => [acc[0] + p[0] / pts.length, acc[1] + p[1] / pts.length], [0, 0]);
-  if (ms.kind === "ruler" || ms.kind === "profile") {
-    return [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2];
-  }
-  if (ms.kind === "angle") {
-    return pts[1];
-  }
-  const span = Math.max(...pts.map((p) => Math.hypot(p[0] - mean[0], p[1] - mean[1])));
-  const cross = lineIntersection(pts[0], pts[1], pts[2], pts[3]);
-  return cross !== null && Math.hypot(cross[0] - mean[0], cross[1] - mean[1]) < 10 * span ? cross : /** @type {Point} */ (mean);
-}
-
-/**
- * The elements of the GDS file, points in the measurement frame (um): closed contours as
- * boundaries and the others as paths, each on its layer, then the names and the measurements
- * when asked.
+ * The elements of a GDS file of ``contours``, points in the measurement frame (um): the closed ones
+ * as boundaries and the others as paths, each on its layer, with their names when asked.
  * @param {ReturnType<typeof gdsOptions>} options
+ * @param {Contour[]} contours
  * @returns {GdsElement[]}
  */
-function gdsElements(options) {
+function gdsElements(options, contours) {
   /** @param {Point} p @returns {Point} */
   const um = (p) => /** @type {Point} */ (toMeasurement(app.frame, p[0], p[1]));
   /** @type {GdsElement[]} */
   const out = [];
-  for (const c of app.contours.filter((k) => k.points.length > 0)) {
+  for (const c of contours.filter((k) => k.points.length > 0)) {
     const [layer, datatype] = c.layer ?? [1, 0];
     const points = c.points.map(um);
     out.push(c.closed && points.length >= 3 ? { kind: "boundary", layer, datatype, points }
@@ -2801,42 +2954,46 @@ function gdsElements(options) {
       out.push({ kind: "text", layer, datatype, points: [points[0]], text: c.name });
     }
   }
-  if (options.measurements) {
-    const [layer, datatype] = options.annotation;
-    for (const ms of app.measurements) {
-      const pts = ms.points.map(um);
-      const lines = ms.kind === "line-angle" ? [pts.slice(0, 2), pts.slice(2, 4)] : [pts];
-      // a profile's band is a path as wide as the band, with flush ends: the band itself
-      const width = ms.kind === "profile" ? profileGeometry(ms.points, ms.width ?? 1, app.frame).width : 0;
-      out.push(...lines.map((points) => /** @type {GdsElement} */ ({ kind: "path", layer, datatype, points, width })),
-        { kind: "text", layer, datatype, points: [gdsLabelAt(ms, pts)], text: `${ms.name}: ${gdsValue(ms)}` });
-    }
-  }
   return out;
 }
 
 /**
- * The GDS file of the current work (FORMAT.md), or null with a message when there are no
- * micrometres.
+ * The GDS file of ``contours`` (FORMAT.md), or null with a message when there are no micrometres.
  * @param {ReturnType<typeof gdsOptions>} options
+ * @param {Contour[]} contours
  * @returns {{bytes: Uint8Array, skipped: string[]}|null}
  */
-function gdsFile(options) {
+function gdsFile(options, contours) {
   const m = measurementMatrix(app.frame);
   if (app.image === null || m === null || m.unit !== "um") {
     window.alert("GDS export needs micrometres: set the pixel size, and a tilt correction that is defined.");
     return null;
   }
   return formatGds({
-    libName: "SEM_MEASUREMENT_TOOL", cellName: options.cellName || gdsName(stem(), "TOP"), elements: gdsElements(options),
-    date: new Date(),
+    libName: "SEM_MEASUREMENT_TOOL", cellName: options.cellName || gdsName(stem(), "TOP"),
+    elements: gdsElements(options, contours), date: new Date(),
   });
 }
 
-function openGdsDialog() {
-  if (app.image === null) {
+/** What the GDS dialog writes: these contours, to a file of this name. */
+const gdsTarget = {
+  /** @type {Contour[]} */
+  contours: [],
+  name: "",
+};
+
+/**
+ * Ask how to write ``contours`` as a GDS file named ``name``.
+ * @param {Contour[]} contours
+ * @param {string} name
+ */
+function openGdsDialog(contours, name) {
+  if (app.image === null || contours.length === 0) {
     return;
   }
+  gdsTarget.contours = contours;
+  gdsTarget.name = name;
+  el("gds-heading").textContent = contours.length === 1 ? `Export GDS: ${contours[0].name}` : `Export GDS: ${contours.length} contours`;
   const cell = inputEl("gds-cell");
   if (cell.dataset.image !== app.image.name) {          // a new image: name the cell after it
     cell.value = gdsName(stem(), "TOP");
@@ -2846,12 +3003,122 @@ function openGdsDialog() {
 }
 
 function exportGds() {
-  const file = gdsFile(gdsOptions());
+  const file = gdsFile(gdsOptions(), gdsTarget.contours);
   if (file !== null) {
-    download(file.bytes, `${stem()}.gds`, "application/octet-stream");
+    download(file.bytes, gdsTarget.name, "application/octet-stream");
     if (file.skipped.length) {
       window.alert(`Left out of the GDS file:\n${file.skipped.join("\n")}`);
     }
+  }
+}
+
+// ------------------------------------------------------------------------- downloads
+//
+// The Download button under the list offers what the selection can be saved as (FORMAT.md).  A
+// contour alone: its vertices (a polygon file) or a GDS file.  A profile alone: its samples (a
+// profile file) or its plot (PNG).  Another measurement alone: its row of the measurements file.
+// Several: one row each, and the vertices and a GDS file of the contours among them.  Then the
+// same for all the measurements.
+
+/** @typedef {{label: string, act: () => void, disabled?: boolean}} MenuItem */
+
+/**
+ * The downloads of the selection, then (after a null, the separator) those of all the measurements.
+ * @returns {Array<MenuItem|null>}
+ */
+function downloadItems() {
+  const picked = app.checked.map((i) => app.measurements[i]);
+  /** @type {Array<MenuItem|null>} */
+  const items = [];
+  if (picked.length === 1) {
+    const ms = picked[0];
+    const base = `${stem()}_${fileSafe(ms.name)}`;
+    if (ms.kind === "contour") {
+      const empty = ms.points.length === 0;
+      items.push({ label: `${ms.name}: vertices (CSV)`, disabled: empty, act: () => exportPolygons([ms], `${base}.csv`) },
+        { label: `${ms.name}: GDS...`, disabled: empty, act: () => openGdsDialog([ms], `${base}.gds`) });
+    } else if (ms.kind === "profile") {
+      items.push({ label: `${ms.name}: samples (CSV)`, act: () => exportProfile(ms) },
+        { label: `${ms.name}: plot (PNG)`, act: () => exportProfilePng(ms) });
+    } else {
+      items.push({ label: `${ms.name} (CSV)`, act: () => exportMeasurements([ms], `${base}.csv`) });
+    }
+    items.push(null);
+  } else if (picked.length > 1) {
+    items.push(...downloadsOfSeveral(picked, true), null);
+  }
+  items.push(...downloadsOfSeveral(app.measurements, false));
+  return items;
+}
+
+/**
+ * The downloads of several measurements, the selected ones or all: one row each, and the vertices
+ * and a GDS file of the contours among them (those with vertices).
+ * @param {Measurement[]} list
+ * @param {boolean} selected
+ * @returns {MenuItem[]}
+ */
+function downloadsOfSeveral(list, selected) {
+  const contours = list.flatMap((m) => (m.kind === "contour" && m.points.length > 0 ? [m] : []));
+  const k = contours.length;
+  const these = `${selected ? "Selected" : "All"} contours (${k})`;
+  return [
+    { label: selected ? `${list.length} selected: one row each (CSV)` : `All ${list.length} measurements: one row each (CSV)`,
+      disabled: list.length === 0, act: () => exportMeasurements(list, `${stem()}_measurements.csv`) },
+    { label: `${these}: vertices (CSV)`, disabled: k === 0, act: () => exportPolygons(contours, `${stem()}_polygons.csv`) },
+    { label: `${these}: GDS...`, disabled: k === 0, act: () => openGdsDialog(contours, `${stem()}.gds`) },
+  ];
+}
+
+/** Open the download menu under its button, or close it when it is open. */
+function toggleDownloadMenu() {
+  const menu = el("download-menu");
+  if (!menu.hidden) {
+    closeDownloadMenu();
+    return;
+  }
+  menu.replaceChildren(...downloadItems().map((item) => {
+    if (item === null) {
+      const line = document.createElement("div");
+      line.setAttribute("role", "separator");
+      return line;
+    }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.textContent = item.label;
+    b.disabled = item.disabled === true;
+    b.addEventListener("click", () => {
+      closeDownloadMenu();
+      item.act();
+    });
+    return b;
+  }));
+  menu.hidden = false;
+  const button = el("download");
+  button.setAttribute("aria-expanded", "true");
+  const at = button.getBoundingClientRect();
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(Math.min(at.left, window.innerWidth - box.width - 4), 4)}px`;
+  const below = at.bottom + 4;
+  menu.style.top = `${below + box.height <= window.innerHeight - 4 ? below : Math.max(at.top - box.height - 4, 4)}px`;
+}
+
+function closeDownloadMenu() {
+  el("download-menu").hidden = true;
+  el("download").setAttribute("aria-expanded", "false");
+}
+
+/**
+ * A double click on a measurement in the list: a profile's plot, or a contour's vertices.
+ * @param {number} index
+ */
+function openWindowOf(index) {
+  const ms = app.measurements[index];
+  if (ms !== undefined && ms.kind === "profile") {
+    openProfileWindow();
+  } else if (ms !== undefined && ms.kind === "contour" && el("vertex-window").hidden) {
+    toggleVertexWindow();
   }
 }
 
@@ -2907,95 +3174,80 @@ function rightClick(sx, sy) {
   if (app.tool === "pan") {
     return;
   }
-  if (app.tool === "contour") {
-    const hit = hitVertex(sx, sy);
-    if (hit !== null) {
-      deleteVertex(hit.index, hit.point);
-    }
-    return;
-  }
-  const hit = hitMeasurePoint(sx, sy);
-  if (hit !== null) {
-    deleteMeasurement(hit.index);
+  const hit = hitPoint(sx, sy, app.tool === "contour");
+  if (hit !== null && app.tool === "contour") {
+    deleteVertex(hit.index, hit.point);
+  } else if (hit !== null) {
+    deleteMeasurements([hit.index]);
   }
 }
 
 /**
- * Delete vertex ``vi`` of contour ``ci`` (an undoable edit); that contour becomes the active one.
- * @param {number} ci
+ * Delete vertex ``vi`` of contour ``index`` (an undoable edit); that contour becomes the one edited.
+ * @param {number} index
  * @param {number} vi
  */
-function deleteVertex(ci, vi) {
+function deleteVertex(index, vi) {
   pushHistory();
-  setActive(ci);
-  app.contours[ci].points.splice(vi, 1);
+  focusMeasurement(index);
+  app.measurements[index].points.splice(vi, 1);
   forgetVertex(vi);
-  refreshContours();
+  refreshMeasurements();
   render();
 }
 
 /**
- * Insert a vertex halfway between vertex ``vi`` of contour ``ci`` and the next one (an undoable edit).
- * @param {number} ci
+ * Insert a vertex halfway between vertex ``vi`` of contour ``index`` and the next one (an undoable edit).
+ * @param {number} index
  * @param {number} vi
  */
-function insertVertexAfter(ci, vi) {
-  const c = app.contours[ci];
+function insertVertexAfter(index, vi) {
+  const c = app.measurements[index];
   const a = c.points[vi];
   const b = c.points[(vi + 1) % c.points.length];
   pushHistory();
-  setActive(ci);
+  focusMeasurement(index);
   c.points.splice(vi + 1, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
   app.picked = app.picked.map((k) => (k > vi ? k + 1 : k));
-  refreshContours();
+  refreshMeasurements();
   render();
 }
 
 /**
- * Start dragging what lies under a screen point with the current tool: a vertex (contour tool),
- * or a profile's width handle or a measurement's point (measurement tools, unless one is being
- * placed).  Returns whether a drag began.
+ * Start dragging what lies under a screen point with the current tool: a contour's vertex (contour
+ * tool), or the width handle of the profile edited or another measurement's point (the other
+ * tools, unless one is being placed).  What is dragged becomes the measurement edited.  Returns
+ * whether a drag began.
  * @param {number} sx
  * @param {number} sy
  * @returns {boolean}
  */
 function startDragAt(sx, sy) {
-  if (app.tool === "contour") {
-    const hit = hitVertex(sx, sy);
-    if (hit === null) {
-      return false;
-    }
-    pushHistory();
-    app.drag = { kind: "vertex", index: hit.index, point: hit.point, moved: false };
-    setActive(hit.index);
-    refreshContours();
-    render();
-    return true;
-  }
   if (app.tool === "pan" || app.pending !== null) {
     return false;
   }
-  if (hitWidthHandle(sx, sy)) {
+  const contour = app.tool === "contour";
+  if (!contour && hitWidthHandle(sx, sy)) {
     pushHistory();
     app.drag = { kind: "width", index: app.selected, point: 0, moved: false };
     return true;
   }
-  const hit = hitMeasurePoint(sx, sy);
+  const hit = hitPoint(sx, sy, contour);
   if (hit === null) {
     return false;
   }
   pushHistory();
   app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false };
-  app.selected = hit.index;
+  focusMeasurement(hit.index);
   refreshMeasurements();
   render();
   return true;
 }
 
 /**
- * A click with the current tool where there is nothing to drag: a vertex of the active contour
- * (inserted into the nearest segment with ``insert``), or the next point of a measurement;
- * snapped unless ``exact``.
+ * A click with the current tool where there is nothing to drag: a vertex of the selected contour, or
+ * of a new one (inserted into the nearest segment with ``insert``), or the next point of a
+ * measurement; snapped unless ``exact``.
  * @param {number} sx
  * @param {number} sy
  * @param {boolean} exact
@@ -3037,7 +3289,7 @@ function setOriginAt(sx, sy) {
   app.frame.originPx = screenToStored(sx, sy);
   app.originMode = false;
   refreshFrameNotes();
-  refreshContours();
+  refreshMeasurements();
   render();
 }
 
@@ -3080,7 +3332,7 @@ function endDrag(x, y, exact, toggle) {
   }
   if (!drag.moved) {
     app.history.pop();             // a click on a point without moving it changed nothing
-    if (drag.kind === "vertex") {
+    if (drag.kind === "point" && app.measurements[drag.index].kind === "contour") {
       pickVertex(drag.point, toggle ? "toggle" : "only");
     }
     return;
@@ -3089,9 +3341,8 @@ function endDrag(x, y, exact, toggle) {
     refreshMeasurements();
     return;
   }
-  const loose = takeExact() || exact || (drag.kind === "point" && app.measurements[drag.index].kind === "profile");
+  const loose = takeExact() || exact || app.measurements[drag.index].kind === "profile";
   points[drag.point] = (loose ? null : snapTarget(x, y)) ?? [x, y];
-  refreshContours();
   refreshMeasurements();
   render();
 }
@@ -3121,7 +3372,7 @@ function snapsNow() {
   if (d === null) {
     return app.tool !== "profile" && app.tool !== "pan";
   }
-  return d.kind === "vertex" || (d.kind === "point" && app.measurements[d.index].kind !== "profile");
+  return d.kind === "point" && app.measurements[d.index].kind !== "profile";
 }
 
 /**
@@ -3130,10 +3381,7 @@ function snapsNow() {
  */
 function draggedPoints() {
   const d = app.drag;
-  if (d === null || d.kind === "width") {
-    return null;
-  }
-  return d.kind === "vertex" ? app.contours[d.index].points : app.measurements[d.index].points;
+  return d === null || d.kind === "width" ? null : app.measurements[d.index].points;
 }
 
 // ------------------------------------------------------------------------- touch tools
@@ -3169,7 +3417,7 @@ function canStepBack() {
   return app.pending !== null || app.originMode || (app.tool === "contour" && (currentContour()?.points.length ?? 0) > 0);
 }
 
-/** Back: the last point of the measurement being placed, else "Set origin", else the active contour's last vertex. */
+/** Back: the last point of the measurement being placed, else "Set origin", else the selected contour's last vertex. */
 function stepBack() {
   if (app.pending !== null) {
     app.pending.points.pop();
@@ -3284,44 +3532,40 @@ function holdFired() {
 }
 
 /**
- * The actions for the point a finger was held on.
- * @param {{kind: "vertex"|"point"|"width", index: number, point: number}} target
+ * The actions for the point a finger was held on: for a contour's vertex, the vertex's, then for any
+ * measurement its own.
+ * @param {{kind: "point"|"width", index: number, point: number}} target
  * @returns {Array<{label: string, act: () => void, disabled?: boolean}>}
  */
 function holdMenuItems(target) {
-  if (target.kind === "vertex") {
-    const c = app.contours[target.index];
-    const i = target.point;
-    const last = c.closed && c.points.length > 2 ? Infinity : c.points.length - 1;
-    return [
-      { label: "Delete vertex", act: () => deleteVertex(target.index, i) },
-      {
-        label: "Select in the vertex window", act: () => {
-          setActive(target.index);
-          refreshContours();
-          pickVertex(i, "only");
-          if (el("vertex-window").hidden) {
-            toggleVertexWindow();
-          }
-        },
-      },
-      { label: "Insert a vertex after", disabled: i >= last, act: () => insertVertexAfter(target.index, i) },
-    ];
-  }
   const ms = app.measurements[target.index];
   /** @param {() => void} then @returns {() => void} */
-  const selectThen = (then) => () => {
-    app.selected = target.index;
+  const focusThen = (then) => () => {
+    focusMeasurement(target.index);
     refreshMeasurements();
     render();
     then();
   };
-  const items = [
-    { label: `Delete ${ms.name}`, act: () => deleteMeasurement(target.index) },
-    { label: "Rename...", act: selectThen(() => renameMeasurement()) },
-  ];
+  /** @type {Array<{label: string, act: () => void, disabled?: boolean}>} */
+  const items = [];
+  if (ms.kind === "contour" && target.kind === "point") {
+    const i = target.point;
+    const last = ms.closed && ms.points.length > 2 ? Infinity : ms.points.length - 1;
+    items.push({ label: "Delete vertex", act: () => deleteVertex(target.index, i) },
+      {
+        label: "Select in the vertex window", act: focusThen(() => {
+          pickVertex(i, "only");
+          if (el("vertex-window").hidden) {
+            toggleVertexWindow();
+          }
+        }),
+      },
+      { label: "Insert a vertex after", disabled: i >= last, act: () => insertVertexAfter(target.index, i) });
+  }
+  items.push({ label: `Delete ${ms.name}`, act: () => deleteMeasurements([target.index]) },
+    { label: "Rename...", act: () => renameMeasurement(target.index) });
   if (ms.kind === "profile") {
-    items.push({ label: "Show the plot", act: selectThen(() => openProfileWindow()) });
+    items.push({ label: "Show the plot", act: focusThen(() => openProfileWindow()) });
   }
   return items;
 }
@@ -3662,6 +3906,7 @@ canvas.addEventListener("wheel", (e) => {
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 window.addEventListener("resize", () => {
+  closeDownloadMenu();
   render();
   drawHistogram();
 });
@@ -3682,7 +3927,7 @@ function toggleCheckbox(id) {
 
 /**
  * Backspace: the last point being placed; else the vertices picked in the vertex window; else the
- * last vertex (contour tool) or the selected measurement.
+ * selected contour's last vertex (contour tool) or the selected measurements.
  */
 function backspace() {
   if (app.pending !== null) {
@@ -3696,7 +3941,7 @@ function backspace() {
   } else if (app.tool === "contour") {
     deleteLastVertex();
   } else {
-    deleteMeasurement(app.selected);
+    deleteMeasurements(app.checked);
   }
 }
 
@@ -3709,7 +3954,7 @@ const KEY_ACTIONS = {
   4: () => setTool("line-angle"),
   5: () => setTool("profile"),
   p: () => toggleProfileWindow(),
-  n: () => newContour(),
+  n: () => finishContour(),
   c: () => setClosed(!(currentContour()?.closed ?? false)),
   h: () => levelSelected("horizontal"),
   v: () => levelSelected("vertical"),
@@ -3731,13 +3976,14 @@ const KEY_ACTIONS = {
     if (app.picked.length) {
       dropPicked();
     } else {
-      deleteMeasurement(app.selected);
+      deleteMeasurements(app.checked);
     }
   },
   Escape: () => {
     app.pending = null;
     app.originMode = false;
     closeHoldMenu();
+    closeDownloadMenu();
     clearPicked();
     refreshFrameNotes();
     refreshVertexWindow();
@@ -3759,7 +4005,7 @@ function ctrlShortcut(e, typing) {
   /** @type {Record<string, () => void>} */
   const always = { s: () => saveSession(), o: () => inputEl("image-file").click() };
   /** @type {Record<string, () => void>} */
-  const outsideFields = { z: () => (e.shiftKey ? redo() : undo()), y: () => redo() };
+  const outsideFields = { z: () => (e.shiftKey ? redo() : undo()), y: () => redo(), a: () => checkAll() };
   const action = always[key] ?? (typing ? undefined : outsideFields[key]);
   if (action === undefined) {
     return true;                 // other Ctrl combinations are left to the browser
@@ -3836,8 +4082,6 @@ wrap.addEventListener("drop", (e) => {
 el("open-image").addEventListener("click", () => inputEl("image-file").click());
 el("open-session").addEventListener("click", () => inputEl("session-file").click());
 el("save-session").addEventListener("click", () => saveSession());
-el("export-polygons").addEventListener("click", () => exportPolygons());
-el("export-measurements").addEventListener("click", () => exportMeasurements());
 for (const id of ["image-file", "session-file"]) {
   inputEl(id).addEventListener("change", () => {
     const input = inputEl(id);
@@ -3852,37 +4096,58 @@ for (const tool of TOOLS) {
   // a click on the active tool puts it down: no tool
   el(`tool-${tool}`).addEventListener("click", () => setTool(app.tool === tool ? "pan" : tool));
 }
-selectEl("contour-list").addEventListener("change", () => {
-  setActive(selectEl("contour-list").selectedIndex);
-  refreshContours();
-  render();
-});
-el("new-contour").addEventListener("click", () => newContour());
-el("rename-contour").addEventListener("click", () => renameContour());
-el("delete-contour").addEventListener("click", () => deleteContour());
+el("new-contour").addEventListener("click", () => finishContour());
 inputEl("closed").addEventListener("change", () => setClosed(inputEl("closed").checked));
-selectEl("measurement-list").addEventListener("change", () => {
-  app.selected = selectEl("measurement-list").selectedIndex;
+/** The last plain click on a row of the measurement list: two on one row within DOUBLE_MS make a double click. */
+let listClick = { index: -1, time: -Infinity };
+el("measurement-list").addEventListener("click", (e) => {
+  // a click, which a tap is as well: on the box, or with Ctrl, it adds the row to the selection or
+  // takes it out; with Shift it selects from the row clicked last; else it selects the row alone,
+  // and a second one soon after opens its window (timed here: a double tap does not always send dblclick)
+  const row = e.target instanceof Element ? e.target.closest(".item") : null;
+  const index = row === null ? -1 : [...el("measurement-list").children].indexOf(row);
+  if (index < 0) {
+    return;
+  }
+  const toggle = (e.target instanceof Element && e.target.closest(".box") !== null) || e.ctrlKey || e.metaKey;
+  const now = performance.now();
+  const second = !toggle && !e.shiftKey && index === listClick.index && now - listClick.time < DOUBLE_MS;
+  listClick = second || toggle || e.shiftKey ? { index: -1, time: -Infinity } : { index, time: now };
+  if (toggle) {
+    toggleChecked(index);
+  } else if (e.shiftKey) {
+    checkRange(index);
+  } else {
+    selectOnly(index);
+  }
   refreshMeasurements();
   render();
+  if (second) {
+    openWindowOf(index);
+  }
 });
-/** The last click on the measurement list: two on one row within DOUBLE_MS make a double click. */
-let listClick = { index: -1, time: -Infinity };
-selectEl("measurement-list").addEventListener("click", () => {
-  // timed here, for the mouse and a finger alike: a double tap does not always send dblclick
-  const index = selectEl("measurement-list").selectedIndex;
-  const now = performance.now();
-  const second = index >= 0 && index === listClick.index && now - listClick.time < DOUBLE_MS;
-  listClick = second ? { index: -1, time: -Infinity } : { index, time: now };
-  if (index !== app.selected) {
-    app.selected = index;
+el("measurement-list").addEventListener("keydown", (e) => {
+  // the keyboard in the list: arrows, Home and End select a row alone, Enter opens its window
+  const n = app.measurements.length;
+  const at = app.selected >= 0 ? app.selected : app.checked.length ? app.checked[0] : -1;
+  /** @type {Record<string, number>} */
+  const moves = { ArrowUp: at < 0 ? n - 1 : Math.max(at - 1, 0), ArrowDown: at < 0 ? 0 : Math.min(at + 1, n - 1), Home: 0, End: n - 1 };
+  const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+  if (n > 0 && plain && moves[e.key] !== undefined) {
+    selectOnly(moves[e.key]);
     refreshMeasurements();
     render();
+    el("measurement-list").children[moves[e.key]].scrollIntoView({ block: "nearest" });
+  } else if (plain && e.key === "Enter" && at >= 0) {
+    openWindowOf(at);
+  } else {
+    return;                          // other keys are the page's (Delete, Ctrl+A, the tools)
   }
-  if (second && shownProfile() !== null) {
-    openProfileWindow();             // a double click on a profile brings up its plot
-  }
+  e.preventDefault();
+  e.stopPropagation();
 });
+el("download").addEventListener("click", () => toggleDownloadMenu());
+el("panel").addEventListener("scroll", () => closeDownloadMenu());
 for (const id of ["contour-layer", "contour-datatype"]) {
   el(id).addEventListener("change", () => layerInputsChanged());
 }
@@ -3919,7 +4184,6 @@ histCanvas.addEventListener("pointermove", (e) => {
 histCanvas.addEventListener("pointerup", () => {
   app.levelDrag = null;
 });
-el("export-gds").addEventListener("click", () => openGdsDialog());
 el("gds-dialog").addEventListener("close", () => {
   if (/** @type {HTMLDialogElement} */ (el("gds-dialog")).returnValue === "export") {
     exportGds();
@@ -4008,12 +4272,18 @@ window.addEventListener("pointerdown", (e) => {
   if (!menu.hidden && !(e.target instanceof Node && menu.contains(e.target))) {
     closeHoldMenu();                 // a press anywhere else closes the menu
   }
+  const downloads = el("download-menu");
+  const inside = e.target instanceof Node && (downloads.contains(e.target) || el("download").contains(e.target));
+  if (!downloads.hidden && !inside) {
+    closeDownloadMenu();             // and the download menu, but for its own button, which closes it itself
+  }
 }, true);
 if (window.matchMedia("(any-pointer: coarse)").matches) {
   enterTouchLayout();                // a touch screen: the touch layout from the start
 }
 el("profile-close").addEventListener("click", () => toggleProfileWindow());
 el("profile-export").addEventListener("click", () => exportProfile());
+el("profile-png").addEventListener("click", () => exportProfilePng());
 inputEl("profile-width").addEventListener("change", () => setProfileWidth(Number(inputEl("profile-width").value) / unitsPerView()));
 profileCanvas.addEventListener("pointerdown", (e) => {
   try {
@@ -4035,7 +4305,7 @@ profileCanvas.addEventListener("pointerleave", (e) => {
 });
 new ResizeObserver(() => drawProfilePlot()).observe(profileCanvas);
 el("rename-measurement").addEventListener("click", () => renameMeasurement());
-el("delete-measurement").addEventListener("click", () => deleteMeasurement(app.selected));
+el("delete-measurement").addEventListener("click", () => deleteMeasurements(app.checked));
 el("level-horizontal").addEventListener("click", () => levelSelected("horizontal"));
 el("level-vertical").addEventListener("click", () => levelSelected("vertical"));
 el("axis-from-ruler").addEventListener("click", () => axisFromSelected());
@@ -4064,14 +4334,12 @@ el("reset-origin").addEventListener("click", () => {
     pushHistory();
     app.frame.originPx = [0, 0];
     refreshFrameNotes();
-    refreshContours();
     refreshMeasurements();
     render();
   }
 });
 
 refreshFrameInputs();
-refreshContours();
 refreshMeasurements();
 refreshDisplay();
 setTool("pan");                     // the app opens with no tool: the view pans and zooms
@@ -4080,10 +4348,11 @@ setTool("pan");                     // the app opens with no tool: the view pans
 Object.assign(window, {
   semMeasurementTool: {
     state: app, openImageBuffer, loadPolygonText, loadSessionText, polygonText, measurementText, sessionText,
-    addVertex, newContour, undo, redo, fit, frameInputsChanged, refreshEdges, storedToScreen, screenToStored,
+    addVertex, finishContour, undo, redo, fit, frameInputsChanged, refreshEdges, storedToScreen, screenToStored,
     snapTarget, setTool, placePoint, levelSelected, axisFromSelected, draw, insertTarget, pickVertex, movePicked,
     dropPicked, makePickedFirst, reversePicked, setVertexCoordinate, zoomToPicked, toggleVertexWindow, gdsElements,
     gdsFile, setLevels, brightnessMoved, contrastMoved, drawHistogram, paintPicture, toggleProfileWindow,
-    refreshProfileWindow, shownProfile, profileData, profileMean, setProfileWidth, exportProfile, profilePlot,
+    refreshProfileWindow, shownProfile, profileData, profileMean, setProfileWidth, exportProfile, exportProfilePng,
+    profilePlot, selectOnly, toggleChecked, checkRange, checkAll, deleteMeasurements, downloadItems, refreshMeasurements,
   },
 });

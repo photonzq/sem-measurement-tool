@@ -1,6 +1,6 @@
 "use strict";
-/* global CORRECTIONS, correctionFactorOrNull, measurementMatrix, toMeasurement, measureRuler, measureAngle,
-   measureLineAngle, profileGeometry */
+/* global CORRECTIONS, correctionFactorOrNull, measurementMatrix, toMeasurement, measureContour, measureRuler,
+   measureAngle, measureLineAngle, profileGeometry */
 /* exported formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatProfileFile */
 /*
  * The CSV files of FORMAT.md: the polygon file, the interface to a mode solver or any program that
@@ -124,18 +124,45 @@ function headerLines(image, frame) {
 }
 
 /**
+ * The header line of a contour's measures, for the record: "# measures: NAME, perimeter_um P,
+ * area_um2 A", with length for perimeter and no area when it is open, px for um when the pixel size
+ * is unknown; null when the correction factor is undefined.
+ * @param {{name: string, closed: boolean, points: Point[]}} c
+ * @param {Frame} frame
+ * @returns {string|null}
+ */
+function measuresLine(c, frame) {
+  const m = measureContour(c, frame);
+  if (m === null) {
+    return null;
+  }
+  const digits = m.unit === "um" ? 6 : 3;
+  const parts = [csvField(c.name), `${c.closed ? "perimeter" : "length"}_${m.unit} ${formatNumber(m.perimeter, digits)}`];
+  if (c.closed && m.vertices > 2) {
+    parts.push(`area_${m.unit}2 ${formatNumber(m.area, digits)}`);
+  }
+  return `# measures: ${parts.join(", ")}`;
+}
+
+/**
  * The polygon file (FORMAT.md) for ``contours`` traced on ``image``.
  * @param {ImageInfo} image
  * @param {Frame} frame
- * @param {Contour[]} contours
+ * @param {Array<{name: string, closed: boolean, points: Point[]}>} contours
  * @param {string} snap     snap settings, for the record
  * @returns {string}
  */
 function formatPolygonFile(image, frame, contours, snap) {
   const physical = frame.pixelNm !== null && correctionFactorOrNull(frame) !== null;
-  const lines = [POLYGON_FORMAT_LINE, ...headerLines(image, frame), `# snap: ${snap}`,
-    "# (x_um, y_um) = px_to_um (x_px - origin_x, y_px - origin_y), px_to_um = [[a, b], [c, d]] given as a b c d",
-    "contour,closed,vertex,x_um,y_um,x_px,y_px"];
+  const lines = [POLYGON_FORMAT_LINE, ...headerLines(image, frame), `# snap: ${snap}`];
+  for (const c of contours) {
+    const line = measuresLine(c, frame);
+    if (line !== null) {
+      lines.push(line);
+    }
+  }
+  lines.push("# (x_um, y_um) = px_to_um (x_px - origin_x, y_px - origin_y), px_to_um = [[a, b], [c, d]] given as a b c d",
+    "contour,closed,vertex,x_um,y_um,x_px,y_px");
   for (const c of contours) {
     c.points.forEach((p, i) => {
       const um = physical ? toMeasurement(frame, p[0], p[1]) : null;
@@ -275,6 +302,10 @@ function frameFromMeta(meta, base) {
  * @returns {string[]}
  */
 function measurementValues(m, frame, digits) {
+  if (m.kind === "contour") {
+    const c = measureContour(m, frame);
+    return c === null ? ["", "", "", "", ""] : [formatNumber(c.perimeter, digits), c.unit, "", "", ""];
+  }
   if (m.kind === "ruler" || m.kind === "profile") {
     const r = measureRuler(m.points, frame);
     return r === null ? ["", "", "", "", ""]
@@ -283,6 +314,25 @@ function measurementValues(m, frame, digits) {
   }
   const angle = m.kind === "angle" ? measureAngle(m.points, frame) : measureLineAngle(m.points, frame)?.angleDeg ?? null;
   return angle === null ? ["", "deg", "", "", ""] : [formatNumber(angle, 3), "deg", "", "", ""];
+}
+
+/**
+ * The contour fields of the measurements file: closed, vertices, area, and the width and height of
+ * the bounding box; empty for the other measurements.
+ * @param {Measurement} m
+ * @param {Frame} frame
+ * @param {number} digits     decimals of lengths and areas
+ * @returns {string[]}
+ */
+function contourFields(m, frame, digits) {
+  if (m.kind !== "contour") {
+    return ["", "", "", "", ""];
+  }
+  const c = measureContour(m, frame);
+  const closed = m.closed ? "1" : "0";
+  return c === null ? [closed, String(m.points.length), "", "", ""]
+    : [closed, String(c.vertices), m.closed && c.vertices > 2 ? formatNumber(c.area, digits) : "",
+      formatNumber(c.width, digits), formatNumber(c.height, digits)];
 }
 
 /**
@@ -310,19 +360,22 @@ function formatMeasurementFile(image, frame, measurements, meanGrey = () => null
   if (unit !== null) {
     lines.push(`# unit: ${unit}`);
   }
-  lines.push("# lengths in the unit above, angles in degrees; points in pixels of the image as stored; width and " +
-    "mean_grey: the band of a line profile",
-  "name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey");
+  lines.push("# lengths in the unit above, areas in its square, angles in degrees; points in pixels of the image as " +
+    "stored; width and mean_grey: the band of a line profile; closed to bbox_height: a contour, whose value is its " +
+    "perimeter (closed) or length (open) and whose vertices are in the polygon file",
+  "name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey," +
+    "closed,vertices,area,bbox_width,bbox_height");
   const digits = unit === "um" ? 6 : 3;
   for (const ms of measurements) {
     const points = [];
     for (let i = 0; i < 4; i++) {
-      const p = ms.points[i];
+      const p = ms.kind === "contour" ? undefined : ms.points[i];
       points.push(p ? formatNumber(p[0], 3) : "", p ? formatNumber(p[1], 3) : "");
     }
     const band = ms.kind === "profile" && unit !== null
       ? [formatNumber(profileGeometry(ms.points, ms.width ?? 1, frame).width, digits), greyField(meanGrey(ms))] : ["", ""];
-    lines.push([csvField(ms.name), ms.kind, ...measurementValues(ms, frame, digits), ...points, ...band].join(","));
+    lines.push([csvField(ms.name), ms.kind, ...measurementValues(ms, frame, digits), ...points, ...band,
+      ...contourFields(ms, frame, digits)].join(","));
   }
   return `${lines.join("\n")}\n`;
 }

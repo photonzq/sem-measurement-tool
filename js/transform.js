@@ -87,16 +87,19 @@
 /** @typedef {[number, number]} Point */
 /** A 2 x 2 matrix [[a, b], [c, d]] stored row by row as [a, b, c, d]. @typedef {[number, number, number, number]} Mat2 */
 /**
- * A contour; ``layer`` is its GDSII layer and datatype, [1, 0] when absent.
- * @typedef {{name: string, closed: boolean, points: Point[], layer?: [number, number]}} Contour
+ * A contour: the one kind of measurement with any number of points, a polygon when ``closed``, else
+ * a polyline; ``layer`` is its GDSII layer and datatype, [1, 0] when absent.
+ * @typedef {{name: string, kind: "contour", closed: boolean, points: Point[], layer?: [number, number], width?: undefined}} Contour
  */
-/** @typedef {"ruler"|"angle"|"line-angle"|"profile"} MeasureKind */
+/** The kinds of measurement with a set number of points (MEASURE_POINTS). @typedef {"ruler"|"angle"|"line-angle"|"profile"} FixedKind */
 /**
- * A measurement: a ruler (2 points), an angle (3 points: arm end, vertex, arm end), the angle
- * between two lines (4 points: line 1 from, to, line 2 from, to) or a line profile (2 points, and
- * ``width``: the band width in pixel widths of the corrected view, profile.js).
- * @typedef {{name: string, kind: MeasureKind, points: Point[], width?: number}} Measurement
+ * A ruler (2 points), an angle (3 points: arm end, vertex, arm end), the angle between two lines
+ * (4 points: line 1 from, to, line 2 from, to) or a line profile (2 points, and ``width``: the band
+ * width in pixel widths of the corrected view, profile.js).
+ * @typedef {{name: string, kind: FixedKind, points: Point[], width?: number, closed?: undefined, layer?: undefined}} FixedMeasurement
  */
+/** A measurement: a contour, or one of a set number of points. @typedef {Contour|FixedMeasurement} Measurement */
+/** @typedef {"contour"|FixedKind} MeasureKind */
 
 /**
  * The measurement frame, as set by the user: the parameters of (G8).
@@ -379,7 +382,7 @@ function lineIntersection(p1, p2, p3, p4) {
 
 /**
  * Measures of a contour in the measurement frame (G12); null when k is not defined.
- * @param {Contour} contour
+ * @param {{closed: boolean, points: Point[]}} contour
  * @param {Frame} frame
  * @returns {ContourMeasures|null}
  */

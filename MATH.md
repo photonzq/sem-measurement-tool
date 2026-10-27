@@ -505,9 +505,9 @@ The 56-bit mantissa has three bits more than a double's 53. Reading back, $m/2^{
 
 ### 4.4 What was checked against layout tools
 
-A file exported from the app held a turned, tilt-corrected FEI trace: a polygon on layer 2/0, an open contour as a 20 nm path on 5/1, two contour names, and a ruler and an angle as annotations on 100/0. It was read back with gdstk 1.0.1 and with KLayout 0.30.12.
+A file the app wrote held a turned, tilt-corrected FEI trace: a polygon on layer 2/0, an open contour as a 20 nm path on 5/1, and the two contour names. It was read back with gdstk 1.0.1 and with KLayout 0.30.12.
 
-- Both found the cell, the three layers, one polygon, three paths and four labels, with the units above.
+- Both found the cell, the two layers, one polygon, one path and two labels, with the units above.
 - Every vertex lay within 0.48 nm of the polygon file's micrometres, the rounding of (S1).
 
 ## Part 5. The display

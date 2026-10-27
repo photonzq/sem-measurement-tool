@@ -40,11 +40,29 @@
   button.active kbd { color: var(--text); }
   .grid { display: grid; grid-template-columns: 1fr 120px; gap: 4px 8px; align-items: center; margin: 6px 0; }
   input[type=number], select { font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--text); width: 100%; }
-  #contour-list, #measurement-list { width: 100%; }
+  /* the measurement list: a row selects one; its box adds it to the selection or takes it out */
+  .list { height: 112px; overflow-y: auto; border: 1px solid var(--line); border-radius: 3px; background: #fff; }
+  .list .item { display: flex; align-items: center; gap: 6px; padding: 2px 6px; white-space: nowrap; cursor: default; }
+  .list .item > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .list .item[aria-selected="true"] { background: #dfe7f5; }
+  .list .item.edited { box-shadow: inset 3px 0 0 var(--accent); }
+  .list .box { position: relative; flex: none; width: 14px; height: 14px; border: 1px solid var(--muted); border-radius: 3px;
+               background: #fff; cursor: pointer; }
+  .list .item[aria-selected="true"] .box { background: var(--accent); border-color: var(--accent); }
+  .list .item[aria-selected="true"] .box::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
+                                                   border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
   label { user-select: none; }
   .note { color: var(--muted); white-space: pre-line; margin: 4px 0; }
   .note.warn { color: var(--warn); }
-  #measures, #measurement-details { color: var(--text); }
+  #measurement-details { color: var(--text); }
+  #download-menu { position: fixed; z-index: 20; display: flex; flex-direction: column; min-width: 240px; max-width: 360px;
+                   background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+                   overflow: hidden; }
+  #download-menu[hidden] { display: none; }
+  #download-menu button { border: none; border-radius: 0; background: transparent; text-align: left; padding: 6px 12px;
+                          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #download-menu button:hover:enabled { background: #e8edf6; }
+  #download-menu [role="separator"] { border-top: 1px solid var(--line); margin: 2px 0; }
   pre { font: 11px/1.35 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; margin: 4px 0; max-height: 320px; overflow: auto;
         background: #fff; border: 1px solid var(--line); padding: 4px 6px; }
   details summary { cursor: pointer; color: var(--muted); margin: 10px 0 4px; }
@@ -79,6 +97,7 @@
   #profile-window .row { align-items: center; flex-wrap: nowrap; }
   #profile-window .row input[type=number] { width: 96px; flex: 0 0 auto; }
   #profile-window .row button { flex: 0 0 auto; margin-left: auto; }
+  #profile-window .row button + button { margin-left: 0; }
   #profile-plot { display: block; flex: 1 1 0; min-height: 0; height: 0; width: calc(100% - 12px); margin: 0 6px;
                   border: 1px solid var(--line); background: #fff; cursor: crosshair; touch-action: none; }
   #profile-readout { margin: 3px 8px 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -106,8 +125,13 @@
   body.touch .floating .row button { min-height: 40px; padding: 4px 10px; }
   body.touch .floating .grip { width: 30px; height: 30px; }
   body.touch #profile-window .row input[type=number] { min-height: 36px; }
+  body.touch .list { height: 200px; }
+  body.touch .list .item { min-height: 40px; }
+  body.touch .list .box { width: 24px; height: 24px; }
+  body.touch .list .item[aria-selected="true"] .box::after { left: 8px; top: 3px; width: 6px; height: 12px; border-width: 0 3px 3px 0; }
+  body.touch #download-menu button { min-height: 44px; padding: 10px 16px; font-size: 14px; }
   /* no text selection, nor its highlight, on a long press of the controls */
-  #view, #drop-hint, button, label, summary, select, h2, kbd, .floating header, #touch-bar, #hold-menu {
+  #view, #drop-hint, button, label, summary, select, h2, kbd, .floating header, #touch-bar, #hold-menu, .list, #download-menu {
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   button { -webkit-tap-highlight-color: transparent; }
   dialog { border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; background: var(--panel); color: var(--text); max-width: 420px; }
@@ -124,7 +148,7 @@
     <canvas id="view"></canvas>
     <div id="drop-hint">Drop an SEM image here (TIFF from FEI / Thermo Fisher or Zeiss, or PNG, JPEG), then a session or<br>polygon file if you have one; or use "Open image".  Nothing leaves this computer.</div>
     <div id="busy"></div>
-    <section id="vertex-window" class="floating" aria-label="Vertices of the active contour" hidden>
+    <section id="vertex-window" class="floating" aria-label="Vertices of the selected contour" hidden>
       <header id="vertex-bar"><span id="vertex-title">Vertices</span><button type="button" id="vertex-close" title="Close (T)">&times;</button></header>
       <div class="row">
         <button type="button" id="vertex-up" title="Move the selected vertices one place earlier in the order">&uarr; Up</button>
@@ -146,7 +170,7 @@
       <button type="button" id="touch-undo" title="Undo (Ctrl+Z)">&#x21B6;<span>Undo</span></button>
       <button type="button" id="touch-redo" title="Redo (Ctrl+Y)">&#x21B7;<span>Redo</span></button>
       <button type="button" id="touch-fit" title="Fit the image to the view (F)">&#x2922;<span>Fit</span></button>
-      <button type="button" id="touch-back" title="Take back the last point being placed, or the active contour's last vertex">&#x232B;<span>Back</span></button>
+      <button type="button" id="touch-back" title="Take back the last point being placed, or the selected contour's last vertex">&#x232B;<span>Back</span></button>
       <button type="button" id="touch-snap" aria-pressed="false" title="Snap to the strongest nearby edge (S)">&#x2316;<span>Snap</span></button>
       <button type="button" id="touch-exact" aria-pressed="false" title="Place or release the next point exactly, without snapping">&#x22B9;<span>Exact</span></button>
     </div>
@@ -158,6 +182,7 @@
         <input type="number" inputmode="decimal" id="profile-width" min="0" step="any">
         <span id="profile-width-unit">µm</span>
         <button type="button" id="profile-export" title="Save the profile's samples as a CSV file">Export CSV</button>
+        <button type="button" id="profile-png" title="Save the plot as a PNG image">Export PNG</button>
       </div>
       <canvas id="profile-plot"></canvas>
       <div id="profile-readout" class="note"></div>
@@ -171,12 +196,7 @@
       <div class="row">
         <button type="button" id="open-image" title="Open an image (Ctrl+O); dropping a file on the view works too">Open image&hellip;</button>
         <button type="button" id="open-session" title="Take up a session (.json), or load the contours of a polygon file (.csv)">Open session&hellip;</button>
-        <button type="button" id="save-session" title="Save contours, measurements and calibration as a session file (Ctrl+S)">Save session</button>
-      </div>
-      <div class="row">
-        <button type="button" id="export-polygons" title="The contours as a polygon file (CSV), e.g. for a mode solver">Export polygons</button>
-        <button type="button" id="export-measurements" title="The rulers and angles as a CSV file, e.g. for a spreadsheet">Export measurements</button>
-        <button type="button" id="export-gds" title="The contours as a GDSII layout file, each on its layer">Export GDS&hellip;</button>
+        <button type="button" id="save-session" title="Save the measurements and the calibration as a session file (Ctrl+S)">Save session</button>
       </div>
       <input type="file" id="image-file" accept=".tif,.tiff,image/tiff,image/png,image/jpeg,image/bmp" hidden>
       <input type="file" id="session-file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" hidden>
@@ -197,33 +217,28 @@
     </section>
 
     <section>
-      <h2>Contours</h2>
-      <select id="contour-list" size="5" title="The active contour receives new vertices"></select>
-      <div class="row">
-        <button type="button" id="new-contour" title="Start a new contour (N)">New</button>
-        <button type="button" id="rename-contour">Rename</button>
-        <button type="button" id="delete-contour">Delete</button>
-      </div>
-      <label><input type="checkbox" id="closed" checked> closed polygon <kbd>C</kbd></label>
-      <div class="grid">
-        <label for="contour-layer" title="GDSII layer and datatype of the active contour, for Export GDS">GDS layer / datatype</label>
-        <div class="pair">
-          <input type="number" inputmode="numeric" id="contour-layer" min="0" max="32767" step="1" value="1">
-          <input type="number" inputmode="numeric" id="contour-datatype" min="0" max="32767" step="1" value="0" aria-label="GDS datatype">
-        </div>
-      </div>
-      <div class="row">
-        <button type="button" id="open-vertices" title="Show or hide the vertex window of the active contour (T)">Vertices&hellip;</button>
-      </div>
-      <div id="measures" class="note"></div>
-    </section>
-
-    <section>
       <h2>Measurements</h2>
-      <select id="measurement-list" size="5" title="Rulers, angles and profiles; the selected one is drawn in yellow.  Double-click a profile to show its plot."></select>
+      <!-- a list box of its own: a native select cannot select several rows by touch -->
+      <!-- [html-validate-disable-next prefer-native-element] -->
+      <div id="measurement-list" class="list" role="listbox" aria-multiselectable="true" aria-label="Measurements" tabindex="0"></div>
       <div class="row">
+        <button type="button" id="download" aria-haspopup="menu" aria-controls="download-menu" aria-expanded="false" title="Save the selected measurements, or all of them">Download &#9662;</button>
         <button type="button" id="rename-measurement">Rename</button>
-        <button type="button" id="delete-measurement" title="Delete the selected measurement (Delete)">Delete</button>
+        <button type="button" id="delete-measurement" title="Delete the selected measurements (Delete)">Delete</button>
+      </div>
+      <div id="contour-controls" hidden>
+        <div class="row">
+          <button type="button" id="new-contour" title="Done with this contour: the next click of the contour tool starts a new one (N)">New contour <kbd>N</kbd></button>
+          <button type="button" id="open-vertices" title="Show or hide the vertex window of the selected contour (T)">Vertices&hellip; <kbd>T</kbd></button>
+        </div>
+        <label><input type="checkbox" id="closed" checked> closed polygon <kbd>C</kbd></label>
+        <div class="grid">
+          <label for="contour-layer" title="GDSII layer and datatype of the selected contour, for its GDS file">GDS layer / datatype</label>
+          <div class="pair">
+            <input type="number" inputmode="numeric" id="contour-layer" min="0" max="32767" step="1" value="1">
+            <input type="number" inputmode="numeric" id="contour-datatype" min="0" max="32767" step="1" value="0" aria-label="GDS datatype">
+          </div>
+        </div>
       </div>
       <div class="row">
         <button type="button" id="level-horizontal" title="Turn the image so that the selected ruler is horizontal (H)">Level: horizontal</button>
@@ -316,7 +331,7 @@
           <tbody>
           <tr><td><kbd>0</kbd></td><td>no tool: drag to pan, wheel to zoom (or click the active tool's button again)</td></tr>
           <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile</td></tr>
-          <tr><td>click</td><td>contour: add a vertex to the active contour; other tools: place the next point (snapped when Snap is on)</td></tr>
+          <tr><td>click</td><td>contour: add a vertex to the selected contour, or start a new one when no contour is selected; other tools: place the next point (snapped when Snap is on)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
           <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>
           <tr><td><kbd>Alt</kbd>+click</td><td>place the point exactly where clicked, without snapping</td></tr>
@@ -327,20 +342,22 @@
           <tr><td>touch: two fingers</td><td>pinch to zoom, move together to pan</td></tr>
           <tr><td>touch: one finger</td><td>no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans</td></tr>
           <tr><td>pen</td><td>as the mouse</td></tr>
-          <tr><td><kbd>N</kbd> <kbd>C</kbd></td><td>new contour; close or open the active one</td></tr>
+          <tr><td><kbd>N</kbd> <kbd>C</kbd></td><td>done with the selected contour: the next click of the contour tool starts a new one; close or open the selected contour</td></tr>
+          <tr><td>the list under Measurements</td><td>click or tap: select one; its box, or <kbd>Ctrl</kbd>+click: add or take out; <kbd>Shift</kbd>+click: from the row clicked last; <kbd>Ctrl</kbd>+<kbd>A</kbd>: all; double click or double tap: a profile's plot, a contour's vertices; arrow keys: the next one</td></tr>
+          <tr><td>Download</td><td>a contour: its vertices (CSV) or GDS; a profile: its samples (CSV) or its plot (PNG); a ruler or an angle: its row (CSV); several: one row each, and the vertices or GDS of the contours among them; the same for all</td></tr>
           <tr><td><kbd>H</kbd> <kbd>V</kbd></td><td>turn the image so that the selected ruler is horizontal / vertical</td></tr>
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>
-          <tr><td><kbd>T</kbd></td><td>show or hide the vertex window</td></tr>
+          <tr><td><kbd>T</kbd></td><td>show or hide the vertex window (the selected contour)</td></tr>
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
-          <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete, rename or show the plot (a measurement)</td></tr>
+          <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot (a profile)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
-          <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour) or the selected measurement</td></tr>
-          <tr><td><kbd>Delete</kbd></td><td>delete the selected vertices, else the selected measurement</td></tr>
+          <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements</td></tr>
+          <tr><td><kbd>Delete</kbd></td><td>delete the selected vertices, else the selected measurements, contours included</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>undo / redo (edits, measurements, calibration)</td></tr>
           <tr><td><kbd>F</kbd> <kbd>+</kbd> <kbd>-</kbd></td><td>fit to window; zoom</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>open image / save session</td></tr>
-          <tr><td><kbd>Esc</kbd></td><td>cancel the measurement being placed, or "Set origin"</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>cancel the measurement being placed, or "Set origin"; close a menu</td></tr>
           </tbody>
         </table>
       </details>
@@ -350,6 +367,7 @@
 
   <footer id="status">Open an image to start.</footer>
 </div>
+<div id="download-menu" role="menu" aria-label="Download" hidden></div>
 <dialog id="gds-dialog" aria-labelledby="gds-heading">
   <form method="dialog">
     <h2 id="gds-heading">Export GDS</h2>
@@ -360,15 +378,7 @@
       <input type="number" inputmode="decimal" id="gds-path-width" min="0" step="any" value="0">
     </div>
     <label><input type="checkbox" id="gds-names"> contour names as text labels, on each contour's layer</label>
-    <label><input type="checkbox" id="gds-measurements"> measurements as annotations (lines and their values)</label>
-    <div class="grid">
-      <label for="gds-annotation-layer">annotation layer / datatype</label>
-      <div class="pair">
-        <input type="number" inputmode="numeric" id="gds-annotation-layer" min="0" max="32767" step="1" value="100">
-        <input type="number" inputmode="numeric" id="gds-annotation-datatype" min="0" max="32767" step="1" value="0" aria-label="annotation datatype">
-      </div>
-    </div>
-    <p class="note">Closed contours become polygons and open ones paths, each on its own layer (set under Contours).  Coordinates are those of the polygon file, micrometres in the measurement frame, on a 1 nm grid (user unit 1 &micro;m).</p>
+    <p class="note">Closed contours become polygons and open ones paths, each on its own layer (set under Measurements when the contour is selected).  Coordinates are those of the polygon file, micrometres in the measurement frame, on a 1 nm grid (user unit 1 &micro;m).</p>
     <div class="row">
       <button type="submit" value="export">Export</button>
       <button type="submit" value="cancel" formnovalidate>Cancel</button>

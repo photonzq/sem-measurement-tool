@@ -405,6 +405,14 @@ function checkPolygonFile() {
     && worstOf(back.contours[0].um[0], um) < 1e-6 && back.meta.pixel_size_nm === "1.34896 1.34896"
     && back.meta.correction === "cross-section" && text.includes('"slab, top",0,0,'),
   "polygon file round trip: names (a quoted one), closed flags, pixels, micrometres and header");
+  const rib = api.measureContour(contours[0], frame);
+  const slab = api.measureContour(contours[1], frame);
+  const header = text.split("\n").filter((line) => line.startsWith("# measures: "));
+  check(header.length === 2
+    && header[0] === `# measures: rib, perimeter_um ${rib.perimeter.toFixed(6)}, area_um2 ${rib.area.toFixed(6)}`
+    && header[1] === `# measures: "slab, top", length_um ${slab.perimeter.toFixed(6)}`
+    && text.indexOf("# measures: ") < text.indexOf("contour,closed,vertex,"),
+  "polygon file header: each contour's measures above the columns, perimeter and area when closed, length when open");
   const blank = { pixelNm: null, tiltDeg: 0, correction: "none", customFactor: 1, axisDeg: 0, rotationDeg: 0, originPx: [0, 0] };
   const restored = api.frameFromMeta(back.meta, blank);
   const matrix = back.meta.px_to_um.split(" ").map(Number);
@@ -439,18 +447,26 @@ function checkMeasurementFile() {
     { name: "foot, left", kind: "angle", points: [[0, 100], [100, 100], [100, 0]] },
     { name: "sidewall", kind: "line-angle", points: [[0, 0], [10, 0], [0, 0], [10, -10]] },
     { name: "profile 1", kind: "profile", points: [[100, 60], [400, 60]], width: 5 },
+    { name: "rib", kind: "contour", closed: true, points: [[100, 100], [400, 100], [400, 200], [100, 200]] },
+    { name: "slab", kind: "contour", closed: false, points: [[0, 300], [500, 300]] },
   ];
   const text = api.formatMeasurementFile(IMAGE, frame, measurements, (ms) => (ms.kind === "profile" ? 1234.5 : null));
   const rows = text.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
   const slant = (Math.atan(k) / DEG).toFixed(3);
-  check(text.startsWith("# sem-measurement-tool measurements 1\n") && text.includes("\n# unit: um\n") && rows.length === 5
-    && rows[0] === "name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey"
-    && rows[1] === "rib width,ruler,0.600000,um,0.600000,0.000000,0.000,100.000,50.000,400.000,50.000,,,,,,"
+  const h = 0.2 * k;                 // the rectangle's height: 100 rows of 2 nm, stretched by k
+  const gap = ",".repeat(14);        // a contour's empty fields, from dx to mean_grey
+  check(text.startsWith("# sem-measurement-tool measurements 1\n") && text.includes("\n# unit: um\n") && rows.length === 7
+    && rows[0] === "name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey," +
+      "closed,vertices,area,bbox_width,bbox_height"
+    && rows[1] === `rib width,ruler,0.600000,um,0.600000,0.000000,0.000,100.000,50.000,400.000,50.000${",".repeat(11)}`
     && rows[2].startsWith('"foot, left",angle,90.000,deg,,,,0.000,100.000,')
     && rows[3].startsWith(`sidewall,line-angle,${slant},deg,,,,`)
-    && rows[4] === "profile 1,profile,0.600000,um,0.600000,0.000000,0.000,100.000,60.000,400.000,60.000,,,,,0.010000,1234.5",
+    && rows[4] === "profile 1,profile,0.600000,um,0.600000,0.000000,0.000,100.000,60.000,400.000,60.000,,,,,0.010000,1234.5,,,,,"
+    && rows[5] === `rib,contour,${(2 * (0.6 + h)).toFixed(6)},um${gap}1,4,${(0.6 * h).toFixed(6)},0.600000,${h.toFixed(6)}`
+    && rows[6] === `slab,contour,1.000000,um${gap}0,2,,1.000000,0.000000`,
   `measurements file: a ruler of 0.6 um, a right angle, two lines at atan k = ${slant} deg, a profile of 0.6 um with ` +
-    "its band of 5 view pixels (0.01 um) and its mean grey");
+    "its band of 5 view pixels (0.01 um) and its mean grey, a closed contour (perimeter, vertices, area, bounding box) " +
+    "and an open one (its length, no area)");
 }
 
 function checkSession() {
@@ -459,37 +475,43 @@ function checkSession() {
     frame: { pixelNm: [1.34896, 1.34896], tiltDeg: 51.996, correction: "cross-section", customFactor: 1, axisDeg: 0.5,
       rotationDeg: -1.25, originPx: [1536.5, 1024.25] },
     snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4 },
-    contours: [{ name: "rib", closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
-      { name: 'slab "top", left', closed: false, points: [[100, 965], [2972, 965]] }],
-    measurements: [{ name: "ruler 1", kind: "ruler", points: [[1, 2], [3, 4]] },
+    measurements: [
+      { name: "rib", kind: "contour", closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
+      { name: "ruler 1", kind: "ruler", points: [[1, 2], [3, 4]] },
+      { name: 'slab "top", left', kind: "contour", closed: false, points: [[100, 965], [2972, 965]] },
       { name: "angle 1", kind: "angle", points: [[1, 2], [3, 4], [5, 7]] },
       { name: "line angle 1", kind: "line-angle", points: [[0, 0], [1, 0], [0, 1], [1, 2]] },
       { name: "profile 1", kind: "profile", points: [[10, 20], [30, 25]], width: 7.25 }],
-    activeContour: 1,
+    selected: 2,
     display: [1520, 61200.5],
   };
   const text = api.formatSession(session, "2026-10-23T12:00:00.000Z");
   const back = api.parseSession(text);
+  const ms = back.measurements;
   check(JSON.stringify(back.frame) === JSON.stringify(session.frame) && JSON.stringify(back.snap) === JSON.stringify(session.snap)
-    && worstOf(back.contours[0].points[0], [933.7961, 853.6115]) === 0 && back.contours[1].name === 'slab "top", left'
-    && !back.contours[1].closed && back.measurements.map((m) => m.kind).join() === "ruler,angle,line-angle,profile"
-    && back.measurements[3].width === 7.25 && back.measurements[0].width === undefined && text.includes('"width_px": 7.25')
-    && back.activeContour === 1 && back.image.sha256 === IMAGE.sha256 && text.includes("[933.7961, 853.6115]")
-    && JSON.stringify(back.contours.map((c) => c.layer)) === "[[2,5],[1,0]]" && back.display.join() === "1520,61200.5"
-    && api.parseSession(api.formatSession({ ...session, display: null }, "x")).display === null,
-  "session round trip: frame, snap settings, contours (points to 1e-4 px, GDS layers, 1/0 by default), measurements " +
-    "(a profile's band width), active contour, display levels (absent: Auto)");
+    && ms.map((m) => m.kind).join() === "contour,ruler,contour,angle,line-angle,profile"
+    && worstOf(ms[0].points[0], [933.7961, 853.6115]) === 0 && ms[2].name === 'slab "top", left' && ms[0].closed && !ms[2].closed
+    && JSON.stringify([ms[0].layer, ms[2].layer]) === "[[2,5],[1,0]]" && ms[1].closed === undefined
+    && ms[5].width === 7.25 && ms[1].width === undefined && text.includes('"width_px": 7.25')
+    && back.selected === 2 && back.image.sha256 === IMAGE.sha256 && text.includes("[933.7961, 853.6115]")
+    && back.display.join() === "1520,61200.5"
+    && api.parseSession(api.formatSession({ ...session, display: null, selected: -1 }, "x")).display === null
+    && api.parseSession(api.formatSession({ ...session, selected: -1 }, "x")).selected === -1,
+  "session round trip: frame, snap settings, the measurements in their order with contours among them (points to " +
+    "1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band width, the selected one (none: -1), display " +
+    "levels (absent: Auto)");
   const good = JSON.parse(text);
   const bad = [
     "{ not json",
     { ...good, format: "other" },
     { ...good, version: 2 },
+    { ...good, measurements: "none" },
     { ...good, measurements: [{ name: "r", kind: "ruler", points_px: [[0, 0]] }] },
     { ...good, measurements: [{ name: "r", kind: "circle", points_px: [[0, 0]] }] },
-    { ...good, contours: [{ name: "a", closed: true, points_px: [[0, 0]] }, { name: "a", closed: true, points_px: [] }] },
+    { ...good, measurements: [{ name: "a", kind: "contour", points_px: [[0, 0]] }, { name: "a", kind: "ruler", points_px: [[0, 0], [1, 1]] }] },
     { ...good, frame: { ...good.frame, correction: "sideways" } },
-    { ...good, contours: [{ name: "a", closed: true, points_px: [[0, "x"]] }] },
-    { ...good, contours: [{ name: "a", closed: true, gds_layer: [-1, 0], points_px: [[0, 0]] }] },
+    { ...good, measurements: [{ name: "a", kind: "contour", closed: true, points_px: [[0, "x"]] }] },
+    { ...good, measurements: [{ name: "a", kind: "contour", closed: true, gds_layer: [-1, 0], points_px: [[0, 0]] }] },
     { ...good, display: { black_level: 5, white_level: 5 } },
     { ...good, measurements: [{ name: "p", kind: "profile", width_px: -1, points_px: [[0, 0], [1, 1]] }] },
   ];
@@ -502,7 +524,7 @@ function checkSession() {
     }
   }
   check(refused === bad.length, `bad session files are refused (${refused} of ${bad.length}: not JSON, format, version, ` +
-    "point count, kind, repeated name, correction, number, GDS layer, display levels, band width)");
+    "no list, point count, kind, a name used twice across kinds, correction, number, GDS layer, display levels, band width)");
 }
 
 /** The records of a GDSII file, [type, data type, data], every length checked. */

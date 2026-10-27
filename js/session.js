@@ -4,7 +4,7 @@
 /*
  * The session file (FORMAT.md): what it takes to resume the work on an image, as JSON.  The
  * image it belongs to (name, size and SHA-256, not the pixels), the measurement frame, the
- * contours, the measurements and the snap settings.  Derived values (lengths, angles, areas,
+ * measurements (contours among them) and the snap settings.  Derived values (lengths, angles, areas,
  * profiles) are not stored: they follow from the points, the frame and the image.  Points are
  * stored coordinates (transform.js, (G1)) rounded to 1e-4 pixel, far below what snapping resolves;
  * a profile's band width is in pixel widths of the corrected view (profile.js).
@@ -24,15 +24,14 @@
  * @property {ImageInfo} image
  * @property {Frame} frame
  * @property {SnapSettings} snap
- * @property {Contour[]} contours
- * @property {Measurement[]} measurements
- * @property {number} activeContour
+ * @property {Measurement[]} measurements      contours, rulers, angles and profiles, in the order of the list
+ * @property {number} selected                 the selected measurement; -1 when none
  * @property {[number, number]|null} display   the black and white levels; null: Auto
  */
 
 const SESSION_FORMAT = "sem-measurement-tool session";
 const SESSION_VERSION = 1;
-/** Points of each kind of measurement. @type {Record<MeasureKind, number>} */
+/** Points of the measurements with a set number of them; a contour has any number. @type {Record<FixedKind, number>} */
 const MEASURE_POINTS = { ruler: 2, angle: 3, "line-angle": 4, profile: 2 };
 
 /**
@@ -49,6 +48,20 @@ function round4(v) {
  */
 function storedPoints(points) {
   return points.map((p) => [round4(p[0]), round4(p[1])]);
+}
+
+/**
+ * A measurement as the file keeps it.
+ * @param {Measurement} m
+ * @returns {Record<string, unknown>}
+ */
+function measurementEntry(m) {
+  if (m.kind === "contour") {
+    return { name: m.name, kind: m.kind, closed: m.closed, gds_layer: m.layer ?? [1, 0], points_px: storedPoints(m.points) };
+  }
+  return m.kind === "profile"
+    ? { name: m.name, kind: m.kind, width_px: round4(m.width ?? 1), points_px: storedPoints(m.points) }
+    : { name: m.name, kind: m.kind, points_px: storedPoints(m.points) };
 }
 
 /**
@@ -75,13 +88,8 @@ function formatSession(session, saved) {
     snap: {
       on: snap.on, sigma_px: snap.sigmaPx, median: snap.median, radius_px: snap.radiusPx, min_contrast: snap.minContrast,
     },
-    contours: session.contours.map((c) => ({
-      name: c.name, closed: c.closed, gds_layer: c.layer ?? [1, 0], points_px: storedPoints(c.points),
-    })),
-    measurements: session.measurements.map((m) => (m.kind === "profile"
-      ? { name: m.name, kind: m.kind, width_px: round4(m.width ?? 1), points_px: storedPoints(m.points) }
-      : { name: m.name, kind: m.kind, points_px: storedPoints(m.points) })),
-    active_contour: session.activeContour,
+    measurements: session.measurements.map(measurementEntry),
+    selected: session.selected >= 0 ? session.selected : null,
     display: session.display === null ? undefined
       : { black_level: Number(session.display[0].toPrecision(10)), white_level: Number(session.display[1].toPrecision(10)) },
   };
@@ -257,46 +265,51 @@ function parseSession(text) {
   if (root.version !== SESSION_VERSION) {
     throw new Error(`a session file of version ${JSON.stringify(root.version)}; this app reads version ${SESSION_VERSION}`);
   }
-  if (!Array.isArray(root.contours) || !Array.isArray(root.measurements)) {
-    throw new Error('"contours" and "measurements" must be arrays');
+  if (!Array.isArray(root.measurements)) {
+    throw new Error('"measurements" must be an array');
   }
-  const contourNames = new Set();
-  const contours = root.contours.map((c, i) => {
-    const o = objectAt(c, `contours[${i}]`);
+  const names = new Set();
+  const measurements = root.measurements.map((m, i) => measurementAt(m, `measurements[${i}]`, names));
+  const s = root.selected;
+  return {
+    image: imageAt(root.image), frame: frameAt(root.frame), snap: snapAt(root.snap), measurements,
+    selected: typeof s === "number" && Number.isInteger(s) && s >= 0 && s < measurements.length ? s : -1,
+    display: displayAt(root.display),
+  };
+}
+
+/**
+ * One measurement of the file; its name must differ from all met so far.
+ * @param {unknown} value
+ * @param {string} what
+ * @param {Set<string>} names
+ * @returns {Measurement}
+ */
+function measurementAt(value, what, names) {
+  const o = objectAt(value, what);
+  const name = nameAt(o.name, `${what}.name`, names);
+  const points = pointsAt(o.points_px, `${what}.points_px`);
+  if (o.kind === "contour") {
     /** @type {Contour} */
-    const contour = {
-      name: nameAt(o.name, `contours[${i}].name`, contourNames), closed: o.closed !== false,
-      points: pointsAt(o.points_px, `contours[${i}].points_px`),
-    };
+    const contour = { name, kind: "contour", closed: o.closed !== false, points };
     if (o.gds_layer !== undefined) {
-      contour.layer = layerAt(o.gds_layer, `contours[${i}].gds_layer`);
+      contour.layer = layerAt(o.gds_layer, `${what}.gds_layer`);
     }
     return contour;
-  });
-  const measureNames = new Set();
-  const measurements = root.measurements.map((m, i) => {
-    const o = objectAt(m, `measurements[${i}]`);
-    const kind = /** @type {MeasureKind} */ (o.kind);
-    if (!Object.prototype.hasOwnProperty.call(MEASURE_POINTS, kind)) {
-      throw new Error(`measurements[${i}].kind must be one of ${Object.keys(MEASURE_POINTS).join(", ")}`);
-    }
-    const points = pointsAt(o.points_px, `measurements[${i}].points_px`);
-    if (points.length !== MEASURE_POINTS[kind]) {
-      throw new Error(`measurements[${i}]: a ${kind} has ${MEASURE_POINTS[kind]} points, not ${points.length}`);
-    }
-    /** @type {Measurement} */
-    const ms = { name: nameAt(o.name, `measurements[${i}].name`, measureNames), kind, points };
-    if (kind === "profile") {
-      ms.width = numberAt(o.width_px ?? 1, `measurements[${i}].width_px`, (v) => v >= 0);
-    }
-    return ms;
-  });
-  const active = typeof root.active_contour === "number" && Number.isInteger(root.active_contour)
-    ? Math.min(Math.max(root.active_contour, 0), Math.max(contours.length - 1, 0)) : 0;
-  return {
-    image: imageAt(root.image), frame: frameAt(root.frame), snap: snapAt(root.snap), contours, measurements,
-    activeContour: active, display: displayAt(root.display),
-  };
+  }
+  const kind = /** @type {FixedKind} */ (o.kind);
+  if (!Object.prototype.hasOwnProperty.call(MEASURE_POINTS, kind)) {
+    throw new Error(`${what}.kind must be one of contour, ${Object.keys(MEASURE_POINTS).join(", ")}`);
+  }
+  if (points.length !== MEASURE_POINTS[kind]) {
+    throw new Error(`${what}: a ${kind} has ${MEASURE_POINTS[kind]} points, not ${points.length}`);
+  }
+  /** @type {FixedMeasurement} */
+  const ms = { name, kind, points };
+  if (kind === "profile") {
+    ms.width = numberAt(o.width_px ?? 1, `${what}.width_px`, (v) => v >= 0);
+  }
+  return ms;
 }
 
 /**
