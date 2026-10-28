@@ -1,5 +1,7 @@
 # SEM measurement tool
 
+**Use it online: [photonzq.github.io/sem-measurement-tool](https://photonzq.github.io/sem-measurement-tool/)**, or offline from a copy of this repository (see *Opening it*).
+
 A web app for metrology on scanning electron micrographs, which runs entirely in the browser. It works on SEM images:
 
 - trace polygon contours;
@@ -19,7 +21,7 @@ All of these work through one affine map from the stored pixels, so no calibrati
 
 ## Opening it
 
-- **Online.** The app is the repository's `index.html` with its scripts, so GitHub Pages serves it as it is. Enable Pages once under *Settings → Pages*: *Deploy from a branch*, branch `main`, folder `/ (root)`. The app is then at `https://<owner>.github.io/sem-measurement-tool/`, `<owner>` being the account or organisation that holds the repository. The empty `.nojekyll` file makes Pages serve the files as they are.
+- **Online** at [https://photonzq.github.io/sem-measurement-tool/](https://photonzq.github.io/sem-measurement-tool/), which GitHub Pages serves from this repository's `main` branch. The app is the repository's `index.html` with its scripts, so Pages serves it as it is; the empty `.nojekyll` file keeps Pages from processing the files. A fork or a copy is served the same way once Pages is enabled under *Settings → Pages*: *Deploy from a branch*, branch `main`, folder `/ (root)`. It is then at `https://<owner>.github.io/sem-measurement-tool/`, `<owner>` being the account or organisation that holds it.
 - **Offline.** Download the repository (*Code → Download ZIP*) or clone it, and open `index.html` in a browser; a double click is enough. Nothing needs to be installed.
 
 It has been tested in Chromium-based browsers, both served over HTTP and opened from disk in Microsoft Edge. It has not yet been tested in Firefox or Safari.

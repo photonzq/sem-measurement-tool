@@ -33,6 +33,7 @@
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
   .row button { flex: 1 1 auto; }
   .row.tools button { flex: 1 1 0; padding: 4px 4px; }
+  .row.tools button kbd { display: block; width: max-content; margin: 2px auto 0; }   /* the key under the name, however wide the panel */
   button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--text); cursor: pointer; }
   button:hover:enabled { border-color: var(--accent); }
   button:disabled { color: var(--muted); cursor: default; opacity: 0.6; }
@@ -83,9 +84,14 @@
   .floating header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 10px;
                      background: var(--accent); color: #fff; cursor: move; user-select: none; touch-action: none; }
   .floating header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .floating header button { padding: 0 7px; line-height: 1.3; }
+  .floating header button { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 22px;
+                            padding: 0; }
+  /* the close cross is drawn, not a character, so that it sits in the middle in any font */
+  button.close svg { display: block; width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round;
+                     pointer-events: none; }
   .floating .row { margin: 6px 6px 4px; gap: 4px; }
   .floating .row button { padding: 2px 6px; font-size: 12px; }
+  #vertex-window .row { display: grid; grid-template-columns: repeat(3, 1fr); }      /* six buttons in two even rows */
   .table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0 6px; border: 1px solid var(--line); background: #fff; }
   #vertex-table { border-collapse: collapse; width: 100%; font: 12px ui-monospace, Consolas, monospace; }
   #vertex-table th { position: sticky; top: 0; background: var(--panel); text-align: right; padding: 2px 8px; border-bottom: 1px solid var(--line); }
@@ -121,7 +127,8 @@
                     var(--muted) 70% 78%, transparent 78%); }
   /* the touch layout: a touch screen, or a first touch */
   body.touch .floating header { min-height: 44px; }
-  body.touch .floating header button { min-width: 44px; min-height: 36px; font-size: 18px; }
+  body.touch .floating header button { width: 44px; height: 36px; }
+  body.touch button.close svg { width: 16px; height: 16px; stroke-width: 1.4; }
   body.touch .floating .row button { min-height: 40px; padding: 4px 10px; }
   body.touch .floating .grip { width: 30px; height: 30px; }
   body.touch #profile-window .row input[type=number] { min-height: 36px; }
@@ -149,7 +156,7 @@
     <div id="drop-hint">Drop an SEM image here (TIFF from FEI / Thermo Fisher or Zeiss, or PNG, JPEG), then a session or<br>polygon file if you have one; or use "Open image".  Nothing leaves this computer.</div>
     <div id="busy"></div>
     <section id="vertex-window" class="floating" aria-label="Vertices of the selected contour" hidden>
-      <header id="vertex-bar"><span id="vertex-title">Vertices</span><button type="button" id="vertex-close" title="Close (T)">&times;</button></header>
+      <header id="vertex-bar"><span id="vertex-title">Vertices</span><button type="button" id="vertex-close" class="close" title="Close (T)" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5"/></svg></button></header>
       <div class="row">
         <button type="button" id="vertex-up" title="Move the selected vertices one place earlier in the order">&uarr; Up</button>
         <button type="button" id="vertex-down" title="Move the selected vertices one place later in the order">&darr; Down</button>
@@ -176,7 +183,7 @@
     </div>
     <div id="hold-menu" role="menu" aria-label="Point" hidden></div>
     <section id="profile-window" class="floating" aria-label="Line profile" hidden>
-      <header id="profile-bar"><span id="profile-title">Profile</span><button type="button" id="profile-close" title="Close (P)">&times;</button></header>
+      <header id="profile-bar"><span id="profile-title">Profile</span><button type="button" id="profile-close" class="close" title="Close (P)" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5"/></svg></button></header>
       <div class="row">
         <label for="profile-width" class="inline" title="Width of the band across the line: the profile is the mean across it">band width</label>
         <input type="number" inputmode="decimal" id="profile-width" min="0" step="any">
@@ -278,8 +285,8 @@
         <label for="correction" title="none: as imaged.  cross-section: a face normal to the surface that contains the tilt axis (depths x 1/sin tilt).  tilted surface: features in the tilted surface (lengths across the axis x 1/cos tilt).  The image is stretched by k across the tilt axis.">tilt correction</label>
         <select id="correction">
           <option value="none">none</option>
-          <option value="cross-section">cross-section (1/sin &theta;)</option>
-          <option value="tilted-surface">tilted surface (1/cos &theta;)</option>
+          <option value="cross-section">cross-section</option>
+          <option value="tilted-surface">tilted surface</option>
           <option value="custom">custom k</option>
         </select>
         <label for="custom-factor">custom factor k</label>

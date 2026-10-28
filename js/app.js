@@ -447,6 +447,7 @@ async function openImageBuffer(name, buffer) {
   refreshDisplay();
   fit();
   setBusy("");
+  setStatus(`Opened ${name}: ${image.width} x ${image.height} pixels`);
   await refreshEdges();
   return true;
 }
@@ -1768,7 +1769,9 @@ function refreshFrameNotes() {
   const cal = app.image ? app.image.calibration : null;
   try {
     const k = correctionFactor(f);
-    const lines = [k === 1 ? "correction factor k = 1" : `correction factor k = ${k.toFixed(5)}, across the tilt axis`];
+    /** @type {Record<string, string>} the law of k, which the correction's menu leaves out to stay short */
+    const law = { "cross-section": "1/sin θ = ", "tilted-surface": "1/cos θ = " };
+    const lines = [k === 1 ? "correction factor k = 1" : `correction factor k = ${law[f.correction] ?? ""}${k.toFixed(5)}, across the tilt axis`];
     if (cal && cal.tiltCorrectionOn) {
       lines.push("The microscope applied its own tilt correction: keep 'none'.");
       if (f.correction !== "none") {
@@ -2307,6 +2310,7 @@ function refreshVertexWindow() {
     buttonEl(id).disabled = app.picked.length === 0;
   }
   buttonEl("vertex-reverse").disabled = c.points.length < 2;
+  buttonEl("vertex-zoom").disabled = c.points.length === 0;
   const why = m === null ? "  The correction factor is undefined: no coordinates." : "";
   el("vertex-note").textContent = `${c.points.length} vertices, ${app.picked.length} selected (${c.closed ? "closed" : "open"}).${why}`;
 }
@@ -4218,8 +4222,8 @@ function movableWindow(win, bar) {
   /** @type {{dx: number, dy: number}|null} */
   let drag = null;
   bar.addEventListener("pointerdown", (e) => {
-    if (e.target instanceof HTMLButtonElement || e.target instanceof HTMLInputElement) {
-      return;
+    if (e.target instanceof Element && e.target.closest("button, input") !== null) {
+      return;                        // a press on a control of the bar (its close cross included), not on the bar
     }
     const box = win.getBoundingClientRect();
     drag = { dx: e.clientX - box.left, dy: e.clientY - box.top };
