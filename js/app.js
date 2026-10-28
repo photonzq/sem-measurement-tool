@@ -27,10 +27,19 @@
  * a floating window plots the selected one, with the contours that cross it.
  */
 
-const ACTIVE_COLOR = "#ffb000";      // amber: the contour being edited (the selected one)
-const OTHER_COLOR = "#00b4ff";       // cyan: the other contours
-const MEASURE_COLOR = "#ff6464";     // coral: the other measurements
-const SELECTED_COLOR = "#ffe14d";    // yellow: the measurements selected in the list, and the one being placed
+/**
+ * Colour orders of the overlay: each new measurement takes the next colour, which it keeps (its
+ * ``color``).  Lines are drawn outlined in a contrasting grey, so that every colour shows on dark and
+ * on bright parts of an image alike.
+ * @type {Record<string, string[]>}
+ */
+const PALETTES = {
+  matlab: ["#0072BD", "#D95319", "#EDB120", "#7E2F8E", "#77AC30", "#4DBEEE", "#A2142F"],      // MATLAB's default colour order
+  "okabe-ito": ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"],   // colour-blind safe
+};
+const COLOURS_KEY = "sem-measurement-tool colours";       // where the browser keeps the choice (localStorage)
+/** The colours chosen: a palette, or "custom" with its own order. */
+const colours = { palette: "matlab", custom: [...PALETTES.matlab] };
 const PREVIEW_COLOR = "#ff3ec8";     // magenta: where a click lands (with Snap on, or inserting)
 const PICKED_COLOR = "#9b7bff";      // violet: vertices selected in the vertex window
 const ORIGIN_COLOR = "#4cff4c";
@@ -39,6 +48,7 @@ const HIT_PX = 8;                    // screen pixels within which a point is un
 const ARC_PX = 22;                   // radius of the angle arcs
 const HISTORY = 500;
 const LABEL_FONT = "12px system-ui, -apple-system, 'Segoe UI', Arial, sans-serif";
+const LABEL_HEIGHT = 18;             // of the dark chip a label sits on, CSS pixels
 
 /** "pan" is no tool: the mouse, one finger or two only move and zoom the view. @typedef {"pan"|MeasureKind} Tool */
 /** @type {Tool[]} */
@@ -627,14 +637,13 @@ function draw() {
   const checked = new Set(app.checked);
   app.measurements.forEach((ms, i) => {            // the contours first, under the other measurements
     if (ms.kind === "contour") {
-      drawContour(ms, i === app.selected ? ACTIVE_COLOR : checked.has(i) ? SELECTED_COLOR : OTHER_COLOR, i === app.selected,
-        toScreen);
+      drawContour(ms, colorOf(ms), { selected: checked.has(i), edited: i === app.selected }, toScreen);
     }
   });
   drawPicked(toScreen);
   app.measurements.forEach((ms, i) => {
     if (ms.kind !== "contour") {
-      drawMeasurement(ms, checked.has(i) ? SELECTED_COLOR : MEASURE_COLOR, toScreen, false, i === app.selected);
+      drawMeasurement(ms, colorOf(ms), toScreen, { selected: checked.has(i), handle: i === app.selected });
     }
   });
   drawProfileCursor(toScreen);
@@ -774,31 +783,133 @@ function strokeSegment(a, b) {
 }
 
 /**
- * Text with a dark halo, legible on any grey.
- * @param {string} text
- * @param {Point} at
- * @param {string} color
+ * The colour a measurement is drawn in: its colour in the order chosen.
+ * @param {Measurement} ms
+ * @returns {string}
  */
-function drawLabel(text, at, color) {
-  ctx.font = LABEL_FONT;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
-  ctx.strokeText(text, at[0], at[1]);
-  ctx.fillStyle = color;
-  ctx.fillText(text, at[0], at[1]);
+function colorOf(ms) {
+  const order = colours.palette === "custom" ? colours.custom : PALETTES[colours.palette] ?? PALETTES.matlab;
+  return order[(ms.color ?? 0) % order.length];
 }
 
 /**
- * The arc of radius ARC_PX about ``centre`` from direction ``u`` to direction ``v`` (screen),
- * the shorter way round; returns the unit bisector, or null when u or v vanish.
+ * The colour of a new measurement: the one after the highest of ``list`` in the order.
+ * @param {Measurement[]} [list]
+ * @returns {number}
+ */
+function nextColorIndex(list = app.measurements) {
+  return list.reduce((next, ms) => Math.max(next, (ms.color ?? -1) + 1), 0);
+}
+
+/**
+ * The grey that outlines lines of a colour: white around a dark colour, black around a light one,
+ * by relative luminance (WCAG), so that the line shows on dark and on bright grey alike.
+ * @param {string} color   #rrggbb
+ * @returns {string}
+ */
+function casingOf(color) {
+  const [r, g, b] = [1, 3, 5].map((k) => {
+    const v = parseInt(color.slice(k, k + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.2 ? "rgba(255, 255, 255, 0.75)" : "rgba(0, 0, 0, 0.85)";
+}
+
+/**
+ * Stroke a path of the overlay: a light halo under a selected one, the casing of its colour, then
+ * the colour.
+ * @param {Path2D} path
+ * @param {string} color
+ * @param {{selected?: boolean, dash?: number[], width?: number}} [how]
+ */
+function strokeOverlay(path, color, how = {}) {
+  const width = how.width ?? (how.selected ? 2.6 : 1.6);
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  if (how.selected) {
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.lineWidth = width + 8;
+    ctx.stroke(path);
+  }
+  ctx.setLineDash(how.dash ?? []);
+  ctx.strokeStyle = casingOf(color);
+  ctx.lineWidth = width + 2;         // a pixel of outline on either side
+  ctx.stroke(path);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke(path);
+  ctx.restore();
+}
+
+/**
+ * The points of a measurement: filled with its colour and edged in the casing; white, edged in the
+ * colour, when it is selected.  ``first`` scales the first point (the start of the contour edited).
+ * @param {Point[]} pts      screen
+ * @param {string} color
+ * @param {boolean} selected
+ * @param {number} [first]
+ */
+function drawPoints(pts, color, selected, first = 1) {
+  const k = handleScale();
+  ctx.save();
+  pts.forEach(([x, y], i) => {
+    ctx.beginPath();
+    ctx.arc(x, y, (selected ? 4 : 3.5) * k * (i === 0 ? first : 1), 0, 2 * Math.PI);
+    ctx.fillStyle = selected ? "#ffffff" : color;
+    ctx.fill();
+    ctx.lineWidth = selected ? 1.6 : 1.2;
+    ctx.strokeStyle = selected ? color : casingOf(color);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+/**
+ * A label on a dark chip edged in its measurement's colour: white text, legible on any grey.
+ * @param {string} text
+ * @param {Point} at          the chip's centre
+ * @param {string} color
+ * @param {boolean} [selected]   a thicker edge
+ */
+function drawLabel(text, at, color, selected = false) {
+  ctx.save();
+  ctx.font = LABEL_FONT;
+  const w = ctx.measureText(text).width + 10;
+  ctx.beginPath();
+  ctx.roundRect(at[0] - w / 2, at[1] - LABEL_HEIGHT / 2, w, LABEL_HEIGHT, 4);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+  ctx.fill();
+  ctx.lineWidth = selected ? 2.2 : 1.4;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, at[0], at[1] + 0.5);
+  ctx.restore();
+}
+
+/**
+ * @param {Path2D} path
+ * @param {Point} a
+ * @param {Point} b
+ */
+function addSegment(path, a, b) {
+  path.moveTo(a[0], a[1]);
+  path.lineTo(b[0], b[1]);
+}
+
+/**
+ * Add to ``path`` the arc of radius ARC_PX about ``centre`` from direction ``u`` to direction ``v``
+ * (screen), the shorter way round; returns the unit bisector, or null when u or v vanish.
+ * @param {Path2D} path
  * @param {Point} centre
  * @param {Point} u
  * @param {Point} v
  * @returns {Point|null}
  */
-function drawArc(centre, u, v) {
+function addArc(path, centre, u, v) {
   const lu = Math.hypot(u[0], u[1]);
   const lv = Math.hypot(v[0], v[1]);
   if (!(lu > 0 && lv > 0)) {
@@ -807,45 +918,34 @@ function drawArc(centre, u, v) {
   const a = Math.atan2(u[1], u[0]);
   let sweep = Math.atan2(v[1], v[0]) - a;
   sweep = Math.atan2(Math.sin(sweep), Math.cos(sweep));       // to (-pi, pi]
-  ctx.beginPath();
-  ctx.arc(centre[0], centre[1], ARC_PX, a, a + sweep, sweep < 0);
-  ctx.stroke();
+  path.moveTo(centre[0] + ARC_PX * Math.cos(a), centre[1] + ARC_PX * Math.sin(a));
+  path.arc(centre[0], centre[1], ARC_PX, a, a + sweep, sweep < 0);
   const mid = a + sweep / 2;
   return [Math.cos(mid), Math.sin(mid)];
 }
 
 /**
- * A contour; the one being edited (``active``) thicker, with filled vertices and its first vertex larger.
+ * A contour in its colour: when selected thicker, with a halo and white vertices; the first vertex
+ * of the one edited larger.
  * @param {Contour} c
  * @param {string} color
- * @param {boolean} active
+ * @param {{selected: boolean, edited: boolean}} how
  * @param {(p: Point) => Point} toScreen
  */
-function drawContour(c, color, active, toScreen) {
+function drawContour(c, color, how, toScreen) {
   const pts = c.points.map(toScreen);
   if (pts.length >= 2) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = active ? 2 : 1.5;
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
+    const path = new Path2D();
+    path.moveTo(pts[0][0], pts[0][1]);
     for (const [x, y] of pts.slice(1)) {
-      ctx.lineTo(x, y);
+      path.lineTo(x, y);
     }
     if (c.closed && pts.length > 2) {
-      ctx.closePath();
+      path.closePath();
     }
-    ctx.stroke();
+    strokeOverlay(path, color, { selected: how.selected });
   }
-  const k = handleScale();
-  pts.forEach(([x, y], i) => {
-    ctx.beginPath();
-    ctx.arc(x, y, (active && i === 0 ? 5.5 : 3.5) * k, 0, 2 * Math.PI);   // the first vertex is larger
-    ctx.fillStyle = active ? "#ffffff" : color;
-    ctx.fill();
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = color;
-    ctx.stroke();
-  });
+  drawPoints(pts, color, how.selected, how.edited ? 1.5 : 1);
 }
 
 /**
@@ -864,14 +964,14 @@ function measurementLabel(ms) {
 }
 
 /**
- * A ruler: the segment, end ticks and the length above it.
+ * A ruler's segment and end ticks, added to ``path``; returns where its label goes, above it.
+ * @param {Path2D} path
  * @param {Point[]} pts     screen
- * @param {string|null} label
- * @param {string} color
+ * @returns {Point}
  */
-function drawRuler(pts, label, color) {
+function addRuler(path, pts) {
   const [a, b] = pts;
-  strokeSegment(a, b);
+  addSegment(path, a, b);
   const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
   /** @type {Point} */
   let n = len > 0 ? [(b[1] - a[1]) / len, -(b[0] - a[0]) / len] : [0, -1];
@@ -879,56 +979,50 @@ function drawRuler(pts, label, color) {
     n = [-n[0], -n[1]];             // the label goes above the ruler
   }
   for (const p of [a, b]) {
-    strokeSegment([p[0] - 5 * n[0], p[1] - 5 * n[1]], [p[0] + 5 * n[0], p[1] + 5 * n[1]]);
+    addSegment(path, [p[0] - 5 * n[0], p[1] - 5 * n[1]], [p[0] + 5 * n[0], p[1] + 5 * n[1]]);
   }
-  if (label !== null) {
-    drawLabel(label, [(a[0] + b[0]) / 2 + 14 * n[0], (a[1] + b[1]) / 2 + 14 * n[1]], color);
-  }
+  return [(a[0] + b[0]) / 2 + 16 * n[0], (a[1] + b[1]) / 2 + 16 * n[1]];
 }
 
 /**
- * Two lines, dashed out to where they cross, with the arc between their directions there.
+ * Two lines, added to ``solid``, and their extensions to where they cross, added to ``dashed``,
+ * with the arc between their directions there.  Returns where the label goes: beyond the arc, or
+ * among the points when the lines cross far away or not at all; null when the arc has no bisector.
+ * @param {Path2D} solid
+ * @param {Path2D} dashed
  * @param {Point[]} pts      screen, 4 points
  * @param {Point|null} crossing   stored
  * @param {(p: Point) => Point} toScreen
- * @param {{label: string|null, color: string}} text
+ * @returns {Point|null}
  */
-function drawLineAngle(pts, crossing, toScreen, text) {
-  strokeSegment(pts[0], pts[1]);
-  strokeSegment(pts[2], pts[3]);
+function addLineAngle(solid, dashed, pts, crossing, toScreen) {
+  addSegment(solid, pts[0], pts[1]);
+  addSegment(solid, pts[2], pts[3]);
   const span = Math.max(...pts.map((p) => Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1])), 1);
   const c = crossing === null ? null : toScreen(crossing);
   if (c !== null && Math.hypot(c[0] - pts[0][0], c[1] - pts[0][1]) < 20 * span) {
-    ctx.save();
-    ctx.setLineDash([3, 4]);
     for (const [p, q] of [[pts[0], pts[1]], [pts[2], pts[3]]]) {
-      const near = Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(q[0] - c[0], q[1] - c[1]) ? p : q;
-      strokeSegment(near, c);
+      addSegment(dashed, Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(q[0] - c[0], q[1] - c[1]) ? p : q, c);
     }
-    ctx.restore();
-    const bisector = drawArc(c, [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]], [pts[3][0] - pts[2][0], pts[3][1] - pts[2][1]]);
-    if (text.label !== null && bisector !== null) {
-      drawLabel(text.label, [c[0] + (ARC_PX + 14) * bisector[0], c[1] + (ARC_PX + 14) * bisector[1]], text.color);
-    }
-  } else if (text.label !== null) {
-    const mid = pts.reduce((acc, p) => [acc[0] + p[0] / 4, acc[1] + p[1] / 4], [0, 0]);
-    drawLabel(text.label, mid, text.color);
+    const bisector = addArc(solid, c, [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]], [pts[3][0] - pts[2][0], pts[3][1] - pts[2][1]]);
+    return bisector === null ? null : [c[0] + (ARC_PX + 16) * bisector[0], c[1] + (ARC_PX + 16) * bisector[1]];
   }
+  return /** @type {Point} */ (pts.reduce((acc, p) => [acc[0] + p[0] / 4, acc[1] + p[1] / 4], [0, 0]));
 }
 
 /**
- * A profile: its centre line with end ticks, its band outlined (dashed) when wider than a few
- * screen pixels, the square handle that sets the width when ``handle``, and its length beyond the
- * band on the side away from the handle.
- * @param {Measurement} ms
+ * A profile's band, outlined (dashed) when wider than a few screen pixels; returns where the
+ * profile's label goes: beyond the band, on the side away from the square that sets the width.
+ * @param {FixedMeasurement} ms
  * @param {Point[]} pts       screen
  * @param {(p: Point) => Point} toScreen
- * @param {{label: string|null, color: string, handle: boolean}} how
+ * @param {string} color
+ * @param {string|null} label
+ * @returns {Point|null}
  */
-function drawProfileLine(ms, pts, toScreen, how) {
-  const width = ms.width ?? app.profileWidth;
+function drawProfileBand(ms, pts, toScreen, color, label) {
   const [u1, u2] = ms.points;
-  const h = widthHandle(ms.points, width, app.frame);
+  const h = widthHandle(ms.points, ms.width ?? app.profileWidth, app.frame);
   /** @type {Point} */
   const mid = [(u1[0] + u2[0]) / 2, (u1[1] + u2[1]) / 2];
   const across = [h[0] - mid[0], h[1] - mid[1]];             // half the band, stored
@@ -936,37 +1030,44 @@ function drawProfileLine(ms, pts, toScreen, how) {
   const side = (p, sign) => toScreen([p[0] + sign * across[0], p[1] + sign * across[1]]);
   const [a, b, c, d] = [side(u1, 1), side(u2, 1), side(u2, -1), side(u1, -1)];
   if (Math.hypot(a[0] - d[0], a[1] - d[1]) > 3) {
-    ctx.save();
-    ctx.setLineDash([4, 3]);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(a[0], a[1]);
+    const band = new Path2D();
+    band.moveTo(a[0], a[1]);
     for (const p of [b, c, d]) {
-      ctx.lineTo(p[0], p[1]);
+      band.lineTo(p[0], p[1]);
     }
-    ctx.closePath();
-    ctx.stroke();
-    ctx.restore();
+    band.closePath();
+    strokeOverlay(band, color, { dash: [4, 3], width: 1 });
   }
-  drawRuler(pts, null, how.color);
+  if (label === null) {
+    return null;
+  }
   const [hx, hy] = toScreen(h);
   const [mx, my] = toScreen(mid);
-  if (how.handle) {
-    const r = 4 * handleScale();      // larger for a finger
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(hx - r, hy - r, 2 * r, 2 * r);
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(hx - r, hy - r, 2 * r, 2 * r);
-  }
-  if (how.label !== null) {
-    const reach = Math.hypot(hx - mx, hy - my);
-    const line = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) || 1;
-    /** @type {Point} away from the handle; across the line when the band has no width */
-    const u = reach > 1e-6 ? [(mx - hx) / reach, (my - hy) / reach] : [(pts[1][1] - pts[0][1]) / line, -(pts[1][0] - pts[0][0]) / line];
-    ctx.font = LABEL_FONT;
-    const r = reach + 6 + (ctx.measureText(how.label).width / 2) * Math.abs(u[0]) + 8 * Math.abs(u[1]);
-    drawLabel(how.label, [mx + r * u[0], my + r * u[1]], how.color);
-  }
+  const reach = Math.hypot(hx - mx, hy - my);
+  const line = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) || 1;
+  /** @type {Point} away from the handle; across the line when the band has no width */
+  const u = reach > 1e-6 ? [(mx - hx) / reach, (my - hy) / reach] : [(pts[1][1] - pts[0][1]) / line, -(pts[1][0] - pts[0][0]) / line];
+  ctx.font = LABEL_FONT;
+  const r = reach + 8 + (ctx.measureText(label).width / 2 + 5) * Math.abs(u[0]) + (LABEL_HEIGHT / 2) * Math.abs(u[1]);
+  return [mx + r * u[0], my + r * u[1]];
+}
+
+/**
+ * The square on a profile's band that sets its width: white, edged in the profile's colour.
+ * @param {FixedMeasurement} ms
+ * @param {(p: Point) => Point} toScreen
+ * @param {string} color
+ */
+function drawWidthHandle(ms, toScreen, color) {
+  const [hx, hy] = toScreen(widthHandle(ms.points, ms.width ?? app.profileWidth, app.frame));
+  const r = 4 * handleScale();      // larger for a finger
+  ctx.save();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(hx - r, hy - r, 2 * r, 2 * r);
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = color;
+  ctx.strokeRect(hx - r, hy - r, 2 * r, 2 * r);
+  ctx.restore();
 }
 
 /**
@@ -997,60 +1098,54 @@ function drawProfileCursor(toScreen) {
 }
 
 /**
- * A measurement other than a contour, complete or (``pending``) being placed, possibly with fewer
- * points than its kind; a profile being edited (``handle``) shows the square that sets its width.
+ * A measurement other than a contour, complete or being placed (``pending``, dashed), possibly with
+ * fewer points than its kind: selected, thicker with a halo and white points; the profile edited
+ * (``handle``) with the square that sets its width.
  * @param {FixedMeasurement} ms
  * @param {string} color
  * @param {(p: Point) => Point} toScreen
- * @param {boolean} pending
- * @param {boolean} [handle]
+ * @param {{pending?: boolean, selected?: boolean, handle?: boolean}} how
  */
-function drawMeasurement(ms, color, toScreen, pending, handle = false) {
+function drawMeasurement(ms, color, toScreen, how) {
   const pts = ms.points.map(toScreen);
-  const complete = ms.points.length === MEASURE_POINTS[ms.kind];
-  const label = complete ? measurementLabel(ms) : null;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.6;
-  if (pending) {
-    ctx.setLineDash([5, 4]);
-  }
+  const label = ms.points.length === MEASURE_POINTS[ms.kind] ? measurementLabel(ms) : null;
+  const selected = how.selected === true;
+  const solid = new Path2D();
+  const dashed = new Path2D();
+  /** @type {Point|null} */
+  let labelAt = null;
   if (ms.kind === "ruler" && pts.length >= 2) {
-    drawRuler(pts, label, color);
+    labelAt = addRuler(solid, pts);
   } else if (ms.kind === "profile" && pts.length >= 2) {
-    drawProfileLine(ms, pts, toScreen, { label, color, handle: !pending && handle });
+    labelAt = drawProfileBand(ms, pts, toScreen, color, label);
+    addRuler(solid, pts);
   } else if (ms.kind === "angle" && pts.length >= 2) {
-    strokeSegment(pts[1], pts[0]);
+    addSegment(solid, pts[1], pts[0]);
     if (pts.length >= 3) {
-      strokeSegment(pts[1], pts[2]);
       const v = pts[1];
-      const bisector = drawArc(v, [pts[0][0] - v[0], pts[0][1] - v[1]], [pts[2][0] - v[0], pts[2][1] - v[1]]);
-      if (label !== null && bisector !== null) {
-        drawLabel(label, [v[0] + (ARC_PX + 14) * bisector[0], v[1] + (ARC_PX + 14) * bisector[1]], color);
-      }
+      addSegment(solid, v, pts[2]);
+      const bisector = addArc(solid, v, [pts[0][0] - v[0], pts[0][1] - v[1]], [pts[2][0] - v[0], pts[2][1] - v[1]]);
+      labelAt = bisector === null ? null : [v[0] + (ARC_PX + 16) * bisector[0], v[1] + (ARC_PX + 16) * bisector[1]];
     }
+  } else if (ms.kind === "line-angle" && pts.length === 4) {
+    labelAt = addLineAngle(solid, dashed, pts, lineIntersection(ms.points[0], ms.points[1], ms.points[2], ms.points[3]), toScreen);
   } else if (ms.kind === "line-angle" && pts.length >= 2) {
-    if (pts.length === 4) {
-      drawLineAngle(pts, lineIntersection(ms.points[0], ms.points[1], ms.points[2], ms.points[3]), toScreen,
-        { label, color });
-    } else {
-      strokeSegment(pts[0], pts[1]);
-    }
+    addSegment(solid, pts[0], pts[1]);
   }
-  ctx.setLineDash([]);
-  for (const [x, y] of pts) {
-    ctx.beginPath();
-    ctx.arc(x, y, 3.5 * handleScale(), 0, 2 * Math.PI);
-    ctx.fillStyle = color === SELECTED_COLOR ? "#ffffff" : color;
-    ctx.fill();
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
+  strokeOverlay(solid, color, { selected, dash: how.pending ? [5, 4] : [] });
+  strokeOverlay(dashed, color, { dash: [3, 4], width: 1.2 });
+  if (ms.kind === "profile" && how.handle && !how.pending && pts.length >= 2) {
+    drawWidthHandle(ms, toScreen, color);
   }
-  ctx.restore();
+  if (label !== null && labelAt !== null) {
+    drawLabel(label, labelAt, color, selected);
+  }
+  drawPoints(pts, color, selected);
 }
 
 /**
- * The measurement being placed, its next point following the cursor (or the snap preview).
+ * The measurement being placed, dashed in the colour it will take, its next point following the
+ * cursor (or the snap preview).
  * @param {(p: Point) => Point} toScreen
  */
 function drawPending(toScreen) {
@@ -1059,8 +1154,9 @@ function drawPending(toScreen) {
     return;
   }
   const tip = app.preview ?? app.cursor;
-  const points = tip === null ? p.points : [...p.points, tip];
-  drawMeasurement({ name: "", kind: p.kind, points }, SELECTED_COLOR, toScreen, true);
+  /** @type {FixedMeasurement} */
+  const ms = { name: "", kind: p.kind, color: nextColorIndex(), points: tip === null ? p.points : [...p.points, tip] };
+  drawMeasurement(ms, colorOf(ms), toScreen, { pending: true });
 }
 
 // ------------------------------------------------------------------------- selection
@@ -1166,7 +1262,7 @@ function contourForVertex() {
     return c;
   }
   /** @type {Contour} */
-  const made = { name: newMeasureName("contour"), kind: "contour", closed: true, points: [] };
+  const made = { name: newMeasureName("contour"), kind: "contour", color: nextColorIndex(), closed: true, points: [] };
   app.measurements.push(made);
   selectOnly(app.measurements.length - 1);
   return made;
@@ -1455,7 +1551,7 @@ function placePoint(x, y, exact) {
   if (pending.points.length === MEASURE_POINTS[kind]) {
     pushHistory();
     /** @type {FixedMeasurement} */
-    const ms = { name: newMeasureName(kind), kind, points: pending.points };
+    const ms = { name: newMeasureName(kind), kind, color: nextColorIndex(), points: pending.points };
     if (kind === "profile") {
       ms.width = app.profileWidth;
     }
@@ -1559,6 +1655,7 @@ function axisFromSelected() {
 
 function showImageInfo() {
   const image = app.image;
+  buttonEl("save-session").disabled = image === null;
   if (image === null) {
     el("image-info").textContent = "No image.";
     return;
@@ -1600,8 +1697,17 @@ function fillMeasurementList() {
       const box = document.createElement("span");
       box.className = "box";
       box.title = "Add to the selection, or take out (Ctrl+click)";
-      row.append(box, document.createElement("span"));
+      const swatch = document.createElement("span");           // the measurement's colour on the image
+      swatch.className = "swatch";
+      swatch.setAttribute("aria-hidden", "true");
+      row.append(box, swatch, document.createElement("span"));
       list.append(row);
+    }
+    const swatch = /** @type {HTMLElement} */ (row.children[1]);
+    const color = colorOf(ms);
+    if (swatch.dataset.color !== color) {
+      swatch.dataset.color = color;
+      swatch.style.background = color;
     }
     const text = `${ms.name}: ${describeMeasurement(ms).brief}`;
     const label = /** @type {Element} */ (row.lastElementChild);
@@ -1708,10 +1814,7 @@ function refreshMeasurements() {
   const ms = app.measurements[app.selected];
   const count = app.checked.length;
   el("measurement-details").textContent = selectionText(ms, count, n);
-  const ruler = ms !== undefined && ms.kind === "ruler";
-  for (const id of ["level-horizontal", "level-vertical", "axis-from-ruler"]) {
-    buttonEl(id).disabled = !ruler;
-  }
+  el("ruler-controls").hidden = !(ms !== undefined && ms.kind === "ruler");   // they act on the ruler edited
   buttonEl("rename-measurement").disabled = count !== 1;
   buttonEl("delete-measurement").disabled = count === 0;
   buttonEl("download").disabled = n === 0;
@@ -1736,7 +1839,7 @@ function refreshMeasurements() {
  */
 function selectionText(ms, count, n) {
   if (n === 0) {
-    return "No measurements yet: trace a contour (tool 1), or measure with tools 2 to 5.";
+    return "Trace a contour (tool 1), or measure with tools 2 to 5.";
   }
   if (count === 0) {
     return "Select a measurement: click or tap it here, or one of its points with its tool.";
@@ -2006,6 +2109,82 @@ function dragLevel(v) {
   }
 }
 
+// ------------------------------------------------------------------------- colours
+//
+// The overlay's colours: a colour order, MATLAB's by default, Okabe-Ito's, or one picked by hand in
+// the window of custom colours.  The browser keeps the choice: a matter of taste, not of the work,
+// so the session file does not hold it.
+
+/** Take up the colours the browser kept, if any. */
+function loadColours() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLOURS_KEY) ?? "null");
+    const hex = (/** @type {unknown} */ c) => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c);
+    if (saved !== null && typeof saved === "object") {
+      if (Array.isArray(saved.custom) && saved.custom.length === colours.custom.length && saved.custom.every(hex)) {
+        colours.custom = saved.custom;
+      }
+      if (["matlab", "okabe-ito", "custom"].includes(saved.palette)) {
+        colours.palette = saved.palette;
+      }
+    }
+  } catch {
+    // no storage (blocked, or a private window): the defaults
+  }
+}
+
+function saveColours() {
+  try {
+    localStorage.setItem(COLOURS_KEY, JSON.stringify(colours));
+  } catch {
+    // no storage: the choice lasts as long as the page
+  }
+}
+
+/**
+ * Draw with the colours of ``palette``: "matlab", "okabe-ito" or "custom".
+ * @param {string} palette
+ */
+function setPalette(palette) {
+  colours.palette = palette;
+  saveColours();
+  selectEl("palette").value = palette;
+  refreshMeasurements();             // the swatches of the list, and the crossings on the profile plot
+  render();
+}
+
+/** The window of custom colours: a picker for each colour of the order. */
+function refreshColourWindow() {
+  const slots = el("colour-slots");
+  if (slots.children.length !== 2 * colours.custom.length) {
+    slots.replaceChildren(...colours.custom.flatMap((_, k) => {
+      const label = document.createElement("label");
+      label.htmlFor = `colour-${k}`;
+      label.textContent = String(k + 1);
+      const input = document.createElement("input");
+      input.type = "color";
+      input.id = `colour-${k}`;
+      input.addEventListener("input", () => {
+        colours.custom[k] = input.value;
+        setPalette("custom");
+      });
+      return [label, input];
+    }));
+  }
+  colours.custom.forEach((c, k) => {
+    const input = /** @type {HTMLInputElement} */ (slots.children[2 * k + 1]);
+    if (input.value.toLowerCase() !== c.toLowerCase()) {
+      input.value = c;
+    }
+  });
+}
+
+function toggleColourWindow() {
+  const w = el("colour-window");
+  w.hidden = !w.hidden;
+  refreshColourWindow();
+}
+
 // ------------------------------------------------------------------------- files
 
 /** @returns {SnapSettings} */
@@ -2080,6 +2259,10 @@ function stem() {
 }
 
 function saveSession() {
+  if (app.image === null) {
+    setStatus("Open an image first: a session belongs to an image.");
+    return;
+  }
   download(sessionText(), `${stem()}_session.json`, "application/json");
   app.dirty = false;
 }
@@ -2175,7 +2358,8 @@ function loadPolygonText(text, name) {
       window.alert(`Contour "${c.name}" has neither pixel coordinates nor usable micrometres; it is skipped.`);
       continue;
     }
-    contours.push({ name: uniqueName(c.name, taken), kind: "contour", closed: c.closed, points });
+    contours.push({ name: uniqueName(c.name, taken), kind: "contour", color: nextColorIndex([...others, ...contours]), closed: c.closed,
+      points });
   }
   pushHistory();
   app.measurements = [...others, ...contours];
@@ -2312,7 +2496,9 @@ function refreshVertexWindow() {
   buttonEl("vertex-reverse").disabled = c.points.length < 2;
   buttonEl("vertex-zoom").disabled = c.points.length === 0;
   const why = m === null ? "  The correction factor is undefined: no coordinates." : "";
-  el("vertex-note").textContent = `${c.points.length} vertices, ${app.picked.length} selected (${c.closed ? "closed" : "open"}).${why}`;
+  el("vertex-note").textContent = current === null
+    ? "Select a contour under Measurements, or start one with the contour tool (1)."
+    : `${c.points.length} vertices, ${app.picked.length} selected (${c.closed ? "closed" : "open"}).${why}`;
 }
 
 /**
@@ -2767,7 +2953,9 @@ function plotProfile(g, w, h, data, how) {
     g.stroke();
   }
   const checked = new Set(app.checked);
-  drawPlotCrossings(g, crossings.map((c) => ({ x: X(c.distance), name: c.name, active: checked.has(c.index) })), top, bottom);
+  drawPlotCrossings(g, crossings.map((c) => ({
+    x: X(c.distance), name: c.name, color: colorOf(app.measurements[c.index]), active: checked.has(c.index),
+  })), top, bottom);
   if (how.cursor !== null) {
     const x = X(how.cursor * length);
     g.strokeStyle = PREVIEW_COLOR;
@@ -2818,9 +3006,10 @@ function drawPlotAxes(g, box, range) {
 }
 
 /**
- * The contours that cross the line, as dashed verticals in their colours with their names.
+ * The contours that cross the line, as dashed verticals in their colours with their names; those
+ * selected thicker.
  * @param {CanvasRenderingContext2D} g
- * @param {Array<{x: number, name: string, active: boolean}>} marks
+ * @param {Array<{x: number, name: string, color: string, active: boolean}>} marks
  * @param {number} top
  * @param {number} bottom
  */
@@ -2829,8 +3018,8 @@ function drawPlotCrossings(g, marks, top, bottom) {
   g.textAlign = "left";
   g.textBaseline = "top";
   marks.forEach((m, k) => {
-    g.strokeStyle = m.active ? ACTIVE_COLOR : OTHER_COLOR;
-    g.lineWidth = 1.5;
+    g.strokeStyle = m.color;
+    g.lineWidth = m.active ? 2.5 : 1.5;
     g.setLineDash([5, 3]);
     g.beginPath();
     g.moveTo(m.x, top);
@@ -3109,8 +3298,13 @@ function toggleDownloadMenu() {
 }
 
 function closeDownloadMenu() {
-  el("download-menu").hidden = true;
+  const menu = el("download-menu");
+  const focused = menu.contains(document.activeElement);
+  menu.hidden = true;
   el("download").setAttribute("aria-expanded", "false");
+  if (focused) {
+    el("download").focus();          // the keyboard comes back to the button
+  }
 }
 
 /**
@@ -3460,6 +3654,7 @@ function refreshTouchBar() {
   }
   setBarButton("touch-undo", app.history.length === 0, null);
   setBarButton("touch-redo", app.future.length === 0, null);
+  setBarButton("touch-fit", app.image === null, null);
   setBarButton("touch-back", !canStepBack(), null);
   setBarButton("touch-snap", false, settings.snap());
   setBarButton("touch-exact", app.tool === "pan", app.exactOnce);
@@ -3911,9 +4106,24 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 window.addEventListener("resize", () => {
   closeDownloadMenu();
+  keepWindowsInView();
   render();
   drawHistogram();
 });
+
+/** Keep the floating windows that were moved inside the view, e.g. after the browser window shrank: their bars stay in reach. */
+function keepWindowsInView() {
+  const area = el("view-wrap").getBoundingClientRect();
+  for (const id of ["vertex-window", "profile-window", "colour-window"]) {
+    const win = el(id);
+    if (win.hidden || win.style.left === "") {
+      continue;                      // where the page puts it, it is inside
+    }
+    const box = win.getBoundingClientRect();
+    win.style.left = `${Math.min(Math.max(box.left - area.left, 0), Math.max(area.width - box.width, 0))}px`;
+    win.style.top = `${Math.min(Math.max(box.top - area.top, 0), Math.max(area.height - box.height, 0))}px`;
+  }
+}
 
 /**
  * Zoom about the centre of the view.
@@ -4021,6 +4231,9 @@ function ctrlShortcut(e, typing) {
 
 window.addEventListener("keydown", (e) => {
   trackModifiers(e);
+  if (/** @type {HTMLDialogElement} */ (el("gds-dialog")).open) {
+    return;                          // the dialog has the keys; Esc closes it
+  }
   const target = e.target;
   const typing = (target instanceof HTMLInputElement && target.type !== "checkbox") || target instanceof HTMLSelectElement;
   if (ctrlShortcut(e, typing) || typing || e.altKey) {
@@ -4069,12 +4282,30 @@ function snapToggled() {
 }
 
 const wrap = el("view-wrap");
+/**
+ * Whether a drag carries files.
+ * @param {DragEvent} e
+ * @returns {boolean}
+ */
+function dragsFiles(e) {
+  return e.dataTransfer !== null && [...e.dataTransfer.types].includes("Files");
+}
 wrap.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  wrap.classList.add("dragover");
+  if (dragsFiles(e)) {
+    wrap.classList.add("dragover");
+  }
 });
 wrap.addEventListener("dragleave", () => wrap.classList.remove("dragover"));
-wrap.addEventListener("drop", (e) => {
+// a file dropped anywhere on the page opens as on the view: the browser would show it in place of the app
+window.addEventListener("dragover", (e) => {
+  if (dragsFiles(e)) {
+    e.preventDefault();
+  }
+});
+window.addEventListener("drop", (e) => {
+  if (!dragsFiles(e)) {
+    return;
+  }
   e.preventDefault();
   wrap.classList.remove("dragover");
   const file = e.dataTransfer && e.dataTransfer.files[0];
@@ -4150,7 +4381,24 @@ el("measurement-list").addEventListener("keydown", (e) => {
   e.preventDefault();
   e.stopPropagation();
 });
-el("download").addEventListener("click", () => toggleDownloadMenu());
+el("download").addEventListener("click", (e) => {
+  toggleDownloadMenu();
+  const first = el("download-menu").querySelector("button:enabled");
+  if (e.detail === 0 && first instanceof HTMLButtonElement) {
+    first.focus();                   // opened from the keyboard: the arrows go through the menu
+  }
+});
+el("download-menu").addEventListener("keydown", (e) => {
+  const items = [...el("download-menu").querySelectorAll("button:enabled")];
+  const at = items.findIndex((b) => b === document.activeElement);
+  const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+  if (step !== 0 && items.length) {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = at < 0 ? (step > 0 ? 0 : items.length - 1) : (at + step + items.length) % items.length;
+    /** @type {HTMLElement} */ (items[next]).focus();
+  }
+});
 el("panel").addEventListener("scroll", () => closeDownloadMenu());
 for (const id of ["contour-layer", "contour-datatype"]) {
   el(id).addEventListener("change", () => layerInputsChanged());
@@ -4167,6 +4415,19 @@ el("levels-full").addEventListener("click", () => {
   }
 });
 el("histogram-log").addEventListener("change", () => drawHistogram());
+selectEl("palette").addEventListener("change", () => setPalette(selectEl("palette").value));
+el("open-colours").addEventListener("click", () => toggleColourWindow());
+el("colour-close").addEventListener("click", () => toggleColourWindow());
+el("colours-from-matlab").addEventListener("click", () => {
+  colours.custom = [...PALETTES.matlab];
+  refreshColourWindow();
+  setPalette("custom");
+});
+el("colours-from-okabe-ito").addEventListener("click", () => {
+  colours.custom = [...PALETTES["okabe-ito"]];
+  refreshColourWindow();
+  setPalette("custom");
+});
 histCanvas.addEventListener("pointerdown", (e) => {
   if (app.hist === null) {
     return;
@@ -4201,16 +4462,29 @@ el("vertex-drop").addEventListener("click", () => dropPicked());
 el("vertex-first").addEventListener("click", () => makePickedFirst());
 el("vertex-reverse").addEventListener("click", () => reversePicked());
 el("vertex-zoom").addEventListener("click", () => zoomToPicked());
+/** The last plain click on a coordinate of the vertex window: two on one within DOUBLE_MS edit it. */
+let cellClick = { key: "", time: -Infinity };
 el("vertex-rows").addEventListener("click", (e) => {
-  const row = e.target instanceof Element ? e.target.closest("tr") : null;
-  if (row instanceof HTMLTableRowElement && row.dataset.i !== undefined) {
-    pickVertex(Number(row.dataset.i), e.shiftKey ? "range" : e.ctrlKey || e.metaKey ? "toggle" : "only");
+  // a click picks the vertex, and a second one on the same X or Y soon after edits it: timed here, as a
+  // double tap does not always send dblclick, and the rows are drawn anew on each pick
+  if (e.target instanceof HTMLInputElement) {
+    return;                          // a click within the value being edited
   }
-});
-el("vertex-rows").addEventListener("dblclick", (e) => {
   const cell = e.target instanceof Element ? e.target.closest("td") : null;
-  if (cell instanceof HTMLTableCellElement && cell.dataset.axis !== undefined) {
-    editCoordinate(cell);
+  const row = cell === null ? null : cell.closest("tr");
+  if (!(row instanceof HTMLTableRowElement) || row.dataset.i === undefined || cell === null) {
+    return;
+  }
+  const i = Number(row.dataset.i);
+  const axis = e.shiftKey || e.ctrlKey || e.metaKey ? undefined : cell.dataset.axis;
+  const key = axis === undefined ? "" : `${i} ${axis}`;
+  const now = performance.now();
+  const second = key !== "" && key === cellClick.key && now - cellClick.time < DOUBLE_MS;
+  cellClick = second ? { key: "", time: -Infinity } : { key, time: now };
+  pickVertex(i, e.shiftKey ? "range" : e.ctrlKey || e.metaKey ? "toggle" : "only");
+  const fresh = second ? el("vertex-rows").querySelector(`tr[data-i="${i}"] td[data-axis="${axis}"]`) : null;
+  if (fresh instanceof HTMLTableCellElement) {
+    editCoordinate(fresh);
   }
 });
 /**
@@ -4252,6 +4526,7 @@ function movableWindow(win, bar) {
 }
 movableWindow(el("vertex-window"), el("vertex-bar"));
 movableWindow(el("profile-window"), el("profile-bar"));
+movableWindow(el("colour-window"), el("colour-bar"));
 resizableWindow(el("vertex-window"));
 resizableWindow(el("profile-window"));
 el("touch-undo").addEventListener("click", () => undo());
@@ -4343,6 +4618,8 @@ el("reset-origin").addEventListener("click", () => {
   }
 });
 
+loadColours();
+selectEl("palette").value = colours.palette;
 refreshFrameInputs();
 refreshMeasurements();
 refreshDisplay();

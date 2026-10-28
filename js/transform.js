@@ -88,15 +88,18 @@
 /** A 2 x 2 matrix [[a, b], [c, d]] stored row by row as [a, b, c, d]. @typedef {[number, number, number, number]} Mat2 */
 /**
  * A contour: the one kind of measurement with any number of points, a polygon when ``closed``, else
- * a polyline; ``layer`` is its GDSII layer and datatype, [1, 0] when absent.
- * @typedef {{name: string, kind: "contour", closed: boolean, points: Point[], layer?: [number, number], width?: undefined}} Contour
+ * a polyline; ``layer`` is its GDSII layer and datatype, [1, 0] when absent.  ``color`` is the place
+ * of a measurement's colour in the colour order of the overlay, 0, 1, 2, ... (app.js).
+ * @typedef {{name: string, kind: "contour", closed: boolean, points: Point[], layer?: [number, number], color?: number,
+ *   width?: undefined}} Contour
  */
 /** The kinds of measurement with a set number of points (MEASURE_POINTS). @typedef {"ruler"|"angle"|"line-angle"|"profile"} FixedKind */
 /**
  * A ruler (2 points), an angle (3 points: arm end, vertex, arm end), the angle between two lines
  * (4 points: line 1 from, to, line 2 from, to) or a line profile (2 points, and ``width``: the band
  * width in pixel widths of the corrected view, profile.js).
- * @typedef {{name: string, kind: FixedKind, points: Point[], width?: number, closed?: undefined, layer?: undefined}} FixedMeasurement
+ * @typedef {{name: string, kind: FixedKind, points: Point[], width?: number, color?: number, closed?: undefined,
+ *   layer?: undefined}} FixedMeasurement
  */
 /** A measurement: a contour, or one of a set number of points. @typedef {Contour|FixedMeasurement} Measurement */
 /** @typedef {"contour"|FixedKind} MeasureKind */

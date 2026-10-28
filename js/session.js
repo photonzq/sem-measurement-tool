@@ -56,12 +56,13 @@ function storedPoints(points) {
  * @returns {Record<string, unknown>}
  */
 function measurementEntry(m) {
+  const { name, kind, color } = m;
   if (m.kind === "contour") {
-    return { name: m.name, kind: m.kind, closed: m.closed, gds_layer: m.layer ?? [1, 0], points_px: storedPoints(m.points) };
+    return { name, kind, color, closed: m.closed, gds_layer: m.layer ?? [1, 0], points_px: storedPoints(m.points) };
   }
   return m.kind === "profile"
-    ? { name: m.name, kind: m.kind, width_px: round4(m.width ?? 1), points_px: storedPoints(m.points) }
-    : { name: m.name, kind: m.kind, points_px: storedPoints(m.points) };
+    ? { name, kind, color, width_px: round4(m.width ?? 1), points_px: storedPoints(m.points) }
+    : { name, kind, color, points_px: storedPoints(m.points) };
 }
 
 /**
@@ -269,7 +270,7 @@ function parseSession(text) {
     throw new Error('"measurements" must be an array');
   }
   const names = new Set();
-  const measurements = root.measurements.map((m, i) => measurementAt(m, `measurements[${i}]`, names));
+  const measurements = root.measurements.map((m, i) => measurementAt(m, i, names));
   const s = root.selected;
   return {
     image: imageAt(root.image), frame: frameAt(root.frame), snap: snapAt(root.snap), measurements,
@@ -279,19 +280,22 @@ function parseSession(text) {
 }
 
 /**
- * One measurement of the file; its name must differ from all met so far.
+ * Measurement ``index`` of the file; its name must differ from all met so far, and its colour is its
+ * place in the list when the file gives none.
  * @param {unknown} value
- * @param {string} what
+ * @param {number} index
  * @param {Set<string>} names
  * @returns {Measurement}
  */
-function measurementAt(value, what, names) {
+function measurementAt(value, index, names) {
+  const what = `measurements[${index}]`;
   const o = objectAt(value, what);
   const name = nameAt(o.name, `${what}.name`, names);
   const points = pointsAt(o.points_px, `${what}.points_px`);
+  const color = numberAt(o.color ?? index, `${what}.color`, (v) => Number.isInteger(v) && v >= 0);
   if (o.kind === "contour") {
     /** @type {Contour} */
-    const contour = { name, kind: "contour", closed: o.closed !== false, points };
+    const contour = { name, kind: "contour", color, closed: o.closed !== false, points };
     if (o.gds_layer !== undefined) {
       contour.layer = layerAt(o.gds_layer, `${what}.gds_layer`);
     }
@@ -305,7 +309,7 @@ function measurementAt(value, what, names) {
     throw new Error(`${what}: a ${kind} has ${MEASURE_POINTS[kind]} points, not ${points.length}`);
   }
   /** @type {FixedMeasurement} */
-  const ms = { name, kind, points };
+  const ms = { name, kind, color, points };
   if (kind === "profile") {
     ms.width = numberAt(o.width_px ?? 1, `${what}.width_px`, (v) => v >= 0);
   }

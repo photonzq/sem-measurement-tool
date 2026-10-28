@@ -43,12 +43,14 @@
   input[type=number], select { font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--text); width: 100%; }
   /* the measurement list: a row selects one; its box adds it to the selection or takes it out */
   .list { height: 112px; overflow-y: auto; border: 1px solid var(--line); border-radius: 3px; background: #fff; }
+  .list:empty::before { content: "No measurements yet"; display: block; padding: 6px 8px; color: var(--muted); }
   .list .item { display: flex; align-items: center; gap: 6px; padding: 2px 6px; white-space: nowrap; cursor: default; }
   .list .item > span:last-child { overflow: hidden; text-overflow: ellipsis; }
   .list .item[aria-selected="true"] { background: #dfe7f5; }
   .list .item.edited { box-shadow: inset 3px 0 0 var(--accent); }
   .list .box { position: relative; flex: none; width: 14px; height: 14px; border: 1px solid var(--muted); border-radius: 3px;
                background: #fff; cursor: pointer; }
+  .list .swatch { flex: none; width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0, 0, 0, 0.35); }
   .list .item[aria-selected="true"] .box { background: var(--accent); border-color: var(--accent); }
   .list .item[aria-selected="true"] .box::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
                                                    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
@@ -70,6 +72,7 @@
   kbd { font: 11px ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 3px; background: #fff; }
   table.keys { border-collapse: collapse; width: 100%; }
   table.keys td { padding: 2px 4px; vertical-align: top; border-bottom: 1px solid var(--line); }
+  table.keys td:first-child { width: 36%; }
   #status { grid-column: 1; font: 12px ui-monospace, Consolas, monospace; padding: 3px 8px; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 22px; }
   .pair { display: flex; gap: 4px; }
   #histogram { display: block; width: 100%; height: 96px; background: #fff; border: 1px solid var(--line); border-radius: 3px;
@@ -108,6 +111,11 @@
                   border: 1px solid var(--line); background: #fff; cursor: crosshair; touch-action: none; }
   #profile-readout { margin: 3px 8px 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #profile-note { margin: 2px 8px 6px; }
+  #colour-window { width: 250px; height: auto; min-height: 0; }
+  #colour-window .note { margin: 2px 10px 8px; }
+  .slots { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: center; padding: 8px 10px 2px; }
+  .slots input[type=color] { width: 100%; height: 24px; padding: 0 2px; border: 1px solid var(--line); border-radius: 3px;
+                             background: #fff; cursor: pointer; }
   #about { margin: 18px 0 0; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; }
   #touch-bar { position: absolute; left: 8px; top: 12px; z-index: 6; display: flex; flex-direction: column; gap: 6px; }
   #touch-bar[hidden] { display: none; }
@@ -132,7 +140,14 @@
   body.touch .floating .row button { min-height: 40px; padding: 4px 10px; }
   body.touch .floating .grip { width: 30px; height: 30px; }
   body.touch #profile-window .row input[type=number] { min-height: 36px; }
+  body.touch #panel button, body.touch dialog button { min-height: 38px; }
+  body.touch #panel input[type=number], body.touch #panel select, body.touch dialog input:not([type=checkbox]) { min-height: 34px; }
+  body.touch #panel input[type=checkbox], body.touch dialog input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
+  body.touch #panel label:has(> input[type=checkbox]), body.touch dialog label:has(> input[type=checkbox]) { display: inline-block; padding: 6px 0; }
+  body.touch #panel input[type=range] { height: 30px; }
   body.touch .list { height: 200px; }
+  body.touch .list .swatch { width: 14px; height: 14px; }
+  body.touch .slots input[type=color] { height: 36px; }
   body.touch .list .item { min-height: 40px; }
   body.touch .list .box { width: 24px; height: 24px; }
   body.touch .list .item[aria-selected="true"] .box::after { left: 8px; top: 3px; width: 6px; height: 12px; border-width: 0 3px 3px 0; }
@@ -195,6 +210,15 @@
       <div id="profile-readout" class="note"></div>
       <div id="profile-note" class="note"></div>
     </section>
+    <section id="colour-window" class="floating" aria-label="Custom colours" hidden>
+      <header id="colour-bar"><span>Custom colours</span><button type="button" id="colour-close" class="close" title="Close" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5"/></svg></button></header>
+      <div id="colour-slots" class="slots"></div>
+      <div class="row">
+        <button type="button" id="colours-from-matlab" title="Start again from MATLAB's colours">From MATLAB</button>
+        <button type="button" id="colours-from-okabe-ito" title="Start again from the Okabe-Ito colours">From Okabe-Ito</button>
+      </div>
+      <div class="note">Each new measurement takes the next colour, in turn. A change here draws with the custom colours.</div>
+    </section>
   </main>
 
   <aside id="panel">
@@ -203,7 +227,7 @@
       <div class="row">
         <button type="button" id="open-image" title="Open an image (Ctrl+O); dropping a file on the view works too">Open image&hellip;</button>
         <button type="button" id="open-session" title="Take up a session (.json), or load the contours of a polygon file (.csv)">Open session&hellip;</button>
-        <button type="button" id="save-session" title="Save the measurements and the calibration as a session file (Ctrl+S)">Save session</button>
+        <button type="button" id="save-session" title="Save the measurements and the calibration as a session file (Ctrl+S)" disabled>Save session</button>
       </div>
       <input type="file" id="image-file" accept=".tif,.tiff,image/tiff,image/png,image/jpeg,image/bmp" hidden>
       <input type="file" id="session-file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" hidden>
@@ -230,7 +254,7 @@
       <div id="measurement-list" class="list" role="listbox" aria-multiselectable="true" aria-label="Measurements" tabindex="0"></div>
       <div class="row">
         <button type="button" id="download" aria-haspopup="menu" aria-controls="download-menu" aria-expanded="false" title="Save the selected measurements, or all of them">Download &#9662;</button>
-        <button type="button" id="rename-measurement">Rename</button>
+        <button type="button" id="rename-measurement" title="Rename the selected measurement">Rename</button>
         <button type="button" id="delete-measurement" title="Delete the selected measurements (Delete)">Delete</button>
       </div>
       <div id="contour-controls" hidden>
@@ -247,12 +271,14 @@
           </div>
         </div>
       </div>
-      <div class="row">
-        <button type="button" id="level-horizontal" title="Turn the image so that the selected ruler is horizontal (H)">Level: horizontal</button>
-        <button type="button" id="level-vertical" title="Turn the image so that the selected ruler is vertical (V)">Level: vertical</button>
-      </div>
-      <div class="row">
-        <button type="button" id="axis-from-ruler" title="Take the selected ruler as parallel to the stage tilt axis, such as the surface line of a cross-section">Tilt axis along ruler</button>
+      <div id="ruler-controls" hidden>
+        <div class="row">
+          <button type="button" id="level-horizontal" title="Turn the image so that the selected ruler is horizontal (H)">Level: horizontal</button>
+          <button type="button" id="level-vertical" title="Turn the image so that the selected ruler is vertical (V)">Level: vertical</button>
+        </div>
+        <div class="row">
+          <button type="button" id="axis-from-ruler" title="Take the selected ruler as parallel to the stage tilt axis, such as the surface line of a cross-section">Tilt axis along ruler</button>
+        </div>
       </div>
       <div id="measurement-details" class="note"></div>
     </section>
@@ -324,6 +350,17 @@
         <label class="inline"><input type="checkbox" id="histogram-log"> log counts</label>
       </div>
       <div id="histogram-note" class="note"></div>
+      <div class="grid">
+        <label for="palette" title="The colours the measurements are drawn in: each new one takes the next colour of the order, and keeps it">overlay colours</label>
+        <select id="palette">
+          <option value="matlab">MATLAB</option>
+          <option value="okabe-ito">Okabe-Ito</option>
+          <option value="custom">custom</option>
+        </select>
+      </div>
+      <div class="row">
+        <button type="button" id="open-colours" title="Pick each colour of the order by hand">Custom colours&hellip;</button>
+      </div>
     </section>
 
     <section>

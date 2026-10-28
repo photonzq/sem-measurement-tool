@@ -37,7 +37,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
    Set the origin if the micrometres should start somewhere particular.
 3. **Snapping** to edges is on from the start; S switches it. The edge map (G) shows what clicks snap to. It is computed as the image opens, in a few seconds for a large image.
 4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4) and *Profile* (5). *Pan* (0), or a click on the active tool, puts the tool down again.
-5. **Level the image** if you like. Draw a ruler along something that should be horizontal, such as the substrate, select it and press *Level: horizontal* (H) or *Level: vertical* (V). Lengths and angles do not change; directions and the exported coordinates turn with the image.
+5. **Level the image** if you like. Draw a ruler along something that should be horizontal, such as the substrate, and select it. Then press *Level: horizontal* (H) or *Level: vertical* (V); these buttons, and *Tilt axis along ruler*, appear under *Measurements* while a ruler is selected. Lengths and angles do not change; directions and the exported coordinates turn with the image.
 6. **Keep the work**: *Save session* (Ctrl+S). To continue later, open the image, then *Open session…*. *Download*, under *Measurements*, saves what is selected:
    - a contour: its vertices for a mode solver, or a GDSII layout;
    - a profile: its samples, or its plot as a PNG image;
@@ -52,7 +52,7 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 
 - **Pan** (0): no tool. A drag pans and the wheel zooms, and no click edits anything. The app opens with it, and a click on the active tool's button also returns to it.
 - **Contour.**
-  - A click adds a vertex at the end of the selected contour, drawn amber; the other contours are cyan, and yellow when they are selected along with it.
+  - A click adds a vertex at the end of the selected contour, which is drawn thicker, with a light halo and white vertices, its first vertex larger.
   - With no contour selected, the first click starts a new one: *contour 1*, *contour 2* and so on. There is never an empty contour waiting. N is done with the selected contour, so that the next click starts a new one; it also takes up the contour tool. C closes or opens the selected contour.
   - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or exact with Alt. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
   - A drag moves a vertex, a right click deletes one, and Backspace deletes the last. A click on a vertex, without dragging, selects it for the vertex window; Shift+click adds or removes it. Touching another contour's vertex selects that contour.
@@ -71,7 +71,7 @@ The **points of a measurement** handle as follows:
 
 ## Measurements
 
-One list under *Measurements* holds them all: contours, rulers, angles and profiles, in the order made, each with its brief measures. Selected measurements are drawn in yellow, the others in coral (contours in cyan).
+One list under *Measurements* holds them all: contours, rulers, angles and profiles, in the order made, each with its colour and its brief measures. Selected measurements keep their colour and are drawn thicker, with a light halo and white points (see *Overlay colours*).
 
 - **Selecting.** A click or a tap on a row selects that measurement alone. Its box, or Ctrl+click, adds it to the selection or takes it out. Shift+click selects from the row clicked last, and Ctrl+A selects all.
 - **The one edited.** A measurement selected alone is the one edited, marked by a bar at the left of its row. It is the contour the contour tool extends, the profile the profile window shows, and the ruler that *Level* and *Tilt axis along ruler* take. Touching a measurement's point with its tool makes it the one edited.
@@ -98,7 +98,7 @@ One list under *Measurements* holds them all: contours, rulers, angles and profi
 - **First** (closed contours, one vertex selected): renumber the contour to start there. The polygon is unchanged.
 - **Reverse**: run the contour the other way. A closed contour keeps its first vertex; an open one swaps its ends.
 - **Zoom**: centre and zoom the view on the selected vertices, or on the whole contour when none is selected.
-- **Typing coordinates.** Double-click an X or Y cell, type the value, and press Enter (Esc keeps the old one). The vertex moves to the stored point that the inverse map (MATH.md, (G10)) gives.
+- **Typing coordinates.** Double-click or double-tap an X or Y cell, type the value, and press Enter (Esc keeps the old one). The vertex moves to the stored point that the inverse map (MATH.md, (G10)) gives.
 - **Arrow keys** move the selected vertices by one view unit in the direction they point on screen (Shift: ten), whatever the zoom, tilt correction or rotation. One view unit is the width of a stored pixel: a cross-section's rows count $k$ times, so Up moves a vertex by $1/k$ of a row (MATH.md, (G15)).
 
 Every operation can be undone.
@@ -122,6 +122,25 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
 - **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band and the crossings.
 - **Export PNG**, in the window or under *Download*, writes the plot as an image of 1200 × 750 pixels at twice that resolution. A title above it names the profile and the image and gives its length and band width.
 - **Kept like the other measurements.** A profile is listed under *Measurements*, saved in the session with its band width, and written to the measurements file with its length, band width and mean grey value.
+
+## Overlay colours
+
+Measurements are drawn in colours made to show on grey images, dark or bright:
+
+- **One colour each.** Each new measurement takes the next colour of a colour order, as MATLAB colours the lines it plots, and keeps it; the session saves it. The list shows each measurement's colour, and the profile plot marks a crossing contour in that contour's colour.
+- **Outlined lines.** Every line has a thin outline in the contrasting grey: white around a dark colour, black around a light one. No single colour stands out on dark, mid and bright grey alike, but an outlined one does.
+- **Labels on dark chips.** A value is written in white on a dark chip edged in the measurement's colour, legible on any grey.
+- **Selection.** Selected measurements keep their colour, drawn thicker with a light halo, white points and a thicker chip edge.
+
+*Overlay colours*, in the *Display* section, chooses the colours:
+
+| Choice | Colours |
+|:--|:--|
+| MATLAB (the default) | MATLAB's default colour order: `#0072BD`, `#D95319`, `#EDB120`, `#7E2F8E`, `#77AC30`, `#4DBEEE`, `#A2142F` |
+| Okabe-Ito | the colour-blind-safe set: `#E69F00`, `#56B4E9`, `#009E73`, `#F0E442`, `#0072B2`, `#D55E00`, `#CC79A7` |
+| custom | seven colours picked by hand in the *Custom colours…* window, which can start again from MATLAB's or from the Okabe-Ito colours |
+
+The browser remembers the choice, which is a matter of taste and not part of the work; the session file keeps only each measurement's place in the order.
 
 ## Display
 
@@ -259,7 +278,7 @@ Touch has no hover, so the previews that follow the cursor (snap, insert with Ct
 
   Held on empty image, nothing happens, and lifting the finger places nothing.
 - **The measurement list** takes a tap as a click. A tap on a row selects it alone, a tap on its box adds it to the selection or takes it out, and two taps on a row open its window. Its rows and boxes are larger in the touch layout.
-- **Larger targets.** A finger hits a point within 22 px, where the mouse needs 8. After touch input, points and handles are drawn larger. Snapping searches 2.5 times the search radius for a finger, which covers far more of the image than a cursor.
+- **Larger targets.** A finger hits a point within 22 px, where the mouse needs 8. After touch input, points and handles are drawn larger. Snapping searches 2.5 times the search radius for a finger, which covers far more of the image than a cursor. The panel's buttons, fields and boxes grow to finger size as well.
 - **Floating windows** get title bars and close buttons 44 px tall, and a resize corner that answers a finger; the browser's own corner answers the mouse only.
 - **The profile plot** reads out under a finger dragged along it, and the reading stays after the finger lifts.
 - **Number fields** open the number keypad of the Windows touch keyboard.

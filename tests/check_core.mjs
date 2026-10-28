@@ -476,9 +476,9 @@ function checkSession() {
       rotationDeg: -1.25, originPx: [1536.5, 1024.25] },
     snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4 },
     measurements: [
-      { name: "rib", kind: "contour", closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
-      { name: "ruler 1", kind: "ruler", points: [[1, 2], [3, 4]] },
-      { name: 'slab "top", left', kind: "contour", closed: false, points: [[100, 965], [2972, 965]] },
+      { name: "rib", kind: "contour", color: 0, closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
+      { name: "ruler 1", kind: "ruler", color: 1, points: [[1, 2], [3, 4]] },
+      { name: 'slab "top", left', kind: "contour", color: 9, closed: false, points: [[100, 965], [2972, 965]] },
       { name: "angle 1", kind: "angle", points: [[1, 2], [3, 4], [5, 7]] },
       { name: "line angle 1", kind: "line-angle", points: [[0, 0], [1, 0], [0, 1], [1, 2]] },
       { name: "profile 1", kind: "profile", points: [[10, 20], [30, 25]], width: 7.25 }],
@@ -496,10 +496,11 @@ function checkSession() {
     && back.selected === 2 && back.image.sha256 === IMAGE.sha256 && text.includes("[933.7961, 853.6115]")
     && back.display.join() === "1520,61200.5"
     && api.parseSession(api.formatSession({ ...session, display: null, selected: -1 }, "x")).display === null
-    && api.parseSession(api.formatSession({ ...session, selected: -1 }, "x")).selected === -1,
+    && api.parseSession(api.formatSession({ ...session, selected: -1 }, "x")).selected === -1
+    && ms.map((m) => m.color).join() === "0,1,9,3,4,5",
   "session round trip: frame, snap settings, the measurements in their order with contours among them (points to " +
-    "1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band width, the selected one (none: -1), display " +
-    "levels (absent: Auto)");
+    "1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band width, colours (absent: the place in the " +
+    "list), the selected one (none: -1), display levels (absent: Auto)");
   const good = JSON.parse(text);
   const bad = [
     "{ not json",
@@ -514,6 +515,7 @@ function checkSession() {
     { ...good, measurements: [{ name: "a", kind: "contour", closed: true, gds_layer: [-1, 0], points_px: [[0, 0]] }] },
     { ...good, display: { black_level: 5, white_level: 5 } },
     { ...good, measurements: [{ name: "p", kind: "profile", width_px: -1, points_px: [[0, 0], [1, 1]] }] },
+    { ...good, measurements: [{ name: "r", kind: "ruler", color: 1.5, points_px: [[0, 0], [1, 1]] }] },
   ];
   let refused = 0;
   for (const b of bad) {
@@ -524,7 +526,8 @@ function checkSession() {
     }
   }
   check(refused === bad.length, `bad session files are refused (${refused} of ${bad.length}: not JSON, format, version, ` +
-    "no list, point count, kind, a name used twice across kinds, correction, number, GDS layer, display levels, band width)");
+    "no list, point count, kind, a name used twice across kinds, correction, number, GDS layer, display levels, band width, " +
+    "colour)");
 }
 
 /** The records of a GDSII file, [type, data type, data], every length checked. */
