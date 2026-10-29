@@ -7,9 +7,9 @@ This document derives what the app computes from an image:
 - **Part 3:** what each step costs, and where the limits lie.
 - **Part 4:** the GDSII export: its grid and its eight-byte reals.
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
-- **Part 6:** line profiles: the band, the samples, and the contours that cross the line.
+- **Part 6:** line profiles: the band, the samples, the contours that cross the line, and squaring a profile to the edge it crosses.
 
-Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P5) in `js/profile.js`.
+Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P11) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
 
 ## Part 1. Geometry
 
@@ -396,6 +396,7 @@ A ridge detector that finds line centres would be a natural addition.
 | Each redraw | one `drawImage` of the picture (and the overlay) through the affine transform; the vertices and labels | resampling on the GPU; linear in the vertices |
 | Each pointer move with Snap on | one snap search (2.5, E8) | crest tests on the $\pi r^2/\lvert\det V\rvert$ stored pixels of the search ellipse: 356 for $r = 12$, $k = 1.27$ |
 | A profile shown, or dragged, or a contour crossing it edited | its samples (6.2–6.4) and crossings (6.5); the plot | $(N + 1)\,M$ bilinear values, about one per stored pixel of the band; the crossings linear in the contour vertices |
+| A profile squared (6.6) | the strongest edge along its line, and the structure tensor there; or the normal of a contour's segment | $N + 1$ bilinear values; at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$ |
 
 ### 3.2 Measured times
 
@@ -691,7 +692,7 @@ The last bin may reach past $m_1$, by $nw - n_v$ values that do not occur. It is
 
 ## Part 6. Line profiles
 
-A line profile gives the grey values along a line, averaged across a band of adjustable width, and marks where contours cross the line. Like a ruler, it is kept as two stored points; its band adds one number, the width. Everything else follows from these, the measurement frame and the grey values as stored, not the display (Part 5).
+A line profile gives the grey values along a line, averaged across a band of adjustable width, and marks where contours cross the line. It can be turned to run square to the edge it crosses (6.6). Like a ruler, it is kept as two stored points; its band adds one number, the width. Everything else follows from these, the measurement frame and the grey values as stored, not the display (Part 5).
 
 ### 6.1 The band (P1)
 
@@ -795,10 +796,355 @@ $$t = \frac{w \times e}{d \times e}, \qquad q = \frac{w \times d}{d \times e}. \
 - A vertex exactly on the line ends one segment ($q = 1$) and starts the next ($q = 0$) at the same $t$. It is counted once.
 - Only the centre line is tested: a contour that passes through the band without reaching the centre line is not marked.
 
-### 6.6 Cost
+### 6.6 Squaring a profile to an edge (P6)–(P11)
+
+A profile measures an edge best when it runs square to it, along the edge's normal as seen. A line drawn by hand is a few degrees off. While **square new profiles to the edge they cross** is on (under Snapping, on by default), a new profile therefore turns, about the point where it crosses an edge, to run along that edge's normal. **E** does the same to the profile edited. The edge is:
+
+1. a traced contour the profile crosses, if there is one: of the crossings, the one nearest the profile's middle (P10);
+2. else the image's strongest edge along the profile, whose direction the structure tensor gives (P7)–(P9).
+
+The profile turns about the crossing and keeps its length and the crossing's place along it (P11). A new profile turns by itself only when it is at most 15° off square (*The largest turn*, below). The squaring is an edit of its own:
+
+- Ctrl+Z gives the profile back as drawn;
+- Alt+click, or Exact, places a profile as drawn.
+
+For 1.6 s a note beside the cursor tells what was done:
+
+- "⊥ edge, 4.2°" for the image's edge, with the contour's name in place of "edge" for a contour;
+- "not squared: 34.1° off" when the turn would exceed the cap;
+- "not squared" otherwise, with the reason in the status bar.
+
+**What being off square costs (P6).** Work in the view, where the band is a rectangle (P1). Let a straight edge have the unit normal $\hat n$ and the grey profile $f$ across it, so that near it the image is $I(q) = f\big(\hat n\cdot(q - q_e)\big)$, $q_e$ being a point of the edge. Let the profile's direction $t$ make the angle $\delta$ with $\hat n$, and take the axes so that
+
+$$\hat n = (1, 0), \qquad t = (\cos\delta,\ \sin\delta), \qquad n = (-\sin\delta,\ \cos\delta),$$
+
+$n$ being the band's normal of (P1). The band's line at the offset $r$ runs through $q(s, r) = q_0 + s\,t + r\,n$, with $q_0$ the point where the centre line crosses the edge. Since $\hat n\cdot(q_0 - q_e) = 0$, $\hat n\cdot t = \cos\delta$ and $\hat n\cdot n = -\sin\delta$, that line reads
+
+$$I\big(q(s, r)\big) = f(s\cos\delta - r\sin\delta).$$
+
+Two things follow.
+
+- **The stretch.** Along one line, $f$ is read at $s\cos\delta$, so every distance across the edge appears $1/\cos\delta$ times longer along the profile. Two parallel edges $W$ apart appear $W/\cos\delta$ apart, too long by $\sec\delta - 1 = \delta^2/2 + O(\delta^4)$. This is second order in $\delta$.
+- **The smear.** Line $r$ crosses the edge where $s\cos\delta = r\sin\delta$, at $s_r = r\tan\delta$. Across the band, $|r| \le w/2$, the crossings spread over $w\tan\delta$, which is first order in $\delta$. The mean (P4) averages copies of the edge shifted by $s_r$, that is, the edge convolved with the distribution of the shifts.
+  - In the limit of many lines that distribution is uniform over $w\tan\delta$, with the variance $w^2\tan^2\delta/12$.
+  - The $M$ lines of (P3) lie at the middles of $M$ equal strips, $h = w/M$ apart. $M$ points spaced $h$ apart have the variance $h^2(M^2 - 1)/12$, so here it is $w^2\tan^2\delta\,(1 - 1/M^2)/12$.
+
+**The edge's width.** Take an edge whose derivative across it is a Gaussian of standard deviation $b$, as in (E3). Along one line, $\partial_s f(s\cos\delta - r\sin\delta) = \cos\delta\, f'(\dots)$ is a Gaussian in $s$ of standard deviation $b/\cos\delta$, centred at $s_r$. The mean over the lines convolves it with the shifts, and variances add under convolution:
+
+$$b_\delta^2 = \frac{b^2}{\cos^2\delta} + \frac{w^2\tan^2\delta}{12} = b^2 + \tan^2\delta\left(b^2 + \frac{w^2}{12}\right), \qquad \text{(P6)}$$
+
+using $1/\cos^2\delta = 1 + \tan^2\delta$. In the bracket, $b^2$ is the stretch and $w^2/12$ the smear. The smear dominates as soon as $w > \sqrt{12}\,b \approx 3.5\,b$. That is the usual case, since a band is made wide to average the noise.
+
+**Where the edge lies** does not move. The shifts $s_r$ are symmetric about $r = 0$, so the smeared edge keeps its centre at $s = 0$, and the distance between two parallel edges is only stretched.
+
+For a band 20 view units wide across an edge of $b = 2$:
+
+| $\delta$ | 2° | 5° | 10° | 15° |
+|:--|:--|:--|:--|:--|
+| stretch, $\sec\delta - 1$ | 0.06 % | 0.38 % | 1.54 % | 3.53 % |
+| spread of the crossings, $w\tan\delta$ | 0.70 | 1.75 | 3.53 | 5.36 |
+| edge width, $b_\delta/b - 1$ (P6) | 0.6 % | 3.5 % | 13.6 % | 29.2 % |
+
+A profile drawn 5° off square thus finds the distance between two parallel edges 0.4 % too long, but each edge 3.5 % wider than it is. At 10° off, each edge is 14 % wider. Squaring removes both, down to the error of the direction it finds. That error is a few degrees for the image's edge at a moderate signal-to-noise ratio, and far less for a contour (below). A residual of 1.4° widens the edge above by 0.3 %, and one of 3° by 1.3 %.
+
+**The normal as seen (P7).** "Square" is meant in the view. There the band is a rectangle (P1). The measurement frame is the view scaled, $A = cV$ (6.1), so a right angle in the view is a right angle in micrometres.
+
+The edge map, however, is computed on the stored grid (2.7): its gradient $g = \nabla_u I$ is the derivative of the grey value with respect to stored coordinates. In the view, where $q = Vu$ up to a shift, the same image is $\tilde I(q) = I(V^{-1}q)$. By the chain rule,
+
+$$\frac{\partial\tilde I}{\partial q_i} = \sum_k \frac{\partial I}{\partial u_k}\,\frac{\partial u_k}{\partial q_i} = \sum_k g_k\,(V^{-1})_{ki}, \qquad\text{that is,}\qquad \nabla_q\tilde I = V^{-T}g. \qquad \text{(P7)}$$
+
+The same follows from what a gradient is: the linear form that gives the change $dI = g\cdot du$ of the grey value over a small step $du$. A stored step $du$ is the view step $dq = V\,du$, so
+
+$$dI = g\cdot V^{-1}dq = (V^{-T}g)\cdot dq.$$
+
+Steps map with $V$ and gradients with $V^{-T}$: $g$ is a covector, not a vector. Along an edge the grey value is constant, so the view's gradient is normal to the edge as seen. Its direction $V^{-T}g/|V^{-T}g|$ is therefore the edge's normal in the view, and a profile square to the edge runs, in stored coordinates, along
+
+$$d \;\parallel\; V^{-1}\,V^{-T}g = (V^TV)^{-1}g.$$
+
+**The mistake this avoids.** Taking $d$ along $g$ itself, as a vector, is right only when $V^TV$ is a multiple of the identity: square pixels and no tilt correction, at any rotation. Otherwise, take $V = \mathrm{diag}(1, k)$: a correction $k$ across a horizontal tilt axis, with square pixels (the mirror $F$ changes no angle).
+
+- An edge whose normal makes the angle $\psi$ with $x$ in the view has $g \parallel V^T\hat n = (\cos\psi,\ k\sin\psi)$.
+- $d \parallel g$ is then seen along $Vg = (\cos\psi,\ k^2\sin\psi)$, at the angle $\arctan(k^2\tan\psi)$.
+
+With $T = \tan\psi$, the error is $\varepsilon = \arctan(k^2 T) - \arctan T$. It is largest where
+
+$$\frac{d\varepsilon}{dT} = \frac{k^2}{1 + k^4T^2} - \frac{1}{1 + T^2} = 0 \;\Longleftrightarrow\; k^2(1 + T^2) = 1 + k^4T^2 \;\Longleftrightarrow\; (k^2 - 1)(1 - k^2T^2) = 0,$$
+
+that is, at $T = 1/k$, where
+
+$$\varepsilon_{\max} = \arctan k - \arctan\frac1k.$$
+
+For a general $V = U\Sigma W^T$ (singular value decomposition), $d \parallel g$ is seen along $VV^T\hat n = U\Sigma^2U^T\hat n$. Measured in the axes of $U$, which turns or mirrors and keeps angles, this is the diagonal case with $k$ the ratio $s_1/s_2$ of the two singular values.
+
+| $k = s_1/s_2$ | 1.269 (cross-section at 52°) | 1.624 (tilted surface at 52°) | 1.761 (the tests' frame) | 2 |
+|:--|:--|:--|:--|:--|
+| $\varepsilon_{\max}$ | 13.5° | 26.8° | 30.8° | 36.9° |
+| a width too long by $\sec\varepsilon_{\max} - 1$ | 2.85 % | 12.0 % | 16.4 % | 25.0 % |
+
+The tests' frame has 2 × 3 nm pixels, a 52° cross-section, the tilt axis at 30° and a turn of −20°. There, the stored grid's own normal, taken as a direction, is 30.6° off for an edge whose view normal is at 25°. The normal found as in (P7) is within 0.1°.
+
+**The structure tensor (P8).** The direction comes not from $g$ at one point but from the gradients over a window about the point $p$ where the profile crosses the edge:
+
+$$J = \sum_i w_i\,g_i\,g_i^T, \qquad w_i = \exp\!\left(-\frac{|u_i - p|^2}{2\rho^2}\right), \qquad \rho = 2\sigma. \qquad \text{(P8)}$$
+
+The sum runs over the stored pixels $u_i$ within $\lceil 3\rho\rceil$ of $p$ in $x$ and in $y$, above the info bar; weights beyond $3\rho$ would be below $e^{-4.5} = 1.1\,\%$. This is the structure tensor of image analysis. It was found independently in several settings, among them:
+
+- the precision of a point located from the gradients in a window (Förstner and Gülch 1987);
+- the orientation of a neighbourhood, fitted by least squares (Bigün and Granlund 1987; Bigün, Granlund and Wiklund 1991);
+- the flow of oriented patterns (Kass and Witkin 1985, 1987).
+
+The full references are at the end of this section. Its three numbers are sums over the edge map already computed:
+
+$$J_{11} = \sum_i w_i\,g_{x,i}^2, \qquad J_{12} = \sum_i w_i\,g_{x,i}\,g_{y,i}, \qquad J_{22} = \sum_i w_i\,g_{y,i}^2.$$
+
+The window is a disc in stored pixels, like the smoothing $\sigma$: its job is to gather independent samples of the noise, which are the stored pixels (2.7). In the view it is an ellipse. On a straight edge every gradient has the same direction, so the window's shape does not bias the result.
+
+**Its eigenvectors.** For a unit vector $e = (\cos\theta, \sin\theta)$,
+
+$$e^TJe = \sum_i w_i\,(g_i\cdot e)^2,$$
+
+the weighted sum of the squared derivatives of the image along $e$. By the double-angle formulas,
+
+$$e^TJe = J_{11}\cos^2\theta + 2J_{12}\sin\theta\cos\theta + J_{22}\sin^2\theta = \frac{J_{11}+J_{22}}{2} + \frac{J_{11}-J_{22}}{2}\cos 2\theta + J_{12}\sin 2\theta.$$
+
+Write $\frac{J_{11}-J_{22}}{2} = \Delta\cos 2\theta_0$ and $J_{12} = \Delta\sin 2\theta_0$, with $\Delta = \sqrt{\big(\frac{J_{11}-J_{22}}{2}\big)^2 + J_{12}^2}$. Then
+
+$$e^TJe = \frac{J_{11}+J_{22}}{2} + \Delta\cos(2\theta - 2\theta_0).$$
+
+- It is largest, $\lambda_1 = \frac{J_{11}+J_{22}}{2} + \Delta$, at $\theta = \theta_0 = \tfrac12\operatorname{atan2}(2J_{12},\ J_{11} - J_{22})$.
+- It is smallest, $\lambda_2 = \frac{J_{11}+J_{22}}{2} - \Delta$, at $\theta_0 + 90°$.
+
+The extremes of $e^TJe$ over unit vectors are the eigenvalues of $J$, and they are reached at its eigenvectors. So these are the eigenvalues and eigenvectors. The edge's normal on the stored grid is $e_1 = (\cos\theta_0, \sin\theta_0)$. Its sign is undefined; the turn (P11) settles it.
+
+**A least-squares fit.** Take any unit $e$ and the unit $e_\perp$ normal to it. Then $|g_i|^2 = (g_i\cdot e)^2 + (g_i\cdot e_\perp)^2$, so
+
+$$\sum_i w_i\,(g_i\cdot e)^2 = \sum_i w_i\,|g_i|^2 - \sum_i w_i\,(g_i\cdot e_\perp)^2.$$
+
+The $e$ that maximises the left side therefore minimises $\sum_i w_i\,(g_i\cdot e_\perp)^2$. The edge's tangent $e_\perp$ is thus the direction along which the image changes least, in the weighted mean square over the window: the least-squares fit of a straight edge to the gradients. Bigün and Granlund (1987) reach the same eigenvalue problem from the Fourier side. They fit, by least squares, a line through the origin to the neighbourhood's spectral energy $|\hat f|^2$. By Parseval's relation, the moments $\int \omega_i\omega_j|\hat f|^2$ of that energy are the sums of the gradient products $\int \partial_if\,\partial_jf$, up to a factor $4\pi^2$. On a noise-free straight edge:
+
+- every $g_i$ is normal to the edge;
+- the derivative along the tangent vanishes at every pixel, so $\lambda_2 = 0$;
+- the fit is exact, whatever the weights.
+
+**Solved on the stored grid, carried to the view.** By (P7), the view's tensor is
+
+$$J_q = \sum_i w_i\,(V^{-T}g_i)(V^{-T}g_i)^T = V^{-T}JV^{-1}.$$
+
+On a noise-free straight edge, $J = S\,e_1e_1^T$ has rank one. So does $J_q = S\,(V^{-T}e_1)(V^{-T}e_1)^T$, whose eigenvector is $V^{-T}e_1$, and the two agree. With noise they do not, and the stored grid is the right place.
+
+There, the gradient's noise $\nu$ has two components of one variance $s_g^2$ and no covariance (2.3), so its mean outer product is $s_g^2 I$. Take an edge whose noise-free gradients are $G_ie_1$. The cross terms $G_i(e_1\nu_i^T + \nu_ie_1^T)$ average to zero, and
+
+$$\langle J\rangle = S\,e_1e_1^T + N\,I, \qquad S = \sum_i w_iG_i^2, \qquad N = s_g^2\sum_i w_i.$$
+
+$N I$ adds the same to $e^TJe$ in every direction and moves neither eigenvector. On average, the stored tensor thus points exactly along $e_1$.
+
+In the view, the same noise becomes $N\,V^{-T}V^{-1} = N\,(VV^T)^{-1}$. It favours the direction in which $V$ stretches least. To see by how much, describe a symmetric matrix $Q$ by the complex number
+
+$$z(Q) = Q_{11} - Q_{22} + 2\mathrm i\,Q_{12},$$
+
+which is linear in $Q$, and whose argument is twice the angle of $Q$'s first eigenvector (the formula for $\theta_0$ above). For a unit vector $e$ at the angle $\psi$, $z(e\,e^T) = e^{2\mathrm i\psi}$, and $z(I) = 0$.
+
+Let $s_1 \ge s_2$ be the singular values of $V$. $V$ maps a unit circle onto an ellipse with the semi-axes $s_1$ and $s_2$. Let $\hat m$, at the angle $\mu$, be the direction of the short axis, and $\hat m^\perp$ that of the long one. These are the eigenvectors of $VV^T$, with the eigenvalues $s_2^2$ and $s_1^2$, so
+
+$$(VV^T)^{-1} = s_1^{-2}\,\hat m^\perp\hat m^{\perp T} + s_2^{-2}\,\hat m\,\hat m^T.$$
+
+Since $e^{2\mathrm i(\mu + 90°)} = -e^{2\mathrm i\mu}$,
+
+$$z\big(\langle J_q\rangle\big) = S_q\,e^{2\mathrm i\psi} + N\,\big(s_2^{-2} - s_1^{-2}\big)\,e^{2\mathrm i\mu},$$
+
+with $S_q = S\,|V^{-T}e_1|^2$ and $\psi$ the angle of the true normal $V^{-T}e_1$ in the view. Half its argument is
+
+$$\psi + \tfrac12\arg\Big(1 + \epsilon\,e^{2\mathrm i(\mu - \psi)}\Big) \approx \psi + \frac{\epsilon}{2}\,\sin 2(\mu - \psi), \qquad \epsilon = \frac{N}{S_q}\,\big(s_2^{-2} - s_1^{-2}\big).$$
+
+On average, the view's eigenvector is thus turned towards $\hat m$ by up to $\epsilon/2$ radians, first order in the noise. The app therefore finds $e_1$, and the coherence (P9), on the stored grid. It carries only the normal to the view, as the covector $V^{-T}e_1$ of (P7).
+
+The tests check that $\langle J\rangle$ gives $V^{-T}e_1$ to $10^{-13}$ degrees, in every direction, in a frame that stretches 3 times. The view's tensor would be up to 23.6° off there, for $S = 10N$. The table below compares the two on noisy steps of SNR 5.66 (2.2), with $b = \sigma = 2$, $\rho = 4$ and 1200 images of every direction per frame. Each cell gives:
+
+- the largest mean error over a 15° range of directions (the bias);
+- the RMS error;
+- the share refused, with a coherence below 0.5 (P9).
+
+| Frame | $s_1/s_2$ | the view's tensor | the stored grid's tensor |
+|:--|:--|:--|:--|
+| the tests' frame | 1.76 | 2.9°, 4.1°, 6.8 % | 0.35°, 3.6°, 0.3 % |
+| stretched 2 times | 2 | 3.7°, 4.9°, 14.5 % | 0.9°, 4.0°, 0.1 % |
+| stretched 3 times, axis 15°, turned 10° | 3 | 9.3°, 9.6°, 37 % | 1.0°, 5.2°, 0.2 % |
+
+The stored grid's bias is within the scatter of such means, about 0.5°. In the view, the coherence of good edges also drops.
+
+**Why not the gradient itself.** There are four reasons.
+
+1. **One gradient is as noisy as $1/\mathrm{SNR}$.** At a point of the edge, $g = G\,e_1 + \nu$: the edge's gradient $G$ (E3) plus the noise. The noise's component along the edge, $\nu_\perp$, turns $g$ by $\delta\theta \approx \nu_\perp/G$. By (E4), its standard deviation is
+
+   $$\frac{s_g}{G} = \frac{1}{\mathrm{SNR}}\ \text{radians}.$$
+
+   That is 4.1° at an SNR of 14.1 and 10.1° at 5.66. An edge that just passes the snapping threshold has $G = 3 \times 1.18\,s_g$ (2.3), an SNR of 3.54, and scatters by 16°. That is as large as the tilt to be corrected.
+
+2. **The tensor weights each pixel by what it knows.** Linearise the angle in the noise. In the frame of $e_1$, $g_i = (G_i + \nu_{\parallel,i},\ \nu_{\perp,i})$. To first order in $\nu$,
+
+   $$J_{12} \approx \sum_i w_iG_i\,\nu_{\perp,i}, \qquad J_{11} - J_{22} \approx \sum_i w_iG_i^2.$$
+
+   For small angles, $\theta_0 = \tfrac12\operatorname{atan2}(2J_{12},\ J_{11} - J_{22}) \approx J_{12}/(J_{11} - J_{22})$, so
+
+   $$\theta_0 \approx \frac{\sum_i w_iG_i^2\,(\nu_{\perp,i}/G_i)}{\sum_i w_iG_i^2}.$$
+
+   Each pixel's own estimate of the angle, $\nu_{\perp,i}/G_i$, has the variance $s_g^2/G_i^2$. The tensor averages these estimates with the weights $w_iG_i^2$: inverse-variance weights, the least-variance way to combine independent estimates, here tapered by the window. Pixels off the edge, whose gradient is mostly noise of any direction, count for little; pixels on it count most. Neighbouring gradients are correlated by the smoothing, so this is a guide to the weights, not the exact variance; the table below measures the variance. Förstner and Gülch (1987, eq. 7b) weight each pixel's edge line by $|\nabla g|^2$ for the same reason: with the grey-value noise $\sigma_n$, the line's position has the standard deviation $\sigma_n/|\nabla g|$. The alternatives weight worse:
+   - summing the vectors $g_i$ weights each pixel's angle by $G_i$;
+   - averaging the unit vectors $g_i/|g_i|$ weights it by 1, so the background's random directions enter at full weight.
+
+3. **Opposite gradients add.** $(-g)(-g)^T = g\,g^T$. A bright line (2.8), or a dark one, has two flanks whose gradients point opposite ways along the same normal. Summed as vectors, they cancel; summed as $g\,g^T$, they add. In the complex form above, with $g = |g|(\cos\phi, \sin\phi)$,
+
+   $$g_x^2 - g_y^2 = |g|^2\cos 2\phi, \qquad 2g_xg_y = |g|^2\sin 2\phi, \qquad\text{so}\qquad \theta_0 = \tfrac12\arg\sum_i w_i\,(g_{x,i} + \mathrm i\,g_{y,i})^2.$$
+
+   The tensor adds the gradients squared as complex numbers: their lengths are squared and their angles doubled, so that $\phi$ and $\phi + 180°$ fall together. Kass and Witkin (1985) estimate the flow direction exactly so: they square the gradients as complex numbers, sum them over a weighted neighbourhood, and halve the angle of the sum. Bigün and Granlund (1987) compute their orientation the same way, with a Gaussian window. Averaging the angles $\phi$ themselves fails twice:
+   - across the cut at ±180°, where 179° and −179° average to 0°;
+   - between the two senses of one edge, where 0° and 180° average to 90°, the edge's tangent.
+
+   On a bright line, with the window centred on it, the tests find the gradient vectors summing to 1.0 % of their lengths, a direction left to the noise. The tensor's direction is within 0.1°.
+
+4. **It tells whether there is one direction (P9).** One gradient, or any average of gradients, always gives a direction, at a corner, at a junction and in noise alike. The tensor's two eigenvalues tell whether one direction dominates.
+
+**Measured.** Each row of the table below uses 300 synthetic images:
+
+- white noise of unit standard deviation;
+- edges of every direction, at random sub-pixel places, in the plain view;
+- $\sigma = 2$ without the median, and $\rho = 4$;
+- the strongest point along a line square to the edge, found as the app finds it (below).
+
+The table gives the RMS of the angle between the normal found and the true one, in degrees. "SNR" is that of the edge's crest (E4); for a line of amplitude $A$ and standard deviation $a$ it is $\frac{A}{s}\cdot\frac{a\,e^{-1/2}}{a^2 + \sigma^2}\cdot 2\sqrt{2\pi}\,\sigma^2$, from the derivative of the smoothed line at its flank. $1/\mathrm{SNR}$ is given in degrees.
+
+| Edge | SNR | $1/\mathrm{SNR}$ | one gradient | unit vectors averaged | gradient vectors summed | tensor (P8) |
+|:--|:--|:--|:--|:--|:--|:--|
+| step of 5, $b = 2$ | 14.1 | 4.05 | 4.16 | 2.47 | 1.51 | 1.36 |
+| step of 2, $b = 2$ | 5.66 | 10.1 | 10.2 | 4.74 | 3.53 | 3.24 |
+| step of 1.25, $b = 2$ | 3.54 | 16.2 | 18.7 | 12.2 | 11.8 | 11.4; 5.1 for the 69 % kept |
+| bright line of 5, std 0.7 px | 9.5 | 6.0 | 5.61 | 15.0 | 7.50 | 1.42 |
+| bright line of 5, std 1.5 px | 14.6 | 3.9 | 3.78 | 7.38 | 3.59 | 1.01 |
+| bright line of 5, std 3 px | 14.0 | 4.1 | 3.81 | 3.57 | 2.04 | 1.11 |
+| bright line of 5, std 6 px | 9.1 | 6.3 | 5.78 | 2.40 | 1.82 | 1.65 |
+
+What it shows:
+
+- One gradient scatters by $1/\mathrm{SNR}$, as derived. Near the threshold it scatters somewhat more, since the angles are no longer small.
+- On a step, the tensor is three times better than one gradient. The vector sum comes within 10 % of it, since all the gradients point one way. Unit vectors are 1.5–1.8 times worse.
+- On lines narrower than the window, the vector sum is 2–5 times worse than the tensor, and unit vectors up to 10 times: the far flank's gradients cancel the near flank's. Lines wider than the window (std 6 px, flanks 12.6 px apart) behave like steps.
+- At the threshold, the coherence refuses 31 % of the steps, and those it keeps are within 5.1°.
+- With the default 3 × 3 median, the steps of SNR 14.1 and 5.66 give 1.23° and 3.69°.
+
+The tests repeat the second and fourth rows, on 100 images each.
+
+**The window.** $\rho$ sets what the tensor sees.
+
+- **Precision** grows with $\rho$, as more of the edge enters, with a longer lever. At SNR 5.66, the tensor scatters by 6.0° for $\rho = \sigma$, 3.2° for $\rho = 2\sigma$ and 1.65° for $\rho = 4\sigma$: about as $1/\rho$.
+- **The coherence of a good edge falls** with $\rho$, because the window takes in more background, whose noise adds equally to both eigenvalues. At SNR 5.66, its median is 0.90, 0.79 and 0.64 for the same three windows, and the last refuses 3.7 % of the steps.
+- **Reach.** The window must lie on the straight part of the edge, clear of other edges. Its weights exceed $e^{-2} = 0.14$ out to $2\rho$, 8 px at the default $\sigma = 2$, and it reaches $3\rho$, 12 px: the default snap radius.
+- **Curvature.** On an edge curving with the radius $R$, the normal turns by $s/R$ at the distance $s$ along it. Weighted along the edge by a Gaussian of standard deviation $\rho$, the doubled angles average to $\langle e^{2\mathrm i s/R}\rangle = e^{-2\rho^2/R^2}$, the Gaussian's characteristic function at $2/R$. Two things follow:
+  - the direction is not turned on average, since the window is symmetric about the crossing;
+  - the coherence drops to about $e^{-4\rho^2/R^2}$, which is 0.5 at $R = 2\rho/\sqrt{\ln 2} = 2.4\rho$, 9.6 px.
+
+  On nearly noise-free discs (SNR 141) of radius 8, 12 and 20 px, the coherence was 0.30, 0.62 and 0.85, against 0.37, 0.64 and 0.85 from the formula, and the direction was within 0.25°. Edges curved more tightly than about 10 px are refused.
+
+$\rho = 2\sigma$ balances these.
+
+**The coherence (P9).**
+
+$$C = \left(\frac{\lambda_1 - \lambda_2}{\lambda_1 + \lambda_2}\right)^2 = \left(\frac{2\Delta}{J_{11} + J_{22}}\right)^2 = \frac{(J_{11} - J_{22})^2 + 4J_{12}^2}{(J_{11} + J_{22})^2}, \qquad \text{(P9)}$$
+
+since $\lambda_1 - \lambda_2 = 2\Delta$ and $\lambda_1 + \lambda_2 = J_{11} + J_{22}$, the trace. In the complex form, with $z_i = g_{x,i} + \mathrm i\,g_{y,i}$,
+
+$$\sqrt C = \frac{\big|\sum_i w_iz_i^2\big|}{\sum_i w_i|z_i|^2}:$$
+
+the length of the mean of the doubled-angle unit vectors, weighted by $|g_i|^2$. It is 1 when all the gradients lie along one line, and near 0 when they spread over all directions. The measure has precedents:
+
+- **Bigün and Granlund (1987)** give the certainty $\big((\lambda_1 - \lambda_0)/(\lambda_1 + \lambda_0)\big)^c$, with an exponent $c$ that sets its dynamic range. Their $\lambda_1 \ge \lambda_0$ are the eigenvalues of the inertia matrix of the spectrum, $\operatorname{tr}(M)\,I - M$, where $M$ is the moment matrix of the spectral energy. Their implementation computes $M$, like $J$, from gradient products averaged over a Gaussian window. In two dimensions $\operatorname{tr}(M)\,I - M$ has the eigenvalues $\operatorname{tr}M - m_1 = m_2$ and $\operatorname{tr}M - m_2 = m_1$, those of $M$ itself, so $C$ is their certainty with $c = 2$.
+- **Förstner and Gülch (1987, eq. 15)** measure the roundness of the error ellipse of a located point by $q = 1 - \big[(\mu_1 - \mu_2)/(\mu_1 + \mu_2)\big]^2 = 4\det N/(\operatorname{tr}N)^2$. Their $N$ is the sum of the gradient products over the window: $J$ with equal weights. With the same window, $C = 1 - q$; $q = 0$ marks "an ideal edge".
+- **Rao and Schunck (1991)** call such a measure of the degree of anisotropy the coherence.
+
+Below $C = 0.5$ the profile stays as drawn, with the reason. What 0.5 means:
+
+- **A straight edge in noise.** From $\langle J\rangle$ above, $\lambda_1 \approx S + N$ and $\lambda_2 \approx N$, so $C \approx \big(S/(S + 2N)\big)^2$. It equals 0.5 at $S/N = 2/(\sqrt2 - 1) = 4.83$.
+
+  For an edge through the window's centre, with the profile $G(x) = G_0\,e^{-x^2/(2\beta^2)}$ across it and $\beta = \sqrt{b^2 + \sigma^2}$ (E3), the sums along the edge cancel in the ratio, and across it
+
+  $$\frac SN = \frac{G_0^2}{s_g^2}\cdot\frac{\int e^{-x^2/(2\rho^2)}\,e^{-x^2/\beta^2}\,dx}{\int e^{-x^2/(2\rho^2)}\,dx} = \frac{\mathrm{SNR}^2}{\sqrt{1 + 2\rho^2/\beta^2}}.$$
+
+  With $b = \sigma = 2$ and $\rho = 4$, the root is $\sqrt5$. This predicts median coherences of 0.96, 0.77 and 0.54 at SNR 14.1, 5.66 and 3.54; the measured ones were 0.96, 0.79 and 0.56. An edge that just passes the snapping threshold thus has a coherence near 0.5; 31 % of such edges were refused. The coherence refuses straight edges about where snapping does.
+- **Two edges.** Take edges with the normals $e$ and $e'$ at the angle $\alpha$, and weights $S$ and $S'$. Then $z(J) = S\,e^{2\mathrm i\psi} + S'\,e^{2\mathrm i(\psi + \alpha)}$.
+  - With equal weights, $|z| = 2S|\cos\alpha|$ against a trace of $2S$, so $C = \cos^2\alpha$. A right-angled corner gives 0; the tests' corner gives 0.31.
+  - At a right angle with $S \ge S'$, $C = \big((S - S')/(S + S')\big)^2$. It reaches 0.5 only when one edge outweighs the other by $S/S' = 5.8$.
+
+**A traced contour's normal (P10).** When the profile crosses a contour, the segment crossed runs from $a$ to $b$, the closing segment included. It is seen along $V(b - a)$, and its normal in the view is that vector turned by +90°:
+
+$$\hat n = \frac{\big(-(Ve)_y,\ (Ve)_x\big)}{|Ve|}, \qquad e = b - a. \qquad \text{(P10)}$$
+
+Of the crossings (P5), the one nearest the profile's middle is taken: $|t - \tfrac12|$ least. A contour comes first for three reasons:
+
+- it is the edge as the user traced it, so the profile measures the edge the contour does;
+- its vertices were snapped one by one, each to a few hundredths of a pixel across the edge (2.6). Vertices $\ell$ apart with independent errors $\varepsilon$ across give the direction an error of about $\sqrt2\,\varepsilon/\ell$: 0.08° for $\varepsilon = 0.05$ px and $\ell = 50$ px;
+- it needs neither the edge map nor a coherence.
+
+**The turn (P11).** The profile from $u_1$ to $u_2$ turns about the crossing $p$, a point of its centre line, to run along the normal $\hat n$. Its view vector is $Vd$, of the length $L = |Vd|$, and $p$ lies at the fraction
+
+$$t = \frac{V(p - u_1)\cdot Vd}{L^2}$$
+
+along it. The new ends keep $L$, $t$ and the sense from $u_1$ to $u_2$:
+
+$$u_1' = p - t\,V^{-1}(\varsigma L\hat n), \qquad u_2' = p + (1 - t)\,V^{-1}(\varsigma L\hat n), \qquad \varsigma = \operatorname{sign}(\hat n\cdot Vd). \qquad \text{(P11)}$$
+
+Two checks:
+
+- $u_2' - u_1' = V^{-1}(\varsigma L\hat n)$ is seen as $\varsigma L\hat n$: of the length $L$, along $\pm\hat n$.
+- $u_1' + t\,(u_2' - u_1') = p$: the crossing stays at the fraction $t$.
+
+The profile turns through $\arccos(|\hat n\cdot Vd|/L)$, between 0 and 90°, which the note shows. Why these choices:
+
+- **The pivot on the edge** keeps the profile crossing the edge where it did, at the same distance $tL$ from its start, so the edge keeps its place in the plot. Turning about the middle could carry an edge near one end off the profile.
+- **The view length** is the length the user drew and sees, and $c\,L$ is the length in micrometres (6.1). The stored length would change with the direction under a tilt correction.
+- **The sense** keeps the plot from flipping: $u_1$ stays the end the plot starts from.
+- **The band's width** $w$, in view units, is kept.
+
+**The largest turn.** A new profile turns by itself only when it is at most $\delta_{\max} = 15°$ off square. Further off, it stays as drawn, and the note gives the angle. E, the profile window's *Square* button and the press-and-hold menu square it whatever the angle. The cap tells apart two kinds of profile:
+
+- **Drawn square by eye.** Such a profile is off by the error of the eye and of the two clicks, typically a few degrees and well within the cap. Two clicks 100 screen pixels apart, each placed to about 2 px across the line, alone turn it by about $\sqrt2 \times 2/100$ rad, 1.6°.
+- **Drawn at an angle on purpose.** In a cross-section, a horizontal profile across a sloped sidewall at a set height is $90° - \alpha$ off square for a sidewall at $\alpha$ from the horizontal. That is 20–30° for sidewalls at 60–70°, which the cap leaves as drawn. A profile along an edge is 90° off.
+
+A horizontal profile across a sidewall steeper than 75° is turned; Ctrl+Z gives it back as drawn. The cap limits only when squaring acts unasked, not what it can correct. A profile 15° off square already widens an edge of $b = 2$ by 29 % in a band 20 wide (P6).
+
+**Where the image's edge is taken.** Without a contour, the edge is the strongest point along the centre line. The edge strength $|g|$ (E1) is sampled about one stored pixel apart, at $N + 1$ points as in (P2), and the largest sample at or above the snapping threshold (2.3) is taken. On a straight edge, $|g|$ depends only on the distance across it. Along any line that crosses it, square or not, the largest value therefore lies where the line crosses the crest, so the pivot does not depend on how far the line was off. The tensor is then taken there (P8). The profile stays as drawn when no sample reaches the threshold, or when the coherence is below 0.5 (P9).
+
+**Limits.**
+
+- A line that crosses several edges is squared to one: the contour crossing nearest its middle, or else the image's strongest edge. In a cross-section, a profile across a rib whose two sidewalls slope differently cannot be square to both. A profile meant to run across the rib at a set height stays as drawn when it is more than 15° off square to the sidewall. Nearer to square, it is turned: Ctrl+Z gives it back as drawn, and Alt+click places it so.
+- On an edge curving with the radius $R$, the band is square to it only along its centre line. The band's outer lines meet the edge up to $\pm w/(2R)$ off square, and cross it at places that differ by up to $w^2/(8R)$, the sagitta. Keep $w \ll R$.
+- The coherence refuses corners, junctions and edges curved more tightly than about $2.4\rho$, and the threshold refuses weak edges. Such a profile stays as drawn; with a contour traced along the edge, it is squared to the contour instead.
+
+**Tests.** The tests check:
+
+- the normal of a step, of a bright line and of a corner in the tests' frame, with the noise 20 % of the step;
+- the normal and coherence of $\langle J\rangle$ in a frame that stretches 3 times;
+- the scatter of the direction over 100 noisy images, against one gradient and a sum of gradient vectors;
+- that (P11) keeps the length, the fraction, the sense and the angle turned;
+- that (P10) is square to its segment in the tests' frame;
+- that the crossings (P5) name the segment crossed.
+
+**References.**
+
+- W. Förstner and E. Gülch, "A fast operator for detection and precise location of distinct points, corners and centres of circular features," *Proc. ISPRS Intercommission Conference on Fast Processing of Photogrammetric Data*, Interlaken, June 1987, pp. 281–305. [Copy at the University of Bonn](https://www.ipb.uni-bonn.de/pdfs/Forstner1987Fast.pdf).
+  - The normal-equation matrix $N$ of the gradients is on p. 285.
+  - The direction $\tan 2\Phi = 2N_{12}/(N_{11} - N_{22})$, eq. (13), is on p. 287.
+  - The roundness $q$, eq. (15), is on p. 288. The middle form of eq. (15) is misprinted there as $\operatorname{tr}^2 N/(4\det N)$, the reciprocal of $4\det N/\operatorname{tr}^2 N$.
+- J. Bigün and G. H. Granlund, "Optimal orientation detection of linear symmetry," *Proc. First International Conference on Computer Vision (ICCV)*, London, June 8–11, 1987, IEEE Computer Society Press, pp. 433–438. [Author's copy](https://www2.hh.se/staff/josef/public/publications/bigun87london.pdf).
+- J. Bigün, G. H. Granlund and J. Wiklund, "Multidimensional orientation estimation with applications to texture analysis and optical flow," *IEEE Transactions on Pattern Analysis and Machine Intelligence* **13**(8), 775–790 (1991). [doi:10.1109/34.85668](https://doi.org/10.1109/34.85668).
+- M. Kass and A. Witkin, "Analyzing oriented patterns," *Proc. Ninth International Joint Conference on Artificial Intelligence (IJCAI-85)*, Los Angeles, 1985, vol. 2, pp. 944–952. [PDF at ijcai.org](https://ijcai.org/Proceedings/85-2/Papers/054.pdf). The doubled-angle estimate is described on p. 945.
+- M. Kass and A. Witkin, "Analyzing oriented patterns," *Computer Vision, Graphics, and Image Processing* **37**(3), 362–385 (1987). [doi:10.1016/0734-189X(87)90043-0](https://doi.org/10.1016/0734-189X(87)90043-0).
+- A. R. Rao and B. G. Schunck, "Computing oriented texture fields," *CVGIP: Graphical Models and Image Processing* **53**(2), 157–185 (1991). [doi:10.1016/1049-9652(91)90059-S](https://doi.org/10.1016/1049-9652(91)90059-S).
+
+### 6.7 Cost
 
 Each value takes four pixel reads and a dozen arithmetic operations. In Chromium a value took about 36 ns: a profile of 3001 samples along a band of 83 lines, 249 000 values, took 9 ms. The window therefore computes the profile again at every step of a drag:
 
 - of the band's width handle;
 - of a profile's end;
 - of a contour vertex, whose crossings move with it.
+
+Squaring costs one search along the line, $N + 1$ bilinear values, and one tensor over at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$. In Node, the tensor and its normal took about 10 µs, and a search along 300 samples about 6 µs.

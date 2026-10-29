@@ -463,6 +463,40 @@ class EdgeMap {
   }
 
   /**
+   * The structure tensor at stored (x, y) (MATH.md 6.6, (P8)): the outer products g g^T of the
+   * gradients (E1), summed with Gaussian weights of width ``rho`` pixels out to 3 rho, as
+   * [J11, J12, J22] of the stored frame.  Opposite gradients add rather than cancel, and strong ones
+   * count most (as |g|^2), so its first eigenvector is the edge's normal, averaged over the window.
+   * @param {number} x
+   * @param {number} y
+   * @param {number} rho
+   * @returns {[number, number, number]}
+   */
+  structureTensor(x, y, rho) {
+    const reach = Math.ceil(3 * rho);
+    const x0 = Math.max(0, Math.floor(x) - reach);
+    const x1 = Math.min(this.width - 1, Math.ceil(x) + reach);
+    const y0 = Math.max(0, Math.floor(y) - reach);
+    const y1 = Math.min(this.height - 1, Math.ceil(y) + reach);
+    const falloff = -1 / (2 * rho * rho);
+    let j11 = 0;
+    let j12 = 0;
+    let j22 = 0;
+    for (let py = y0; py <= y1; py++) {
+      for (let px = x0; px <= x1; px++) {
+        const w = Math.exp(falloff * ((px - x) * (px - x) + (py - y) * (py - y)));
+        const i = py * this.width + px;
+        const gx = this.gx[i];
+        const gy = this.gy[i];
+        j11 += w * gx * gx;
+        j12 += w * gx * gy;
+        j22 += w * gy * gy;
+      }
+    }
+    return [j11, j12, j22];
+  }
+
+  /**
    * The vertex (E6) of the parabola through the strength at p - u, p, p + u.
    * @param {number} px
    * @param {number} py

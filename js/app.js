@@ -6,7 +6,7 @@
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
    selectionRange, valueRange, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
-   widthFromPoint, formatProfileFile */
+   widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile */
 /*
  * The SEM measurement tool: open an image, take measurements (contours, rulers, angles, profiles) with
  * optional snapping to edges, correct a tilted specimen, turn the image, and keep the work in a
@@ -63,8 +63,9 @@ const TOOL_HINTS = {
   ruler: "Click both ends of a distance.  Drag an end to move it; right click deletes the ruler.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
-  profile: "Click both ends of a line profile (placed exactly, never snapped).  Drag the square on the band's side " +
-    "to widen it, an end to move it; P shows the profile window.",
+  profile: "Click both ends of a line profile (never snapped); it turns square to the edge it crosses, by up to 15°, " +
+    "while that option is on (Alt+click: as drawn; Ctrl+Z right after: back as drawn).  Drag the square on the band's " +
+    "side to widen it, an end to move it; E squares it whatever the turn, P shows the profile window.",
 };
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = { contour: "contour", ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
@@ -74,6 +75,9 @@ const TOUCH_HIT_PX = 22;             // HIT_PX for a finger, which covers far mo
 const TOUCH_SNAP = 2.5;              // a finger searches this many times the snap radius for an edge
 const HOLD_MS = 500;                 // a finger held still this long on a point opens its menu
 const DOUBLE_MS = 500;               // two clicks or taps on one list row within this time are a double click
+const FLASH_MS = 1600;               // how long the note beside the cursor stays after a profile is squared
+const MIN_COHERENCE = 0.5;           // (P9) below it, an image edge has no single direction to square a profile to
+const MAX_TURN_DEG = 15;             // (P11) a new profile turns by itself up to this far; E squares it whatever the turn
 
 /** @returns {Frame} */
 function defaultFrame() {
@@ -127,6 +131,8 @@ const app = {
   /** @type {{id: number, start: Point, t0: number, timer: number}|null} a finger that may become a press and hold */
   hold: null,
   exactOnce: false,                  // the next point placed or released lands exactly, without snapping
+  /** @type {{text: string, at: Point, until: number, done: boolean}|null} a note beside the cursor, for a moment */
+  flash: null,
   /** @type {Frame} */
   frame: defaultFrame(),
   view: { s: 1, tx: 0, ty: 0 },
@@ -212,6 +218,7 @@ function numberFrom(id, fallback) {
 
 const settings = {
   snap: () => inputEl("snap").checked,
+  squareProfiles: () => inputEl("square-profiles").checked,
   edgesShown: () => inputEl("show-edges").checked,
   sigma: () => numberFrom("sigma", 2),
   median: () => Number(selectEl("median").value),
@@ -462,10 +469,10 @@ async function openImageBuffer(name, buffer) {
   return true;
 }
 
-/** Compute the edge map when Snap or the edge map needs it and it is missing or outdated. */
+/** Compute the edge map when Snap, the squaring of profiles or the edge map needs it and it is missing or outdated. */
 async function refreshEdges() {
   const image = app.image;
-  if (image === null || app.edgesBusy || !(settings.snap() || settings.edgesShown())) {
+  if (image === null || app.edgesBusy || !(settings.snap() || settings.squareProfiles() || settings.edgesShown())) {
     render();
     return;
   }
@@ -651,6 +658,7 @@ function draw() {
   drawInsertPreview(toScreen);
   drawMarks(toScreen);
   drawHoldRing();
+  drawFlash();
 }
 
 /**
@@ -1558,6 +1566,9 @@ function placePoint(x, y, exact) {
     app.measurements.push(ms);
     selectOnly(app.measurements.length - 1);
     app.pending = null;
+    if (kind === "profile" && settings.squareProfiles() && !exact) {
+      squareMeasurement(ms, storedToScreen(x, y), MAX_TURN_DEG);   // a step of its own: Ctrl+Z gives it back as drawn
+    }
     refreshMeasurements();
     if (kind === "profile") {
       openProfileWindow();           // a new profile shows its plot at once
@@ -2191,7 +2202,7 @@ function toggleColourWindow() {
 function snapSettings() {
   return {
     on: settings.snap(), sigmaPx: settings.sigma(), median: settings.median(), radiusPx: settings.radius(),
-    minContrast: settings.minContrast(),
+    minContrast: settings.minContrast(), squareProfiles: settings.squareProfiles(),
   };
 }
 
@@ -2395,6 +2406,7 @@ function loadSessionText(text, name) {
   selectOnly(session.selected);
   const s = session.snap;
   inputEl("snap").checked = s.on;
+  inputEl("square-profiles").checked = s.squareProfiles;
   inputEl("sigma").value = String(s.sigmaPx);
   selectEl("median").value = String(s.median);
   inputEl("radius").value = String(s.radiusPx);
@@ -2790,6 +2802,7 @@ function refreshProfileWindow() {
   }
   buttonEl("profile-export").disabled = data === null;
   buttonEl("profile-png").disabled = data === null;
+  buttonEl("profile-square").disabled = data === null;
   el("profile-note").textContent = profileNote(data);
   showProfileReadout();
   drawProfilePlot();
@@ -3110,6 +3123,162 @@ function exportProfilePng(ms = shownProfile()) {
       download(blob, name, "image/png");
     }
   }, "image/png");
+}
+
+// ------------------------------------------------------------------------- squaring profiles
+//
+// A profile is squared to the edge it crosses (MATH.md 6.6): to the normal of a traced contour it
+// crosses (the crossing nearest its middle), else of the image's strongest edge along it, whose
+// direction the structure tensor gives on the stored grid (P8), (P9), carried to the corrected view
+// (P7).  New profiles are squared while the option is on, unless placed with Alt or Exact or further
+// off square than MAX_TURN_DEG, as an edit of their own that Ctrl+Z undoes; E squares the profile
+// edited, whatever the turn.  Either way a note beside the cursor tells, for a moment, what was done.
+
+/**
+ * The strongest edge along a line: where the edge strength (E1), sampled about a stored pixel
+ * apart, peaks at or above the snapping threshold; null when it stays below.
+ * @param {Point[]} points
+ * @param {EdgeMap} edges
+ * @returns {Point|null}
+ */
+function strongestEdgeAlong(points, edges) {
+  const [u1, u2] = points;
+  const n = Math.max(2, Math.ceil(Math.hypot(u2[0] - u1[0], u2[1] - u1[1])));
+  let best = settings.minContrast() * edges.noise;
+  /** @type {Point|null} */
+  let at = null;
+  for (let i = 0; i <= n; i++) {
+    const x = u1[0] + (i / n) * (u2[0] - u1[0]);
+    const y = u1[1] + (i / n) * (u2[1] - u1[1]);
+    const strength = x >= 0 && y >= 0 && x <= edges.width - 1 && y <= edges.height - 1 ? edges.sample(x, y) : 0;
+    if (strength >= best) {
+      best = strength;
+      at = [x, y];
+    }
+  }
+  return at;
+}
+
+/**
+ * What squaring a profile from u1 to u2 to the edge it crosses gives: its new points, the angle it
+ * turned through and the contour it was squared to (null: the image's edge); or why it stays.
+ * ``pivot`` is where it crosses the edge, or its middle.
+ * @param {Point[]} points
+ * @returns {{points: Point[], turnedDeg: number, to: string|null, pivot: Point}|{reason: string, pivot: Point}}
+ */
+function squareProfile(points) {
+  const [u1, u2] = points;
+  /** @param {number} t @returns {Point} */
+  const along = (t) => [u1[0] + t * (u2[0] - u1[0]), u1[1] + t * (u2[1] - u1[1])];
+  const contours = app.measurements.flatMap((m) => (m.kind === "contour" ? [m] : []));
+  const crossings = profileCrossings(points, contours);
+  if (crossings.length) {
+    const c = crossings.reduce((a, b) => (Math.abs(b.t - 0.5) < Math.abs(a.t - 0.5) ? b : a));
+    const contour = contours[c.contour];
+    const normal = segmentNormal(contour.points[c.segment], contour.points[(c.segment + 1) % contour.points.length], app.frame);
+    if (normal !== null) {
+      const pivot = along(c.t);
+      return { ...squaredProfile(points, pivot, normal, app.frame), to: contour.name, pivot };
+    }
+  }
+  const edges = app.edges;
+  if (edges === null) {
+    return { reason: "the edge map is not ready", pivot: along(0.5) };
+  }
+  const pivot = strongestEdgeAlong(points, edges);
+  if (pivot === null) {
+    return { reason: "no edge along it reaches the snapping threshold", pivot: along(0.5) };
+  }
+  const found = edgeNormal(edges.structureTensor(pivot[0], pivot[1], 2 * edges.sigma), app.frame);
+  if (found === null || found.coherence < MIN_COHERENCE) {
+    const c = found === null ? 0 : found.coherence;
+    return { reason: `the edge where it crosses has no single direction (coherence ${c.toFixed(2)})`, pivot };
+  }
+  return { ...squaredProfile(points, pivot, found.normal, app.frame), to: null, pivot };
+}
+
+/**
+ * Square a profile to the edge it crosses, as an edit of its own that Ctrl+Z undoes, and tell what
+ * was done: in the status bar, and in a note beside ``at`` (canvas CSS pixels; null: beside the
+ * place where it crosses the edge).  A profile further off square than ``maxTurnDeg`` stays as drawn.
+ * @param {FixedMeasurement} ms
+ * @param {Point|null} at
+ * @param {number} maxTurnDeg     MAX_TURN_DEG for a new profile, Infinity for E
+ */
+function squareMeasurement(ms, at, maxTurnDeg) {
+  const result = squareProfile(ms.points);
+  const near = at ?? storedToScreen(result.pivot[0], result.pivot[1]);
+  if ("reason" in result) {
+    setStatus(`${ms.name} stays as drawn: ${result.reason}.`);
+    flashNote("not squared", near, false);
+    return;
+  }
+  const turned = `${result.turnedDeg.toFixed(1)}°`;
+  const to = result.to ?? "the image's edge";
+  if (result.turnedDeg > maxTurnDeg) {
+    setStatus(`${ms.name} stays as drawn: it is ${turned} off square to ${to}, more than the ${maxTurnDeg}° a new ` +
+      "profile turns by itself.  E squares it.");
+    flashNote(`not squared: ${turned} off`, near, false);
+    return;
+  }
+  pushHistory();
+  ms.points = result.points;
+  setStatus(`${ms.name} squared to ${to}: turned ${turned}.  Ctrl+Z gives it back as drawn; Alt+click places a profile ` +
+    "as drawn.");
+  flashNote(`⊥ ${result.to ?? "edge"}, ${turned}`, near, true);
+}
+
+/** E: square the profile edited to the edge it crosses, whatever the turn. */
+function squareSelected() {
+  const ms = shownProfile();
+  if (ms === null) {
+    setStatus("Select a profile first: E squares it to the edge it crosses.");
+    return;
+  }
+  squareMeasurement(ms, app.cursorScreen, Infinity);
+  refreshMeasurements();
+  render();
+}
+
+/**
+ * A note beside a point of the view (canvas CSS pixels) for FLASH_MS, fading at the end.
+ * @param {string} text
+ * @param {Point} at
+ * @param {boolean} done      false: greyed, for what was not done
+ */
+function flashNote(text, at, done) {
+  const running = app.flash !== null;
+  app.flash = { text, at, until: performance.now() + FLASH_MS, done };
+  if (!running) {
+    requestAnimationFrame(animateFlash);
+  }
+}
+
+function animateFlash() {
+  if (app.flash === null) {
+    return;
+  }
+  if (performance.now() >= app.flash.until) {
+    app.flash = null;
+  } else {
+    requestAnimationFrame(animateFlash);
+  }
+  render();
+}
+
+/** The note of flashNote: a chip beside its point, in the preview colour (grey when nothing was done). */
+function drawFlash() {
+  const f = app.flash;
+  const left = f === null ? 0 : f.until - performance.now();
+  if (f === null || left <= 0) {
+    return;
+  }
+  ctx.save();
+  ctx.font = LABEL_FONT;
+  const half = ctx.measureText(f.text).width / 2 + 5;
+  ctx.globalAlpha = Math.min(1, left / 500);
+  drawLabel(f.text, [f.at[0] + 16 + half, f.at[1] - 20], f.done ? PREVIEW_COLOR : "#9a9a9a", true);
+  ctx.restore();
 }
 
 // ------------------------------------------------------------------------- GDS
@@ -3764,7 +3933,8 @@ function holdMenuItems(target) {
   items.push({ label: `Delete ${ms.name}`, act: () => deleteMeasurements([target.index]) },
     { label: "Rename...", act: () => renameMeasurement(target.index) });
   if (ms.kind === "profile") {
-    items.push({ label: "Show the plot", act: focusThen(() => openProfileWindow()) });
+    items.push({ label: "Show the plot", act: focusThen(() => openProfileWindow()) },
+      { label: "Square to edge", act: focusThen(() => squareSelected()) });
   }
   return items;
 }
@@ -4168,6 +4338,7 @@ const KEY_ACTIONS = {
   4: () => setTool("line-angle"),
   5: () => setTool("profile"),
   p: () => toggleProfileWindow(),
+  e: () => squareSelected(),
   n: () => finishContour(),
   c: () => setClosed(!(currentContour()?.closed ?? false)),
   h: () => levelSelected("horizontal"),
@@ -4563,6 +4734,8 @@ if (window.matchMedia("(any-pointer: coarse)").matches) {
 el("profile-close").addEventListener("click", () => toggleProfileWindow());
 el("profile-export").addEventListener("click", () => exportProfile());
 el("profile-png").addEventListener("click", () => exportProfilePng());
+el("profile-square").addEventListener("click", () => squareSelected());
+inputEl("square-profiles").addEventListener("change", () => refreshEdges());
 inputEl("profile-width").addEventListener("change", () => setProfileWidth(Number(inputEl("profile-width").value) / unitsPerView()));
 profileCanvas.addEventListener("pointerdown", (e) => {
   try {
@@ -4635,5 +4808,6 @@ Object.assign(window, {
     gdsFile, setLevels, brightnessMoved, contrastMoved, drawHistogram, paintPicture, toggleProfileWindow,
     refreshProfileWindow, shownProfile, profileData, profileMean, setProfileWidth, exportProfile, exportProfilePng,
     profilePlot, selectOnly, toggleChecked, checkRange, checkAll, deleteMeasurements, downloadItems, refreshMeasurements,
+    squareProfile, squareSelected,
   },
 });

@@ -17,6 +17,7 @@
  * @property {number} median        0 (off), 3 or 5
  * @property {number} radiusPx
  * @property {number} minContrast
+ * @property {boolean} squareProfiles   new profiles are squared to the edge they cross
  */
 
 /**
@@ -88,6 +89,7 @@ function formatSession(session, saved) {
     },
     snap: {
       on: snap.on, sigma_px: snap.sigmaPx, median: snap.median, radius_px: snap.radiusPx, min_contrast: snap.minContrast,
+      square_profiles: snap.squareProfiles,
     },
     measurements: session.measurements.map(measurementEntry),
     selected: session.selected >= 0 ? session.selected : null,
@@ -234,7 +236,7 @@ function frameAt(value) {
  */
 function snapAt(value) {
   if (value === undefined) {
-    return { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3 };
+    return { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3, squareProfiles: true };
   }
   const s = objectAt(value, "snap");
   return {
@@ -243,6 +245,7 @@ function snapAt(value) {
     median: numberAt(s.median, "snap.median", (v) => v === 0 || v === 3 || v === 5),
     radiusPx: numberAt(s.radius_px, "snap.radius_px", (v) => v > 0),
     minContrast: numberAt(s.min_contrast, "snap.min_contrast", (v) => v > 0),
+    squareProfiles: s.square_profiles !== false,
   };
 }
 

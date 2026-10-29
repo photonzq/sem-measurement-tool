@@ -1,6 +1,7 @@
 "use strict";
 /* global matApply, matInverse, viewMatrix, measurementMatrix */
-/* exported profileBand, profileGeometry, sampleProfile, profileCrossings, widthHandle, widthFromPoint */
+/* exported profileBand, profileGeometry, sampleProfile, profileCrossings, widthHandle, widthFromPoint, edgeNormal,
+   segmentNormal, squaredProfile */
 /*
  * Line profiles: the grey values along a line, averaged across a band of adjustable width, and the
  * places where contours cross the line.  MATH.md, part 6, gives the same derivations with more
@@ -40,6 +41,19 @@
  *
  * Affine maps keep t, a ratio of lengths along one line, so the crossing lies at s = t |A d|.
  * Parallel segments (d x e = 0) do not cross.  A vertex on the line, met by two segments, counts once.
+ *
+ * Squaring a profile to an edge (P6)-(P11), MATH.md 6.6.  A profile at the angle delta to the edge's
+ * normal crosses it, line by line across the band, at places spread over w tan delta (P6): the
+ * band-averaged edge is smeared at first order in delta.  The normal is that of the view, where the
+ * band is a rectangle; the gradient g of the stored grid is a covector, which the view sees as
+ * V^-T g (P7).  Its direction is taken from the structure tensor J = sum w_i g_i g_i^T over a
+ * Gaussian window (P8) rather than from g at one point: g's direction at a point is as noisy as
+ * 1 / SNR, opposite gradients (the two flanks of a bright line) cancel in a sum of vectors but not in
+ * a sum of g g^T, and the eigenvalues give a coherence ((l1 - l2) / (l1 + l2))^2 that tells a
+ * straight edge (near 1) from a corner or noise (near 0) (P9).  J is solved on the stored grid, where
+ * the noise adds the same to every direction, and only its eigenvector is carried to the view.  A
+ * contour segment that the line crosses gives its normal exactly (P10).  The profile turns about the
+ * crossing, its length in the view and the crossing's place along it kept (P11).
  */
 
 /**
@@ -188,18 +202,19 @@ function sampleProfile(image, g) {
  * (P5): where the contours cross the line, in order along it.
  * @param {Point[]} points       u1 and u2
  * @param {Array<{closed: boolean, points: Point[]}>} contours
- * @returns {Array<{contour: number, t: number}>}   t: 0 at u1, 1 at u2
+ * @returns {Array<{contour: number, segment: number, t: number}>}   t: 0 at u1, 1 at u2; segment i runs from
+ *     vertex i to the next
  */
 function profileCrossings(points, contours) {
   const [u1, u2] = points;
   const d = [u2[0] - u1[0], u2[1] - u1[1]];
   const ld = Math.hypot(d[0], d[1]);
-  /** @type {Array<{contour: number, t: number}>} */
+  /** @type {Array<{contour: number, segment: number, t: number}>} */
   const out = [];
   contours.forEach((c, ci) => {
     const n = c.points.length;
     const segments = c.closed && n > 2 ? n : n - 1;
-    /** @type {number[]} */
+    /** @type {Array<[number, number]>} t, and the segment */
     const ts = [];
     for (let i = 0; i < segments; i++) {
       const a = c.points[i];
@@ -213,16 +228,83 @@ function profileCrossings(points, contours) {
       const t = (w[0] * e[1] - w[1] * e[0]) / den;
       const q = (w[0] * d[1] - w[1] * d[0]) / den;
       if (t >= 0 && t <= 1 && q >= 0 && q <= 1) {
-        ts.push(t);
+        ts.push([t, i]);
       }
     }
-    ts.sort((p, q) => p - q).forEach((t, k) => {
-      if (k === 0 || t - ts[k - 1] > 1e-9) {
-        out.push({ contour: ci, t });
+    ts.sort((p, q) => p[0] - q[0]).forEach(([t, i], k) => {
+      if (k === 0 || t - ts[k - 1][0] > 1e-9) {
+        out.push({ contour: ci, segment: i, t });
       }
     });
   });
   return out.sort((p, q) => p.t - q.t);
+}
+
+/**
+ * (P7)-(P9): the normal of an edge in the view frame, from the structure tensor ``j`` = [J11, J12,
+ * J22] of the stored frame (EdgeMap.structureTensor).  Its eigenvector e of the larger eigenvalue l1,
+ * at the angle (1/2) atan2(2 J12, J11 - J22), is the gradients' common direction on the stored grid,
+ * and the view sees it as the covector V^-T e; ((l1 - l2) / (l1 + l2))^2 is the coherence, 1 for a
+ * single straight edge and near 0 for none or for two at once.  Both are taken on the stored grid,
+ * where the noise adds the same to every direction: the view's tensor V^-T J V^-1 has the same
+ * eigenvector without noise, but there the noise favours a direction, turns the eigenvector and
+ * lowers the coherence.  null when the window has no gradient.
+ * @param {[number, number, number]} j
+ * @param {Frame} frame
+ * @returns {{normal: Point, coherence: number}|null}   normal: a unit vector of the view frame
+ */
+function edgeNormal(j, frame) {
+  const [j11, j12, j22] = j;
+  const trace = j11 + j22;
+  if (!(trace > 0)) {
+    return null;
+  }
+  const root = Math.hypot((j11 - j22) / 2, j12);                     // (l1 - l2) / 2
+  const angle = 0.5 * Math.atan2(2 * j12, j11 - j22);
+  const [ex, ey] = [Math.cos(angle), Math.sin(angle)];
+  const [b11, b12, b21, b22] = matInverse(viewMatrix(frame));        // B = V^-1
+  const [nx, ny] = [b11 * ex + b21 * ey, b12 * ex + b22 * ey];        // B^T e = V^-T e
+  const length = Math.hypot(nx, ny);
+  return { normal: [nx / length, ny / length], coherence: (2 * root / trace) ** 2 };
+}
+
+/**
+ * (P10): the unit normal, in the view frame, of the segment from a to b (stored); null for a point.
+ * @param {Point} a
+ * @param {Point} b
+ * @param {Frame} frame
+ * @returns {Point|null}
+ */
+function segmentNormal(a, b, frame) {
+  const [ex, ey] = matApply(viewMatrix(frame), b[0] - a[0], b[1] - a[1]);
+  const length = Math.hypot(ex, ey);
+  return length > 0 ? [-ey / length, ex / length] : null;
+}
+
+/**
+ * (P11): a profile from u1 to u2 turned about ``pivot``, a point of its line, to run along ``normal``
+ * (a unit vector of the view frame): its length in the view, the pivot's place along it and its
+ * sense from u1 to u2 kept.  ``turnedDeg`` is the angle it turned through, 0 to 90 degrees.
+ * @param {Point[]} points
+ * @param {Point} pivot
+ * @param {Point} normal
+ * @param {Frame} frame
+ * @returns {{points: Point[], turnedDeg: number}}
+ */
+function squaredProfile(points, pivot, normal, frame) {
+  const v = viewMatrix(frame);
+  const [u1, u2] = points;
+  const [dx, dy] = matApply(v, u2[0] - u1[0], u2[1] - u1[1]);
+  const length = Math.hypot(dx, dy);
+  const [px, py] = matApply(v, pivot[0] - u1[0], pivot[1] - u1[1]);
+  const t = length > 0 ? (px * dx + py * dy) / (length * length) : 0;
+  const sense = normal[0] * dx + normal[1] * dy < 0 ? -1 : 1;
+  const [bx, by] = matApply(matInverse(v), sense * normal[0] * length, sense * normal[1] * length);  // V^-1 (L n)
+  const cos = length > 0 ? Math.min(1, Math.abs(normal[0] * dx + normal[1] * dy) / length) : 1;
+  return {
+    points: [[pivot[0] - t * bx, pivot[1] - t * by], [pivot[0] + (1 - t) * bx, pivot[1] + (1 - t) * by]],
+    turnedDeg: (Math.acos(cos) * 180) / Math.PI,
+  };
 }
 
 /**

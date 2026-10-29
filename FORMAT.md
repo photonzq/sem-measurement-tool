@@ -223,7 +223,8 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
     "sigma_px": 2,
     "median": 3,
     "radius_px": 12,
-    "min_contrast": 3
+    "min_contrast": 3,
+    "square_profiles": true
   },
   "measurements": [
     {
@@ -305,7 +306,7 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
 | `saved` | when the file was written (ISO 8601, UTC) |
 | `image` | the image the work belongs to: `name`, `sha256` (or null), `size_px`, `databar_rows` (the info bar, as in the CSV header), `microscope` (or null). The pixels themselves are not in the file. |
 | `frame` | the measurement frame, the keys of the CSV header: `pixel_size_nm` (null when unknown), `tilt_deg`, `correction`, `custom_factor`, `tilt_axis_deg`, `rotation_deg`, `origin_px` |
-| `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`. Optional; without it the defaults apply: snapping on, 2, 3, 12, 3. |
+| `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`, and `square_profiles`: whether new profiles are squared to the edge they cross (MATH.md 6.6), true when absent. Optional; without it the defaults apply: snapping on, 2, 3, 12, 3, squaring on. |
 | `measurements` | the list of measurements, in its order. Each has `name` (unique among all of them, on one line), `kind`, `color` and `points_px` (pixel coordinates, rounded to 1e-4 px). `color` is the measurement's place in the colour order of the overlay, an integer 0 or more, taken modulo the order's length (its place in the list when absent); the colours themselves are a preference of the browser, not of the session. The `kind` is `contour` (any number of points), `ruler` (2), `angle` (3), `line-angle` (4) or `profile` (2), the points in the order of the measurements file. A contour adds `closed` (true when absent) and `gds_layer`: its GDSII layer and datatype, integers in 0–32767, [1, 0] when absent. A profile adds `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent). |
 | `selected` | the index of the measurement selected, the one the contour tool extends when it is a contour; null when none |
 | `display` | the display levels when the session was saved: `black_level` and `white_level`, grey values of the stored image, the black level below the white (MATH.md, 5.2). Optional; without it the image opens with the auto levels. The levels change no measure. |

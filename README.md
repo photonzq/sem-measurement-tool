@@ -6,7 +6,7 @@ A web app for metrology on scanning electron micrographs, which runs entirely in
 
 - trace polygon contours;
 - measure distances, angles at a vertex, and angles between two lines;
-- take line profiles averaged across a band of adjustable width, with the contours that cross them marked;
+- take line profiles averaged across a band of adjustable width, squared to the edge they cross, with the contours that cross them marked;
 - snap clicks to edges, which a noise-robust gradient finds;
 - correct a tilted specimen and turn the image;
 - list a contour's vertices in a table and edit them there;
@@ -16,7 +16,7 @@ All of these work through one affine map from the stored pixels, so no calibrati
 
 **Nothing leaves your computer.** The app is a static page with no server behind it. Images are read with the browser's File API and results are saved as downloads, whether the page comes from GitHub Pages or from disk.
 
-- [MATH.md](MATH.md) derives the geometry, the edge detection, the snapping, the display and the line profiles, and analyses the performance.
+- [MATH.md](MATH.md) derives the geometry, the edge detection, the snapping, the display, the line profiles and their squaring to an edge, and analyses the performance.
 - [FORMAT.md](FORMAT.md) specifies the files.
 
 ## Opening it
@@ -107,7 +107,21 @@ Every operation can be undone.
 
 The *Profile* tool (5) takes the grey values along a line, averaged across a band around it.
 
-- **Placing.** Click both ends. A profile's ends are placed exactly where clicked, never snapped: a profile runs across edges, not along them. Drag an end to move it.
+- **Placing.** Click both ends. The ends are never snapped, since a profile runs across edges, not along them; the profile is squared instead (below). Drag an end to move it.
+- **Squaring.** A new profile turns to run square to the edge it crosses, as seen on screen. It turns about the point where it crosses the edge, and keeps its length and that point's place along it. The edge is:
+  - a traced contour the profile crosses, if there is one (of the crossings, the one nearest the profile's middle);
+  - else the image's strongest edge along the profile. Its direction comes from the gradients around the crossing, through the structure tensor, which averages them without letting the two flanks of a bright line cancel (MATH.md 6.6).
+
+  For a moment a note beside the cursor shows what was done and the angle turned: "⊥ edge, 4.2°", or the contour's name for a contour. The profile stays as drawn, with "not squared" and the reason in the status bar, in three cases:
+  - no edge along it reaches the snapping threshold;
+  - the edge has no single direction there: a corner, a junction or a tight curve;
+  - it is more than 15° off square ("not squared: 34.1° off"). Such a profile was most likely drawn at its angle on purpose, for instance horizontally across a sloped sidewall. A profile drawn square by eye is a few degrees off.
+
+  How to keep or redo it:
+  - Ctrl+Z right after gives the profile back as drawn; a second Ctrl+Z removes it.
+  - Alt+click places a profile as drawn.
+  - E squares the profile edited whatever the angle, for instance after its ends were dragged, or when it was more than 15° off.
+  - *square new profiles to the edge they cross*, under *Snapping*, is on from the start.
 - **The band.** It is a rectangle as seen on screen, whatever the tilt correction or rotation. Its width is in the measurement unit, or in pixels of the corrected view.
   - Widen or narrow it by dragging the white square on its side. The profile must be selected for the square to show.
   - Or type the width in the profile window.
@@ -194,6 +208,7 @@ With *Snap* on, as it is from the start (S switches it), a click lands on the st
 - **Candidates and choice.** Candidates are the crest pixels within the *search radius*, measured in pixels of the corrected view. The choice weighs strength against distance, and a parabola places the point between pixels, to within 0.05 px for a crest one pixel wide. The point may slide a pixel or two **along** the edge.
 - **Where the map is computed.** The edge map is computed on the stored image, without the info bar, once per σ and median setting. The noise is independent pixel to pixel there and the probe round, so this is also the matched filter.
 - **Bright lines.** Many SEM edges appear as bright lines, which have two flanks. A click snaps to the flank nearest to it, so trace one flank consistently, or use Alt to place points on the line's centre.
+- **Profiles** are not snapped but squared to the edge they cross, while *square new profiles to the edge they cross* is on (see *Line profiles*). The image's edge must reach the same threshold.
 
 *Show the edge map* (G) overlays the edge strength in green, which shows what the snapping sees.
 
@@ -274,7 +289,7 @@ Touch has no hover, so the previews that follow the cursor (snap, insert with Ct
   - *Exact*, which places or releases the next point exactly where the finger is, without snapping, and then lets go.
 - **Press and hold** a point for half a second, while a ring fills, to open its menu beside the finger:
   - a contour's vertex: *Delete vertex*, *Select in the vertex window*, *Insert a vertex after* (halfway to the next one);
-  - any measurement's point, a vertex included: *Delete* the measurement, *Rename…*, and for a profile *Show the plot*.
+  - any measurement's point, a vertex included: *Delete* the measurement, *Rename…*, and for a profile *Show the plot* and *Square to edge*.
 
   Held on empty image, nothing happens, and lifting the finger places nothing.
 - **The measurement list** takes a tap as a click. A tap on a row selects it alone, a tap on its box adds it to the selection or takes it out, and two taps on a row open its window. Its rows and boxes are larger in the touch layout.
@@ -304,7 +319,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | middle drag, Space+drag; drag with no tool | pan |
 | two fingers | pinch to zoom, move together to pan |
 | one finger | no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans |
-| press and hold a point (touch) | its menu: delete, select, insert after (a vertex); delete, rename (any measurement); show the plot (a profile) |
+| press and hold a point (touch) | its menu: delete, select, insert after (a vertex); delete, rename (any measurement); show the plot, square to edge (a profile) |
 | click, tap a row of the list | select that measurement alone; twice: a profile's plot, a contour's vertices |
 | its box, Ctrl+click | add it to the selection, or take it out |
 | Shift+click a row; Ctrl+A | select from the row clicked last; select all |
@@ -313,6 +328,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | S, G | snapping on or off; edge map on or off |
 | T | show or hide the vertex window of the selected contour |
 | P | show or hide the profile window; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
+| E | square the selected profile to the edge it crosses, whatever the angle; new profiles up to 15° off square are squared while the option under *Snapping* is on (Alt+click: as drawn; Ctrl+Z right after: back as drawn) |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements |
 | Delete | delete the selected vertices, else the selected measurements, contours included |
@@ -330,6 +346,7 @@ The costs, measured on the FEI test image of 3072 × 2188 pixels (6.29 Mpx above
 - **The edge map** takes 1.1 s with σ = 2 and no median, 2.1 s with the 3 × 3 median (the default), and 4.2 s with 5 × 5. It is computed only when snapping or the overlay needs it, and again only when σ or the median changes.
 - **A snap search** takes microseconds.
 - **A line profile** reads about 36 ns per value: 9 ms for 3001 samples along a band of 83 lines. A profile and its window are therefore computed again at every step of a drag.
+- **Squaring a profile** takes microseconds: a search along its line and one structure tensor of a few hundred pixels.
 - **Calibration and rotation changes**, panning and zooming cost one GPU-drawn frame.
 - **Memory**: about 180 MB for that image with the overlay shown.
 
@@ -342,14 +359,14 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `index.html` | the page: layout, panel, styles |
 | `js/metadata.js` | FEI and Zeiss metadata: pixel size, data bar, tilt, beam, detector |
 | `js/tiff.js` | TIFF decoding with UTIF.js into grey values and calibration; the Zeiss info zone, (Z1) in the header |
-| `js/edges.js` | edge strength, crests and snapping; derivations (E1)–(E8) in the header |
+| `js/edges.js` | edge strength, crests, snapping and the structure tensor; derivations (E1)–(E8) in the header |
 | `js/transform.js` | the affine map, measures, levelling, the arrow-key step; derivations (G1)–(G15) in the header |
 | `js/polygons.js` | the polygon, measurements and profile files (CSV) |
 | `js/session.js` | the session file (JSON) |
 | `js/gds.js` | the GDSII writer: records, units, eight-byte reals; derivations (S1)–(S2) in the header |
 | `js/vertices.js` | the vertex window's operations on a contour's vertex list |
 | `js/display.js` | the display: levels, brightness and contrast, the histogram's bins; derivations (D1)–(D4) in the header |
-| `js/profile.js` | line profiles: the band, the samples, the contour crossings; derivations (P1)–(P5) in the header |
+| `js/profile.js` | line profiles: the band, the samples, the contour crossings, squaring to an edge; derivations (P1)–(P11) in the header |
 | `js/app.js` | the user interface, mouse, pen and touch input; zooming about a point, (G16), in its comments |
 | `vendor/` | UTIF.js and pako (inflate), unmodified, with their licences |
 | `types/vendor.d.ts` | types of UTIF.js for the type check |
@@ -419,6 +436,12 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - The same profile with the image turned by 90°.
   - In a tilted, turned frame, every line of the band normal to the profile as seen and at its offset.
   - Contour crossings: a closed contour's closing side, a vertex on the line counted once, none along or beyond the line.
+  - Squaring:
+    - the edge's normal in a tilted, turned frame, on a step and a bright line, and a corner refused;
+    - the tensor of a noisy edge, on average, exact in a frame that stretches 3 times;
+    - the direction's scatter over noisy images, against one gradient and a sum of gradient vectors;
+    - the turn, which keeps the length, the crossing's place and the sense;
+    - a contour segment's normal.
 
 The decoding checks need SEM images of your own, which the repository does not hold. Name them on the command line:
 
@@ -448,6 +471,7 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - The band is averaged with equal weights.
   - The window shows the selected profile only.
   - Crossings are those of contours with the centre line; other measurements are not marked.
+  - Squaring turns a profile to one edge: the contour crossing nearest its middle, else the strongest edge. A profile meant to cross a feature at a set angle stays as drawn when it is more than 15° off square. One nearer to square, such as a horizontal profile across a sidewall steeper than 75°, is turned; Ctrl+Z gives it back as drawn, and Alt+click places it so.
 - **Tilt correction.**
   - It is exact only in the chosen plane.
   - It assumes an orthographic projection, which holds to a fraction of a pixel at usual magnifications (MATH.md, 1.2).

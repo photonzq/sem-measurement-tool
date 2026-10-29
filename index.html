@@ -55,6 +55,7 @@
   .list .item[aria-selected="true"] .box::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
                                                    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
   label { user-select: none; }
+  #panel section > label:has(> input[type=checkbox]) { display: block; width: fit-content; }   /* a switch: a line of its own */
   .note { color: var(--muted); white-space: pre-line; margin: 4px 0; }
   .note.warn { color: var(--warn); }
   #measurement-details { color: var(--text); }
@@ -103,7 +104,7 @@
   #vertex-table td input { width: 100%; font: inherit; text-align: right; padding: 0 2px; }
   #vertex-note { margin: 4px 8px 6px; }
   #profile-window { top: auto; right: auto; bottom: 12px; left: 12px; width: 560px; height: 330px; min-width: 300px; min-height: 220px; }
-  #profile-window .row { align-items: center; flex-wrap: nowrap; }
+  #profile-window .row { align-items: center; flex-wrap: wrap; }
   #profile-window .row input[type=number] { width: 96px; flex: 0 0 auto; }
   #profile-window .row button { flex: 0 0 auto; margin-left: auto; }
   #profile-window .row button + button { margin-left: 0; }
@@ -143,7 +144,7 @@
   body.touch #panel button, body.touch dialog button { min-height: 38px; }
   body.touch #panel input[type=number], body.touch #panel select, body.touch dialog input:not([type=checkbox]) { min-height: 34px; }
   body.touch #panel input[type=checkbox], body.touch dialog input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
-  body.touch #panel label:has(> input[type=checkbox]), body.touch dialog label:has(> input[type=checkbox]) { display: inline-block; padding: 6px 0; }
+  body.touch #panel label:has(> input[type=checkbox]), body.touch dialog label:has(> input[type=checkbox]) { display: block; padding: 6px 0; }
   body.touch #panel input[type=range] { height: 30px; }
   body.touch .list { height: 200px; }
   body.touch .list .swatch { width: 14px; height: 14px; }
@@ -205,6 +206,7 @@
         <span id="profile-width-unit">µm</span>
         <button type="button" id="profile-export" title="Save the profile's samples as a CSV file">Export CSV</button>
         <button type="button" id="profile-png" title="Save the plot as a PNG image">Export PNG</button>
+        <button type="button" id="profile-square" title="Turn the profile square to the edge it crosses (E)">&perp; Square</button>
       </div>
       <canvas id="profile-plot"></canvas>
       <div id="profile-readout" class="note"></div>
@@ -286,6 +288,7 @@
     <section>
       <h2>Snapping to edges</h2>
       <label><input type="checkbox" id="snap" checked> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
+      <label title="A new profile up to 15° off square turns, about the edge it crosses, to run square to it: to a traced contour it crosses, else to the image's edge (Alt+click: as drawn; Ctrl+Z right after: back as drawn; E squares it whatever the angle)"><input type="checkbox" id="square-profiles" checked> square new profiles to the edge they cross</label>
       <div class="grid">
         <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
         <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
@@ -393,8 +396,9 @@
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window (the selected contour)</td></tr>
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
+          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; new profiles up to 15&deg; off square are squared while the option under Snapping to edges is on (<kbd>Alt</kbd>+click: as drawn; <kbd>Ctrl</kbd>+<kbd>Z</kbd> right after: back as drawn)</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
-          <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot (a profile)</td></tr>
+          <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot or square to edge (a profile)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements</td></tr>
           <tr><td><kbd>Delete</kbd></td><td>delete the selected vertices, else the selected measurements, contours included</td></tr>

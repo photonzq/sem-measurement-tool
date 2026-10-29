@@ -28,7 +28,10 @@
 // 9. Line profiles (profile.js): samples along a ramp exact, missing outside the image and below
 //    the info bar, distances in micrometres (P2), (P4); the band a rectangle as seen in any frame,
 //    its mean and spread, unchanged by a rotation (P1), (P3); contour crossings (P5); the width
-//    handle; the profile file.
+//    handle; the profile file.  Squaring (P7)-(P11): the edge's normal from the structure tensor
+//    in a tilted, turned frame, on a step, a bright line and a corner; the tensor of a noisy edge,
+//    on average, exact in a frame that stretches 3 times; the direction's scatter over noisy
+//    images, against one gradient and a sum of gradient vectors; the turn; a segment's normal.
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -61,7 +64,7 @@ function loadApi() {
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
     reverseContour, selectionRange, findInfoZone, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness,
     sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
-    widthFromPoint, formatProfileFile, UTIF })`, context);
+    widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, UTIF })`, context);
 }
 
 const api = loadApi();
@@ -474,7 +477,7 @@ function checkSession() {
     image: IMAGE,
     frame: { pixelNm: [1.34896, 1.34896], tiltDeg: 51.996, correction: "cross-section", customFactor: 1, axisDeg: 0.5,
       rotationDeg: -1.25, originPx: [1536.5, 1024.25] },
-    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4 },
+    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4, squareProfiles: false },
     measurements: [
       { name: "rib", kind: "contour", color: 0, closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
       { name: "ruler 1", kind: "ruler", color: 1, points: [[1, 2], [3, 4]] },
@@ -488,6 +491,9 @@ function checkSession() {
   const text = api.formatSession(session, "2026-10-23T12:00:00.000Z");
   const back = api.parseSession(text);
   const ms = back.measurements;
+  const older = JSON.parse(text);
+  delete older.snap.square_profiles;
+  const squaredByDefault = api.parseSession(JSON.stringify(older)).snap.squareProfiles === true;
   check(JSON.stringify(back.frame) === JSON.stringify(session.frame) && JSON.stringify(back.snap) === JSON.stringify(session.snap)
     && ms.map((m) => m.kind).join() === "contour,ruler,contour,angle,line-angle,profile"
     && worstOf(ms[0].points[0], [933.7961, 853.6115]) === 0 && ms[2].name === 'slab "top", left' && ms[0].closed && !ms[2].closed
@@ -497,10 +503,11 @@ function checkSession() {
     && back.display.join() === "1520,61200.5"
     && api.parseSession(api.formatSession({ ...session, display: null, selected: -1 }, "x")).display === null
     && api.parseSession(api.formatSession({ ...session, selected: -1 }, "x")).selected === -1
-    && ms.map((m) => m.color).join() === "0,1,9,3,4,5",
-  "session round trip: frame, snap settings, the measurements in their order with contours among them (points to " +
-    "1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band width, colours (absent: the place in the " +
-    "list), the selected one (none: -1), display levels (absent: Auto)");
+    && ms.map((m) => m.color).join() === "0,1,9,3,4,5"
+    && text.includes('"square_profiles": false') && squaredByDefault,
+  "session round trip: frame, snap settings (squaring profiles: absent, on), the measurements in their order with " +
+    "contours among them (points to 1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band width, colours " +
+    "(absent: the place in the list), the selected one (none: -1), display levels (absent: Auto)");
   const good = JSON.parse(text);
   const bad = [
     "{ not json",
@@ -876,6 +883,180 @@ function checkProfileFile() {
     "mean, spread across the band (sqrt 6 over rows 9-11), count and position");
 }
 
+/** A square image whose value at stored u is f(q), q = V (u - c) its place in the view frame (G11), plus noise(). */
+function viewImage(size, c, frame, f, noise) {
+  const v = api.viewMatrix(frame);
+  const out = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const [qx, qy] = api.matApply(v, x - c[0], y - c[1]);
+      out[y * size + x] = f(qx, qy) + noise();
+    }
+  }
+  return out;
+}
+
+/** erf to 1.5e-7 (Abramowitz and Stegun 7.1.26). */
+function erf(x) {
+  const t = 1 / (1 + 0.3275911 * Math.abs(x));
+  const y = 1 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))))
+    * Math.exp(-x * x);
+  return x < 0 ? -y : y;
+}
+
+/** The angle between two lines, whatever their sense: 0 to 90 degrees, by atan2 to keep small angles exact (1.10). */
+function lineAngle(a, b) {
+  return Math.atan2(Math.abs(a[0] * b[1] - a[1] * b[0]), Math.abs(a[0] * b[0] + a[1] * b[1])) / DEG;
+}
+
+function checkEdgeNormal() {
+  // edges whose normal n makes 25 deg with x in the view of a tilted, turned frame of 2 x 3 nm pixels, the
+  // step 400 grey values over 1.5 view units, noise 20 per pixel; the tensor over rho = 4 px at a point on the edge
+  const [size, c] = [160, [80, 80]];
+  const n = [Math.cos(25 * DEG), Math.sin(25 * DEG)];
+  const across = (qx, qy) => qx * n[0] + qy * n[1];
+  const map = (f, seed) => {
+    const noise = gaussian(seed);
+    return new api.EdgeMap(viewImage(size, c, SLANTED, f, () => 20 * noise()), size, size, 2, 3);
+  };
+  const step = map((qx, qy) => 100 + 200 * (1 + Math.tanh(across(qx, qy) / 1.5)), 7);
+  const tensor = step.structureTensor(c[0], c[1], 4);
+  const found = api.edgeNormal(tensor, SLANTED);
+  // the stored grid's own normal, taken as a direction there, is not square in the view
+  const theta = 0.5 * Math.atan2(2 * tensor[1], tensor[0] - tensor[2]);
+  const naive = api.matApply(api.viewMatrix(SLANTED), Math.cos(theta), Math.sin(theta));
+  // a bright line: its two flanks have opposite gradients, which cancel in a sum of vectors but not of g g^T
+  const line = map((qx, qy) => 100 + 400 * Math.exp(-(across(qx, qy) ** 2) / 4.5), 8);
+  const onLine = api.edgeNormal(line.structureTensor(c[0], c[1], 4), SLANTED);
+  let [sx, sy, sm] = [0, 0, 0];
+  for (let y = c[1] - 12; y <= c[1] + 12; y++) {
+    for (let x = c[0] - 12; x <= c[0] + 12; x++) {
+      const weight = Math.exp(-((x - c[0]) ** 2 + (y - c[1]) ** 2) / 32);
+      const i = y * size + x;
+      sx += weight * line.gx[i];
+      sy += weight * line.gy[i];
+      sm += weight * Math.hypot(line.gx[i], line.gy[i]);
+    }
+  }
+  // a corner of two edges square to each other: no single direction
+  const corner = map((qx, qy) => 100 + 100 * (1 + Math.tanh(qx / 1.5)) * (1 + Math.tanh(qy / 1.5)), 9);
+  const atCorner = api.edgeNormal(corner.structureTensor(c[0], c[1], 4), SLANTED);
+  const [eStep, eNaive, eLine] = [lineAngle(found.normal, n), lineAngle(naive, n), lineAngle(onLine.normal, n)];
+  check(eStep < 1 && found.coherence > 0.9 && eNaive > 3 && eLine < 1.5 && onLine.coherence > 0.9
+    && Math.hypot(sx, sy) / sm < 0.2 && atCorner.coherence < 0.5,
+  `edge normal (P7)-(P9) in a tilted, turned frame of 2 x 3 nm pixels, noise 20 % of the step: a step within ` +
+    `${eStep.toFixed(2)} deg (coherence ${found.coherence.toFixed(3)}), where the stored grid's own normal is off by ` +
+    `${eNaive.toFixed(1)} deg; a bright line within ${eLine.toFixed(2)} deg (coherence ${onLine.coherence.toFixed(3)}), ` +
+    `its gradient vectors summing to ${(100 * Math.hypot(sx, sy) / sm).toFixed(1)} % of their lengths; a corner ` +
+    `refused, coherence ${atCorner.coherence.toFixed(3)}`);
+}
+
+function checkEdgeNormalExpected() {
+  // The tensor a straight edge gives on average: S e e^T for its stored gradient's direction e, plus N I from the
+  // noise, whose two components have one variance and no covariance (2.3).  Solved on the stored grid, the normal
+  // is the view's covector V^-T e exactly and the coherence (S / (S + 2N))^2, in a frame that stretches 3 times;
+  // in the view the noise would become N V^-T V^-1, and favour a direction.
+  const frame = { ...PLAIN, correction: "custom", customFactor: 3, axisDeg: 15, rotationDeg: 10 };
+  const vi = api.matInverse(api.viewMatrix(frame));
+  const [S, N] = [10, 1];
+  let [worstAngle, worstCoherence] = [0, 0];
+  for (let deg = 0; deg < 180; deg += 5) {
+    const e = [Math.cos(deg * DEG), Math.sin(deg * DEG)];
+    const found = api.edgeNormal([S * e[0] * e[0] + N, S * e[0] * e[1], S * e[1] * e[1] + N], frame);
+    worstAngle = Math.max(worstAngle, lineAngle(found.normal, [vi[0] * e[0] + vi[2] * e[1], vi[1] * e[0] + vi[3] * e[1]]));
+    worstCoherence = Math.max(worstCoherence, Math.abs(found.coherence - (S / (S + 2 * N)) ** 2));
+  }
+  check(worstAngle < 1e-9 && worstCoherence < 1e-12,
+    "the tensor of a straight edge with noise, on average (S e e^T + N I): its normal is the covector V^-T e to " +
+    `${worstAngle.toExponential(1)} deg and its coherence (S / (S + 2N))^2 in every direction, in a frame that ` +
+    "stretches 3 times (P7)-(P9)");
+}
+
+function checkEdgeNormalNoise() {
+  // 100 noisy images of each edge, of every direction, in the plain view (V = diag(1, -1)); sigma 2 without the
+  // median, as (E4) assumes; at the strongest point along a line square to the edge, as the app finds it: one
+  // gradient there (bilinear), the Gaussian-weighted sum of the gradient vectors over the tensor's window
+  // (rho = 2 sigma, out to 3 rho), and the tensor
+  const [size, rho] = [64, 4];
+  const u = random(31);
+  const noise = gaussian(32);
+  const rms = (a) => Math.sqrt(a.reduce((sum, x) => sum + x * x, 0) / a.length);
+  const scatter = (profile) => {
+    const [one, sum, tensor] = [[], [], []];
+    for (let k = 0; k < 100; k++) {
+      const psi = Math.PI * u();
+      const n = [Math.cos(psi), Math.sin(psi)];
+      const c = [size / 2 + u() - 0.5, size / 2 + u() - 0.5];
+      const edges = new api.EdgeMap(viewImage(size, c, PLAIN, (qx, qy) => profile(qx * n[0] + qy * n[1]), noise),
+        size, size, 2, 0);
+      let [best, p] = [-1, c];
+      for (let t = -20; t <= 20; t += 0.5) {
+        const q = [c[0] + t * n[0], c[1] - t * n[1]];          // V^-1 n: the line square to the edge
+        if (edges.sample(q[0], q[1]) > best) {
+          [best, p] = [edges.sample(q[0], q[1]), q];
+        }
+      }
+      const [x0, y0] = [Math.floor(p[0]), Math.floor(p[1])];
+      const [fx, fy] = [p[0] - x0, p[1] - y0];
+      const at = (a) => (1 - fy) * ((1 - fx) * a[y0 * size + x0] + fx * a[y0 * size + x0 + 1])
+        + fy * ((1 - fx) * a[(y0 + 1) * size + x0] + fx * a[(y0 + 1) * size + x0 + 1]);
+      one.push(lineAngle([at(edges.gx), -at(edges.gy)], n));    // the view's covector V^-T g
+      let [sx, sy] = [0, 0];
+      const reach = Math.ceil(3 * rho);
+      for (let y = Math.max(0, y0 - reach); y <= Math.min(size - 1, y0 + 1 + reach); y++) {
+        for (let x = Math.max(0, x0 - reach); x <= Math.min(size - 1, x0 + 1 + reach); x++) {
+          const weight = Math.exp(-((x - p[0]) ** 2 + (y - p[1]) ** 2) / (2 * rho * rho));
+          sx += weight * edges.gx[y * size + x];
+          sy -= weight * edges.gy[y * size + x];
+        }
+      }
+      sum.push(lineAngle([sx, sy], n));
+      tensor.push(lineAngle(api.edgeNormal(edges.structureTensor(p[0], p[1], rho), PLAIN).normal, n));
+    }
+    return [rms(one), rms(sum), rms(tensor)];
+  };
+  // a step of 2 noise units, blurred over b = 2 px: SNR 2 * 2 sigma^2 / sqrt(b^2 + sigma^2) = 5.66, 1 / SNR = 10.1 deg
+  const step = scatter((x) => 1 + erf(x / (2 * Math.SQRT2)));
+  // a bright line of 5 noise units and 0.7 px standard deviation: its two flanks lie within the window
+  const line = scatter((x) => 5 * Math.exp(-(x * x) / (2 * 0.49)));
+  const snr = (2 * 2 * 4) / Math.sqrt(8);
+  check(Math.abs(step[0] * DEG * snr - 1) < 0.2 && step[2] < 0.5 * step[0] && line[2] < 0.5 * line[1],
+    `the edge's direction over 100 noisy images (RMS): on a step at SNR ${snr.toFixed(2)} (E4), one gradient ` +
+    `${step[0].toFixed(2)} deg (1 / SNR: ${(1 / snr / DEG).toFixed(2)}), the sum of gradient vectors ` +
+    `${step[1].toFixed(2)}, the tensor ${step[2].toFixed(2)}; on a bright line of 0.7 px standard deviation, one gradient ` +
+    `${line[0].toFixed(2)} deg, the sum of gradient vectors ${line[1].toFixed(2)}, the tensor ${line[2].toFixed(2)}`);
+}
+
+function checkSquaredProfile() {
+  const v = api.viewMatrix(SLANTED);
+  const view = (p, q) => api.matApply(v, q[0] - p[0], q[1] - p[1]);
+  const points = [[10, 20], [70, 45]];
+  const pivot = [10 + 0.3 * 60, 20 + 0.3 * 25];
+  const n = [Math.cos(100 * DEG), Math.sin(100 * DEG)];
+  const r = api.squaredProfile(points, pivot, n, SLANTED);
+  const before = view(points[0], points[1]);
+  const after = view(r.points[0], r.points[1]);
+  const [l0, l1] = [Math.hypot(...before), Math.hypot(...after)];
+  const p = view(r.points[0], pivot);
+  const t = (p[0] * after[0] + p[1] * after[1]) / (l1 * l1);
+  const offLine = Math.abs(p[0] * after[1] - p[1] * after[0]) / l1;
+  const parallel = Math.abs(after[0] * n[1] - after[1] * n[0]) / l1;
+  const sense = before[0] * after[0] + before[1] * after[1] > 0;
+  check(Math.abs(l1 - l0) < 1e-9 * l0 && Math.abs(t - 0.3) < 1e-9 && offLine < 1e-9 && parallel < 1e-12 && sense
+    && Math.abs(lineAngle(before, after) - r.turnedDeg) < 1e-9,
+  `squared profile (P11): along the normal in the view, through the pivot, the same length in the view, the pivot ` +
+    `still 0.3 along it and the same sense; turned ${r.turnedDeg.toFixed(3)} deg, as measured`);
+  const [a, b] = [[12, 40], [55, 31]];
+  const sn = api.segmentNormal(a, b, SLANTED);
+  const e = view(a, b);
+  const square = Math.abs(sn[0] * e[0] + sn[1] * e[1]) / Math.hypot(...e);
+  const crossed = api.profileCrossings([[5, 10], [25, 10]], [{ closed: true, points: [[10, 5], [20, 5], [20, 15], [10, 15]] }]);
+  check(square < 1e-12 && Math.abs(Math.hypot(...sn) - 1) < 1e-12
+    && crossed.map((x) => `${x.segment}@${x.t}`).join(" ") === "3@0.25 1@0.75",
+  "a contour segment's normal (P10) is square to it in the view of a tilted, turned frame; crossings name the segment " +
+    "crossed (a square's closing side at 0.25, its right side at 0.75)");
+}
+
 const images = testImages(process.argv.slice(2));
 checkFei(images.feiFolder);
 checkZeiss(images.zeiss);
@@ -895,5 +1076,9 @@ checkProfileSampling();
 checkProfileBand();
 checkProfileCrossings();
 checkProfileFile();
+checkEdgeNormal();
+checkEdgeNormalExpected();
+checkEdgeNormalNoise();
+checkSquaredProfile();
 console.log(failures.length ? `FAIL: ${failures.length} check(s)` : "PASS");
 process.exit(failures.length ? 1 : 0);
