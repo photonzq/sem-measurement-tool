@@ -145,7 +145,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - *snap A, B to the steepest slope*, in the window and on from the start, lets a marker settle where the profile is steepest within 12 pixels of the plot. This is where an edge is, for an edge-to-edge distance.
     - The slope is that of the mean, smoothed from the edge map's σ up to 4 times it. The edge clicked is the one the finest of these scales finds; the coarser ones place it, and the one where it stands out of the noise best wins, as long as they find it where it was and no other edge is in their reach. A gradual edge in a noisy FIB image is thus placed nearly as well as a sharp one, and a weak edge is not given up for a stronger one nearby, nor merged with a step beside it.
     - Of two edges in reach, such as a bright line's flanks, the nearer is taken.
-    - A marker snaps only where the slope stands out of the noise by the edge map's *min. edge strength*, 3 times by default. The noise is measured near the click, leaving out stretches clipped to black or white, so a profile that runs mostly through a dark, quiet region does not lower the threshold for a noisier part.
+    - A marker snaps only where the slope stands out of the noise by more than the edge map's *min. edge strength*. As for a click on the image, the threshold rises with the search, so that a click on flat noise rarely snaps: about 4 times the noise at the default 3. The noise is measured near the click, leaving out stretches clipped to black or white and the edges there. A profile that runs mostly through a dark, quiet region thus does not lower the threshold for a noisier part, nor does a strong edge nearby raise it.
     - It also stays where it was put when the steepest point is poorly placed: when no scale places it better than 2 samples, or 2 pixels of the plot, about what a click is good to. A long ramp of nearly constant slope has no steepest point to snap to.
     - Alt places or lets go of one exactly. MATH.md 6.7 derives all this.
   - A marker is kept as a point of the image, and its place along the line is where it projects onto it. When the profile is moved, the markers therefore stay on their features of the image. After squaring, a marker on a straight edge lies on the edge where the turned profile crosses it.
@@ -415,7 +415,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `js/gds.js` | the GDSII writer: records, units, eight-byte reals; derivations (S1)–(S2) in the header |
 | `js/vertices.js` | the vertex window's operations on a contour's vertex list |
 | `js/display.js` | the display: levels, brightness and contrast, the histogram's bins; derivations (D1)–(D4) in the header |
-| `js/profile.js` | line profiles: the band, the samples, the contour crossings, squaring to an edge, markers; derivations (P1)–(P13) in the header |
+| `js/profile.js` | line profiles: the band, the samples, the contour crossings, squaring to an edge, markers; derivations (P1)–(P14) in the header |
 | `js/app.js` | the user interface, mouse, pen and touch input; zooming about a point, (G16), in its comments |
 | `vendor/` | UTIF.js and pako (inflate), unmodified, with their licences |
 | `types/vendor.d.ts` | types of UTIF.js for the type check |

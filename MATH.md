@@ -9,7 +9,7 @@ This document derives what the app computes from an image:
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
 - **Part 6:** line profiles: the band, the samples, the contours that cross the line, squaring a profile to the edge it crosses, and markers for a distance along it.
 
-Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P13) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
+Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
 
 ## Part 1. Geometry
 
@@ -1249,18 +1249,18 @@ The app therefore tries five scales, $\sigma_q = \sigma\,2^{q/2}$, $q = 0, \dots
 
 1. **The edge clicked** is found at the finest scale that has a candidate within the search window. A candidate is a sample where $d_i$ is
    - a peak: the largest within $2\sigma_q$, with a slope on either side (*Ends and gaps*, below);
-   - at least $k\,\hat\sigma_s$ (*When it snaps*);
+   - at least $c\,\hat\sigma_s$, with $c$ of (P14) (*When it snaps*);
    - at least half the largest $d_i$ in the window.
 
    Of the candidates, the one nearest the click is taken. A click beside one flank of a bright line thus takes that flank. The half-height rule keeps out the noise's small peaks on the shoulders of an edge's slope. The finest scale that finds an edge also tells it from its neighbours best.
 2. **Its extent** is the run of samples about its peak, of its sign, where $d_i$ stays within $3\hat\sigma_s$ of the peak's height. It is narrow for a peak far out of the noise, whose place is sure, and wide for one barely out of it, whose place is not.
 3. **Other edges**, at a scale, are maxima of $d_i$ outside the extent that are at least $k\,\hat\sigma_s$ high. Between them and the extent, $d_i$ must dip by at least $3\hat\sigma_s$, or change sign, or be missing. A maximum on the shoulder of the edge clicked has no such dip.
-4. **A coarser scale places the edge** when two things hold. Its highest peak within the extent (with one sample's margin) is a candidate. And no other edge, seen at this scale or at a finer one from the edge's own on, lies within $3\sigma_q$ of that peak: where the kernel, $K = \lceil 3\sigma_q\rceil$ samples long each way, would reach it.
+4. **A coarser scale places the edge** when two things hold. Its highest peak within the extent (with one sample's margin) is at least $k\,\hat\sigma_s$ high: nothing else is searched there. And no other edge, seen at this scale or at a finer one from the edge's own on, lies within $3\sigma_q$ of that peak: where the kernel, $K = \lceil 3\sigma_q\rceil$ samples long each way, would reach it.
 5. **Of the scales that place it**, the one where the peak stands highest above the noise, $d/\hat\sigma_s$, wins. This is the scale where the noise moves the peak least.
 
 The edge's identity thus comes from the finest scale that finds it, and its place from the most reliable scale that sees it alone. Taking the most reliable scale by itself fails in both of the ways above. In the tests' cases, it fails as follows:
 
-- **Merged steps.** Two rising steps of 40 grey levels, 10 or 14 samples apart, merge at $\sigma = 8$ into one peak between them, which then stands out best. Clicked on the first step, that rule put the marker about 5 or 7 samples off, in 200 of 200 and 199 of 200 noisy profiles. The rule above does so in 2 of 100, and in none.
+- **Merged steps.** Two rising steps of 40 grey levels, 10 or 14 samples apart, merge at $\sigma = 8$ into one peak between them, which then stands out best. Clicked on the first step, that rule put the marker about 5 or 7 samples off, in 200 of 200 and 199 of 200 noisy profiles. The rule above does so in none of 100; 3 and 1 of them stay where they are put.
 - **A stronger neighbour.** Take a sharp step of 20 and a gradual one of 60 (width 6) 24 samples on. At $\sigma = 8$ the sharp step falls below half the other, which is then the only candidate and the most reliable. A long profile on a narrow plot has a window of 24 or 60 samples. Clicked on the sharp step with such a window, that rule took the other step in 194 and 200 of 200 profiles; the rule above, in none.
 
 Choosing an edge's scale from the data is an old idea, and two published rules were tried against this one:
@@ -1274,7 +1274,7 @@ The rule above finds the edge as Elder and Zucker do, at the smallest scale that
 
 $$u^* = -\frac{\beta}{2\kappa} = \frac{a - c}{2\,(a - 2b + c)},$$
 
-held to $\pm\tfrac12$. The parabola only approximates the peak: for a Gaussian peak it is biased towards the nearest sample. For $\sigma_t = 2.5$ and a peak 0.3 samples from $i^*$, the vertex is at 0.292, 0.008 samples short; the nearly clean test measures 0.005.
+held to $\pm\tfrac12$. The parabola only approximates the peak: for a Gaussian peak it is biased towards the nearest sample. For $\sigma_t = 2.5$ and a peak 0.3 samples from $i^*$, the vertex is at 0.292, 0.008 samples short; the nearly clean test measures 0.001.
 
 **How well it is placed.** The vertex moves with the noise at the peak's two neighbours. Write $n_-$, $n_+$ for the noise in $a$ and $c$. At a symmetric peak $a - c = 0$, so to first order $u^*$ moves by $(n_- - n_+)/(2\,(a - 2b + c))$. Its standard deviation is
 
@@ -1282,13 +1282,15 @@ $$\delta u = \frac{\hat\sigma_\Delta}{2\,|d''|},$$
 
 where $\hat\sigma_\Delta$ is the noise of $s_{i+1} - s_{i-1}$ near the click, the scaled median absolute deviation as for $\hat\sigma_s$, and $d''$ is the peak's second derivative.
 
-The three samples' curvature $a - 2b + c$ is too noisy for $d''$. At the finest scale, a peak barely out of the noise has the sharp curvature of the noise that made it, and $\delta u$ came out small where the place was poor. $d''$ is therefore taken from the least-squares parabola through the $2h + 1$ samples about the peak, $h = \max(1, \operatorname{round}(\sigma_q/2))$. With $x = j - i^*$ and $\overline{x^2}$ the mean of $x^2$ over the window,
+The three samples' curvature $a - 2b + c$ is too noisy for $d''$. At the finest scale, a peak barely out of the noise has the sharp curvature of the noise that made it, and $\delta u$ came out small where the place was poor. A fixed window of a few samples fails in the same way on a flat top.
 
-$$d'' = 2\,\frac{\sum_x (x^2 - \overline{x^2})\,d_{i^*+x}}{\sum_x (x^2 - \overline{x^2})^2},$$
+$d''$ is therefore the second derivative of the least-squares parabola through the peak's own run. The run is the samples about the peak, of its sign, whose $d$ stays within $3\hat\sigma_s$ of the peak's height, and at least its two neighbours. A narrow peak far out of the noise has a short run. A flat top has a long one, which the parabola follows as flat, so that $d''$ is small and $\delta u$ large. With $x = i - i^*$, the parabola $y = b_0 + b_1 x + b_2 x^2$ solves the normal equations
 
-the odd terms dropping out of the symmetric window.
+$$\begin{pmatrix} S_0 & S_1 & S_2 \\ S_1 & S_2 & S_3 \\ S_2 & S_3 & S_4 \end{pmatrix}\begin{pmatrix} b_0 \\ b_1 \\ b_2 \end{pmatrix} = \begin{pmatrix} T_0 \\ T_1 \\ T_2 \end{pmatrix}, \qquad S_m = \sum_x x^m, \qquad T_m = \sum_x x^m\,d_{i^*+x},$$
 
-The error was compared with $\delta u$ on 300 noisy erf edges for each of seven cases: widths 1.5 to 15 samples, noise 2 to 20 % of the step. It was within $\delta u$ for 80 to 87 % of the edges in five of the cases, and for 71 and 68 % in the noisiest two: width 8 with noise of 20 %, and width 15 with 10 %. So $\delta u$ is an honest standard deviation, slightly cautious where the place is good.
+over the run. Cramer's rule gives $b_2$, and $d'' = 2b_2$.
+
+The error was compared with $\delta u$ on 300 noisy erf edges for each of seven cases: widths 1.5 to 15 samples, noise 2 to 20 % of the step. It was within $\delta u$ for 60 to 74 % of the edges, and within $2\delta u$ for 92 to 94 %, as a standard deviation should be (68 and 95 %). The gate holds back the badly placed: in the two gradual cases with noise of 5 and 10 %, the edges it held back were 5.6 and 3.9 samples off in rms, against 0.9 and 1.5 for all.
 
 A marker snaps only when the winning scale places it to $\delta u \le \max(2, 2N/W)$ samples: 2 samples, or 2 pixels of the plot, whichever is more, about what a click is good to. Otherwise the slope places it no better than the click, and it stays where it was put. A ramp of nearly constant slope has no steepest point: its peak of $d$ is flat, $d''$ is near 0 and $\delta u$ is large.
 
@@ -1305,7 +1307,15 @@ Both are taken near the click: over the slopes within $\max(60, 4R, 15\sigma_q)$
 - **Clipped stretches.** A stretch clipped to black or white has slopes of exactly 0. On a profile more than half clipped they make $\hat\sigma_s = 0$, any peak a candidate, and its height over the noise infinite. On a profile 62 % at 0, all 26 clicks on the noise of the rest snapped. Such stretches tell nothing of the noise, and are left out; now none of the 26 snaps.
 - **Noise that changes along the profile.** In secondary-electron images the noise grows with the signal. A profile mostly through a dark, quiet region gets $\hat\sigma_s$ from that region, too low for a brighter part. On a profile 62 % with a quarter of the rest's noise, all 26 clicks on the noise of the rest snapped. Near the click, none does.
 
-A candidate must stand $k\,\hat\sigma_s$ out, $k$ being the edge map's *min. edge strength*, 3 by default. In noise alone a sample exceeds $3\hat\sigma_s$ with probability 0.27 %. A window, though, holds about $2R/\sigma_q$ independent slopes at each of five scales, so a click on flat noise still finds a candidate now and then. Over three profiles of pure noise, 32 of 237 clicks snapped (13 %). The same rule with the noise taken over the whole profile, a steadier estimate, let 17 snap: twice as many is the price of measuring it near the click. The tests count 5 of 79. Alt places a marker exactly. With no candidate at any scale, the marker stays where it was put.
+**Edges in the span.** A strong edge near the click fills a good part of the span with large slopes, and a median absolute deviation gives way to them well before they are half the samples. Beside a gradual step of 60 grey levels, a sharp step of 20 read 3.1 to 4.0 times the noise so measured, where the noise of the background makes it 8. So the noise is measured again, up to three times, without the slopes that stand 4 noise widths out of the last estimate and those within $2\sigma_q$ of them, until no more stand out. The threshold of this clipping is 4, not 3. Noise alone reaches 4 so rarely that its estimate stays: the second is 0.993 to 0.998 of the first on average, and the same in 19 windows of 20. A threshold of 3 cuts the noise's own excursions out instead. That lowers the estimate by 10 to 23 % in one window of 20, just where an excursion stands, and makes it a candidate.
+
+**The threshold of a search (P14).** In noise alone a slope exceeds $k$ standard deviations with the probability $\operatorname{erfc}(k/\sqrt2)$, 0.27 % for the default $k = 3$. A click, though, searches its window at five scales: about $(2R+1)/\sigma_q$ independent slopes at each, the slope being correlated over about $\sigma_q$. With $k$ alone, 32 of 237 clicks on pure noise snapped with a window of 12 samples, and 90 of 237 with a window of 60. As for the image (E9), the threshold is raised until the search as a whole is fooled about as rarely as one sample at $k$. For large $c$, $\operatorname{erfc}(c/\sqrt2) \approx \sqrt{2/\pi}\,e^{-c^2/2}/c$, so with
+
+$$c = \sqrt{k^2 + 2\ln N}, \qquad N = \max\Big(1, \sum_q \frac{2R+1}{\sigma_q}\Big) \qquad \text{(P14)}$$
+
+the chance is $N\operatorname{erfc}(c/\sqrt2) \approx N\sqrt{2/\pi}\,e^{-k^2/2}/(Nc) = (k/c)\operatorname{erfc}(k/\sqrt2)$: a little less than one sample's at $k$. The sum runs over the scales that have a noise level. With σ = 2 and $k = 3$, $c$ is 3.6 for a window of 2 samples, 3.9 for 8, 4.0 for 12 and 4.4 for 68. It applies to finding the edge clicked. Once that is found, the coarser scales place it with peaks $k\,\hat\sigma_s$ high, within its extent, where nothing else is searched.
+
+$N$ was measured as for (E9). On pure noise, the share of clicks whose best candidate stands $m$ noise widths out was fitted to $1 - e^{-N\operatorname{erfc}(m/\sqrt2)}$, for σ of 1 to 4 and windows of 2 to 64 samples. The fitted $N$ is 0.76 to 2.09 times the sum above, which moves $c$ by less than 0.2. Now 3 of the 237 clicks snap with a window of 12 (1.3 %), and none with a window of 60; the tests count none of 79 with either. At the small window that is still about 5 times the aim: the noise measured near the click varies from window to window, which the Gaussian tail does not count. Alt places a marker exactly. With no candidate at any scale, the marker stays where it was put.
 
 Why not the edge map's own rule, $k$ times the median strength (2.3)? In two dimensions the strength of noise, $|\nabla|$, is Rayleigh distributed with the median $1.18\,\sigma$, so $3\times$ median is $3.5\,\sigma$. In one dimension $|s|$ is half normal with the median $0.67\,\sigma_s$, and $3\times$ median would be only $2.0\,\sigma_s$. That is exceeded by 4.3 % of the samples, and in noise alone most windows would snap. The scaled deviation gives $k$ the same meaning in one dimension: so many standard deviations of the noise.
 
@@ -1316,29 +1326,31 @@ Why not the edge map's own rule, $k$ times the median strength (2.3)? In two dim
 - An edge whose profile is not symmetric is placed at its steepest point, at the scale chosen. That differs from a threshold crossing, for instance half way between the levels, by an amount that depends on the shape and the scale. An edge with a bright bloom on one side, as SE edges often have, is an example. Its peak moves with the scale, and coarser scales that find it outside its extent do not place it.
 - Of two edges within the window, the nearer is taken, provided it reaches half the height of the stronger at the finest scale that finds one.
 - The band averages the edge across its width, smeared when the profile is off square (P6). Square it first (6.6).
-- Sometimes the noise hides an edge at the finest scale but leaves a peak of its own beside the click. The edge clicked is then that peak, and a coarser scale that finds the real edge outside its extent does not place it. In the tests, 2 of 40 gradual edges, with noise of 10 % of the step, were placed more than 3 samples off, the worse 5.8.
-- Two steps of one sign 10 samples apart, with noise of 15 % of each, are barely told apart at the finest scale, and 2 of 100 still merged.
+- Sometimes the noise hides an edge at the finest scale but leaves a peak of its own beside the click. The edge clicked is then that peak, and a coarser scale that finds the real edge outside its extent does not place it. In the tests, 1 of 40 gradual edges, with noise of 10 % of the step, was placed more than 3 samples off, at 7.0; over 200 such edges, 4 of the 194 placed.
+- Two steps of one sign 10 samples apart, with noise of 15 % of each, are barely told apart at the finest scale. None of 100 clicks merged them, and 3 stayed where they were put.
+- On a ramp of constant slope 60 samples long, 1 click in 10 snaps anyway, up to 12 samples from its middle. At a fine scale its plateau shows a peak of its noise, curved enough to look well placed.
+- With a window of 12 samples, 1.3 % of clicks on pure noise still snap (*The threshold of a search*).
 - A profile without any noise has no noise to measure a slope against, and its markers do not snap. The tests' "clean" profiles carry noise of 0.05 % of their step.
 
 **Tests.** The tests check that:
 
 - a point 7 view units off the line, in the tests' tilted, turned frame, is placed where it projects, at 0.37 and 0.9 along the line, and points beyond the ends are held to 0 and 1;
 - the mean between samples is linear, and missing next to a missing sample;
-- (P13) finds a sharp erf edge at 40.3 from 7 samples before and after it: 0.005 samples off with noise of 0.05 % of the step, 0.014 and 0.028 with noise of 2 %;
-- over 40 noisy profiles, it places an edge of width 8, with noise of 10 % of the step, in 33, 0.62 samples off at the median, at the scale 8; the other 7 stay;
+- (P13) finds a sharp erf edge at 40.3 from 7 samples before and after it: 0.001 samples off with noise of 0.05 % of the step, 0.05 with noise of 2 %;
+- over 40 noisy profiles, it places an edge of width 8, with noise of 10 % of the step, in 39, 0.63 samples off at the median, at the scale 8; the other one stays;
 - it takes a bright line's nearer flank from either side, at $100 \mp \sqrt{13}$ for a line of standard deviation 3 smoothed at 2; in 200 clicks on 100 noisy lines it is at most 0.35 samples off;
-- it places the two edges of a ridge 20 samples wide 0.19 and 0.02 samples off;
-- of two rising steps 10, 14 or 18 samples apart, it takes the one clicked, in all but 2, 0 and 0 of 100 noisy profiles;
+- it places the two edges of a ridge 20 samples wide 0.19 and 0.21 samples off;
+- of two rising steps 10, 14 or 18 samples apart, it takes the one clicked, never more than 2 samples off, in 100 noisy profiles each; 3, 1 and 1 stay;
 - of a weak sharp step with a strong gradual one 24 samples on, it takes the sharp one, with windows of 12, 24 and 60 samples;
 - a marker stays by a step 3 samples from the start and by one beside missing samples, while one 20 samples from the start is placed;
-- on profiles 62 % clipped or quieter, clicks on the rest's noise stay; on ramps of constant slope, 2 of 50 clicks snap;
-- in noise alone 5 of 79 windows snap, and no slope is taken across a missing value;
+- on profiles 62 % clipped or quieter, clicks on the rest's noise stay; on ramps of constant slope, 5 of 50 clicks snap;
+- in noise alone none of 79 windows snaps, with a window of 12 samples or of 60 (P14), and no slope is taken across a missing value;
 - the session keeps the markers to $10^{-4}$ px and refuses a third, and the profile file's header gives each marker's distance and mean and the distance between them.
 
 On the FIB test image, take the session example's profile with a band width of 5. Down through the top of the rib, the mean falls by about 9000 grey levels over some 50 samples, at a nearly constant slope:
 
 - **Band 5.** Measured near the click, that slope stands 2.2 to 2.7 times the noise out at $\sigma$ = 2 to 5.7. At $\sigma$ = 8 it reaches 3.2 only at the window's edge, where it is no peak. Markers clicked at 103.5, 109 or 112 find no candidate and stay where they are put.
-- **Band 40.** The noise falls, and clicked at 112 the slope stands 3.3 to 3.6 times it out at $\sigma$ = 4 to 8: a candidate. Its peak, though, is placed only to 4.9 samples at best, no better than the click, and the marker stays there too.
+- **Band 40.** The noise falls, and clicked at 112 the slope stands 3.3 to 3.6 times it out at $\sigma$ = 4 to 8. That is short of the 3.9 that the search asks for in this window (P14), and the marker stays where it is put. With $k = 3$ alone it would be a candidate, but its peak would be placed only to about 8 samples at best, no better than the click.
 
 Where the profile crosses the slab top's contour, no edge marks the line, and a marker clicked there stays as well.
 

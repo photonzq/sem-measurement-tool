@@ -1346,9 +1346,9 @@ function offBy(r, x) {
  * Snapping markers (P13), the edge map's sigma of 2 samples, 3 noise, a window of 12 samples, a tolerance of 2: a sharp
  * edge found from either side, nearly clean and noisy; a gradual noisy edge, over 40 noisy profiles, at the scale of
  * its width, and left where it was put when no scale places it within 2 samples; a bright line's nearer flank from
- * either side; the two edges of a ridge 20 samples wide, unpulled by each other; rarely a slope in noise alone; none
- * across a missing value.  A profile without any noise has none to measure a slope against: the "clean" ones carry
- * 0.05 % of their step.
+ * either side; the two edges of a ridge 20 samples wide, unpulled by each other; hardly ever a slope in noise alone,
+ * with a window of 12 or of 60 samples, the threshold rising with the search (P14); none across a missing value.  A
+ * profile without any noise has none to measure a slope against: the "clean" ones carry 0.05 % of their step.
  */
 function checkMarkerSnapping() {
   const noise = gaussian(77);
@@ -1368,6 +1368,7 @@ function checkMarkerSnapping() {
   const ridgeErrors = [offBy(snapMarker(ridge, 97), 100), offBy(snapMarker(ridge, 123), 120)];
   const flat = Float64Array.from({ length: 2000 }, () => 100 + 2 * noise());
   const falseSnaps = Array.from({ length: 79 }, (_, j) => snapMarker(flat, 25 + 25 * j)).filter((r) => r !== null).length;
+  const wideSnaps = Array.from({ length: 79 }, (_, j) => snapMarker(flat, 25 + 25 * j, 60)).filter((r) => r !== null).length;
   const gap = Float64Array.from(clean);
   gap[38] = Number.NaN;
   const missing = snapMarker(gap, 40, 3);
@@ -1378,15 +1379,15 @@ function checkMarkerSnapping() {
   const middle = gradualErrors[gradualErrors.length >> 1];
   const wide = gradualErrors.filter((e) => e > 3).length;   // a noise peak beside the click taken for the edge: rare
   check(sharp[0] < 0.02 && sharp[1] < 0.2 && sharp[2] < 0.2 && gradual.length >= 30 && middle < 1 && wide <= 2
-    && scales[scales.length >> 1] >= 4 && flanksRight && Math.max(...ridgeErrors) < 0.6 && falseSnaps <= 10
-    && missing === null,
+    && scales[scales.length >> 1] >= 4 && flanksRight && Math.max(...ridgeErrors) < 0.6 && falseSnaps <= 2
+    && wideSnaps <= 2 && missing === null,
   `snapping markers (P13): a sharp edge at 40.3 found from 7 samples before and after, ${sharp.map((e) => e.toFixed(3))
     .join(", ")} samples off (nearly clean, noisy, noisy); a gradual edge of width 8 with noise of 10 % of the step, ` +
     `placed in ${gradual.length} of 40 profiles, ${middle.toFixed(2)} samples off at the median, ${wide} more than 3 ` +
     `off (at worst ${gradualErrors[gradualErrors.length - 1].toFixed(2)}), at the median scale ${scales[scales.length >> 1]
       .toFixed(2)}; a bright line's flanks, the nearer from either side, at ${flanks.map((f) => f.toFixed(2)).join(", ")}; ` +
     `a ridge 20 wide, its edges ${ridgeErrors.map((e) => e.toFixed(2)).join(" and ")} samples off; in noise alone ` +
-    `${falseSnaps} of 79 windows snap; none across a missing value`);
+    `${falseSnaps} of 79 windows of 12 snap, ${wideSnaps} of 79 of 60; none across a missing value`);
 }
 
 /**
@@ -1412,13 +1413,15 @@ function checkMarkerNeighbours() {
   const placed = (errors) => errors.filter((e) => e !== Infinity);
   // steps 10 apart with noise of 15 % of each are barely told apart at the finest scale: a rare one merges
   const merged = stairs.map((e) => placed(e).filter((v) => v > 2).length);
-  check(merged[0] <= 2 && merged[1] === 0 && merged[2] === 0 && stairs.every((e) => stayed(e) <= 2)
-    && taken.every((e) => worst(placed(e)) <= 2 && stayed(e) === 0) && worst(placed(line)) <= 2 && stayed(line) === 0,
+  // staying where it was put is no error, only a little lost; a few do where the noise leaves the place unsure
+  check(merged[0] <= 2 && merged[1] === 0 && merged[2] === 0 && stairs.every((e) => stayed(e) <= 5)
+    && taken.every((e) => worst(placed(e)) <= 2 && stayed(e) <= 5) && worst(placed(line)) <= 2 && stayed(line) === 0,
   `snapping markers beside other edges (P13), ${runs} noisy profiles each: two rising steps 10, 14 and 18 apart, the ` +
     `first clicked, ${merged.join(", ")} more than 2 samples off (${stairs.map(stayed).join(", ")} stay; at ` +
     `separation 14 and 18 at worst ${worst(placed(stairs[1])).toFixed(2)} and ${worst(placed(stairs[2])).toFixed(2)}); ` +
     `a weak sharp step with a strong gradual one 24 on, windows 12, 24 and 60, ${taken.map((e) =>
-      worst(placed(e)).toFixed(2)).join(", ")} off at worst; a noisy bright line's nearer flank, ` +
+      worst(placed(e)).toFixed(2)).join(", ")} off at worst (${taken.map(stayed).join(", ")} stay); a noisy bright line's ` +
+    `nearer flank, ` +
     `${worst(placed(line)).toFixed(2)} off at worst of ${line.length}`);
 }
 
@@ -1427,7 +1430,7 @@ function checkMarkerNeighbours() {
  * samples, is where the slopes stop, not a peak, and the marker stays; an edge clear of them but within the coarsest
  * K is placed; a profile mostly clipped (exactly constant) or mostly quieter does not lower the noise of the rest,
  * where clicks stay as on noise alone; a ramp of constant slope 60 samples long has no steepest point, and most
- * clicks there stay.
+ * clicks there stay (at a fine scale its plateau can show a peak of its noise as well placed: 1 in 10 snap).
  */
 function checkMarkerDataEnds() {
   const nearStart = snapMarker(erfSteps(200, [[3, 40, 1]], 2, gaussian(5)), 5);
@@ -1447,7 +1450,7 @@ function checkMarkerDataEnds() {
     return snapMarker(mean, 150);
   }).filter((r) => r !== null).length;
   check(nearStart === null && nearGap === null && clear !== null && Math.abs(clear.at - 20) < 0.2 && clipped <= 1
-    && quieter <= 1 && ramps <= 5,
+    && quieter <= 1 && ramps <= 6,
   `snapping markers where the data end (P13): a step 3 samples from the start, clicked at 5, ${nearStart === null
     ? "stays" : `to ${nearStart.at.toFixed(2)}`}; one beside 57 missing samples ${nearGap === null ? "stays" : "moves"}; one 20 ` +
     `from the start, within the coarsest K, ${clear === null ? "stays" : `at ${clear.at.toFixed(2)}`}; 26 clicks on the ` +
