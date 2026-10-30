@@ -61,10 +61,12 @@
  * line in the view frame, as in (P11), held to [0, 1] (P12), so that it stays on its image point when
  * the line moves.  The distance between two markers is |t_B - t_A| |A d|.  Snapped, a marker settles
  * where the mean's slope is steepest nearby (P13): the mean filtered by the derivative of a Gaussian,
- * at the scale, from the edge map's sigma to 4 times it, where the steepest point stands out of the
- * noise best without a neighbouring one in reach, and only where it stands min_contrast times the
- * noise out of the median slope.  The samples being about a stored pixel apart (P2), sigma in
- * samples is about sigma in stored pixels.
+ * at scales from the edge map's sigma to 4 times it, against the slope's noise measured near the
+ * click.  The edge clicked is the one the finest scale finds; coarser scales place it only while they
+ * find it where it was and reach no other edge, and the one where it stands out of the noise best
+ * wins.  A marker stays where it was put when no slope stands min_contrast times the noise out, or
+ * when the peak is placed no better than the click.  The samples being about a stored pixel apart
+ * (P2), sigma in samples is about sigma in stored pixels.
  */
 
 /**
@@ -405,8 +407,24 @@ function profileValueAt(profile, t) {
   return f <= 0 ? m[i] : f >= 1 ? m[i + 1] : m[i] + f * (m[i + 1] - m[i]);
 }
 
+const SLOPE_NOISE_SPAN = 60;      // (P13) a slope's noise is measured over at least this many samples each side of a click
+const SLOPE_NOISE_SAMPLES = 20;   // (P13) a scale with fewer samples to measure it on is not used
+const SAME_EDGE = 3;              // (P13) noise widths: so little below a peak, or so shallow a dip, is still that peak
+
 /**
- * @param {Float64Array} values   finite, at least one
+ * @typedef {Object} SlopeScale   (P13) the slope of a profile's mean at one scale, near a click
+ * @property {number} scale         sigma_q, samples
+ * @property {number} k             K = ceil 3 sigma_q: no slope within K samples of an end or a missing value
+ * @property {Float64Array} slope   s_i, NaN where missing
+ * @property {number} trend         the median slope near the click
+ * @property {number} noise         the slope's noise near the click: the scaled median absolute deviation
+ * @property {number} noiseStep     the same of s_{i+1} - s_{i-1}, the noise that moves a peak
+ * @property {Float64Array} d       |s_i - trend|, NaN where the slope is missing
+ * @property {number} reach         round(2 sigma_q), at least 1: a peak is the largest within it
+ */
+
+/**
+ * @param {ArrayLike<number>} values   finite, at least one
  * @returns {number} the median
  */
 function medianOf(values) {
@@ -416,14 +434,21 @@ function medianOf(values) {
 }
 
 /**
+ * @param {Float64Array} values
+ * @param {number} i
+ * @returns {number} values[i], NaN outside the array
+ */
+function valueAt(values, i) {
+  return i >= 0 && i < values.length ? values[i] : Number.NaN;
+}
+
+/**
  * (P13): the slope s_i of the mean at the scale ``sigma`` (samples): the mean filtered by the
  * derivative of a Gaussian, weights j G_j / sum j^2 G_j (j = -K ... K, K = ceil 3 sigma), which
  * gives a ramp's slope per sample exactly; NaN within K samples of an end or of a missing value.
- * With its median, the trend, and its noise: the median absolute deviation from the trend, scaled
- * by 1.4826 to a standard deviation.
  * @param {Float64Array} mean
  * @param {number} sigma
- * @returns {{slope: Float64Array, k: number, trend: number, noise: number}}
+ * @returns {{slope: Float64Array, k: number}}
  */
 function slopeAtScale(mean, sigma) {
   const n = mean.length;
@@ -443,97 +468,281 @@ function slopeAtScale(mean, sigma) {
     }
     slope[i] = s / norm;                             // NaN when a value is missing
   }
-  const finite = slope.filter(Number.isFinite);
-  const trend = finite.length > 0 ? medianOf(finite) : Number.NaN;
-  const noise = finite.length > 0 ? 1.4826 * medianOf(finite.map((s) => Math.abs(s - trend))) : Number.NaN;
-  return { slope, k, trend, noise };
+  return { slope, k };
+}
+
+/**
+ * (P13): the slope's level near a click, over the samples within ``span`` of ``at``.  Samples whose
+ * kernel lies wholly on a stretch where the mean is exactly constant (clipped, or without noise) are
+ * left out: they tell nothing of the noise.  Of the rest: the median, the trend; the median absolute
+ * deviation from it scaled by 1.4826 to a standard deviation, the noise; and the same of the
+ * differences s_{i+1} - s_{i-1}, the noise that moves a peak.  null with fewer than
+ * SLOPE_NOISE_SAMPLES samples, or no noise.
+ * @param {Float64Array} slope
+ * @param {number} k
+ * @param {Int32Array} flatUntil   for each i, the last index of the run of equal means from i on
+ * @param {number} at
+ * @param {number} span
+ * @returns {{trend: number, noise: number, noiseStep: number}|null}
+ */
+function noiseNear(slope, k, flatUntil, at, span) {
+  /** @type {number[]} */
+  const values = [];
+  /** @type {number[]} */
+  const steps = [];
+  for (let i = Math.max(k, Math.ceil(at - span)); i <= Math.min(slope.length - k - 1, Math.floor(at + span)); i++) {
+    if (Number.isFinite(slope[i]) && flatUntil[i - k] < i + k) {
+      values.push(slope[i]);
+      if (Number.isFinite(slope[i - 1]) && Number.isFinite(slope[i + 1])) {
+        steps.push(slope[i + 1] - slope[i - 1]);
+      }
+    }
+  }
+  if (values.length < SLOPE_NOISE_SAMPLES) {
+    return null;
+  }
+  const trend = medianOf(values);
+  const noise = 1.4826 * medianOf(values.map((s) => Math.abs(s - trend)));
+  const middle = steps.length > 0 ? medianOf(steps) : 0;
+  const noiseStep = steps.length > 0 ? 1.4826 * medianOf(steps.map((s) => Math.abs(s - middle))) : Number.NaN;
+  return noise > 0 ? { trend, noise, noiseStep } : null;
+}
+
+/**
+ * (P13): the slopes at the scales sigma 2^(q/2), q = 0 ... 4, each with its level near the click
+ * (null for a scale without one), until the kernel is longer than the profile.
+ * @param {Float64Array} mean
+ * @param {number} at
+ * @param {number} radius
+ * @param {number} sigma
+ * @returns {Array<SlopeScale|null>}
+ */
+function scaleLadder(mean, at, radius, sigma) {
+  const n = mean.length;
+  const flatUntil = new Int32Array(n);
+  for (let i = n - 1; i >= 0; i--) {
+    flatUntil[i] = i < n - 1 && mean[i] === mean[i + 1] ? flatUntil[i + 1] : i;
+  }
+  /** @type {Array<SlopeScale|null>} */
+  const ladder = [];
+  for (let q = 0; q <= 4; q++) {
+    const scale = sigma * 2 ** (q / 2);
+    const { slope, k } = slopeAtScale(mean, scale);
+    if (2 * k + 1 > n) {
+      break;
+    }
+    const level = noiseNear(slope, k, flatUntil, at, Math.max(SLOPE_NOISE_SPAN, 4 * radius, 15 * scale));
+    ladder.push(level === null ? null : {
+      scale, k, slope, ...level, d: slope.map((s) => Math.abs(s - level.trend)), reach: Math.max(1, Math.round(2 * scale)),
+    });
+  }
+  return ladder;
+}
+
+/**
+ * (P13): whether d_i is a peak: the largest within 2 sigma, with a slope on either side.  The first
+ * sample next to a missing slope, at an end or a gap, is where the slopes stop, not a peak.
+ * @param {SlopeScale} c
+ * @param {number} i
+ * @returns {boolean}
+ */
+function isPeak(c, i) {
+  const d = c.d;
+  if (!(Number.isFinite(valueAt(d, i - 1)) && Number.isFinite(valueAt(d, i + 1)))) {
+    return false;
+  }
+  for (let j = Math.max(0, i - c.reach); j <= Math.min(d.length - 1, i + c.reach); j++) {
+    if (d[j] > d[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * (P13): the edge clicked: at the finest scale that has one within ``radius`` of ``at``, the
+ * candidate nearest it.  A candidate is a peak of d, ``minContrast`` times the noise high and half
+ * as high as the window's highest.  null when no scale has one.
+ * @param {Array<SlopeScale|null>} ladder
+ * @param {number} at
+ * @param {number} radius
+ * @param {number} minContrast
+ * @returns {{s: number, pick: number}|null}   s: the scale's place in the ladder; pick: the sample
+ */
+function clickedEdge(ladder, at, radius, minContrast) {
+  for (let s = 0; s < ladder.length; s++) {
+    const c = ladder[s];
+    if (c === null) {
+      continue;
+    }
+    const lo = Math.max(c.k, Math.floor(at - radius));
+    const hi = Math.min(c.d.length - c.k - 1, Math.ceil(at + radius));
+    let highest = 0;
+    for (let i = lo; i <= hi; i++) {
+      highest = c.d[i] > highest ? c.d[i] : highest;
+    }
+    let pick = -1;
+    for (let i = lo; i <= hi; i++) {
+      const strong = c.d[i] >= minContrast * c.noise && c.d[i] >= 0.5 * highest && isPeak(c, i);
+      if (strong && (pick < 0 || Math.abs(i - at) < Math.abs(pick - at))) {
+        pick = i;
+      }
+    }
+    if (pick >= 0) {
+      return { s, pick };
+    }
+  }
+  return null;
+}
+
+/**
+ * (P13): the extent of the edge clicked: the samples about its peak, of its sign, whose d stays within
+ * SAME_EDGE noise widths of the peak's.  Narrow for a peak far out of the noise, wide for one barely
+ * out of it, as the place of the peak is sure or not.
+ * @param {SlopeScale} c
+ * @param {number} pick
+ * @returns {[number, number]}
+ */
+function edgeExtent(c, pick) {
+  const floor = c.d[pick] - SAME_EDGE * c.noise;
+  const sign = Math.sign(c.slope[pick] - c.trend);
+  /** @param {number} i @returns {boolean} */
+  const same = (i) => valueAt(c.d, i) >= floor && Math.sign(c.slope[i] - c.trend) === sign;
+  let [e0, e1] = [pick, pick];
+  while (same(e0 - 1)) {
+    e0--;
+  }
+  while (same(e1 + 1)) {
+    e1++;
+  }
+  return [e0, e1];
+}
+
+/**
+ * (P13): the other edges at a scale: maxima of d outside the extent, ``minContrast`` times the noise
+ * high, with a dip of SAME_EDGE noise widths between them and the extent (a missing slope counts as
+ * one).  A maximum on the shoulder of the edge clicked has no such dip.
+ * @param {SlopeScale} c
+ * @param {[number, number]} extent
+ * @param {number} minContrast
+ * @returns {number[]}
+ */
+function otherEdges(c, extent, minContrast) {
+  const d = c.d;
+  /** @type {number[]} */
+  const out = [];
+  for (const [from, step] of [[extent[0] - 1, -1], [extent[1] + 1, 1]]) {
+    let low = Infinity;
+    for (let j = from; j >= 0 && j < d.length; j += step) {
+      low = Number.isFinite(d[j]) ? Math.min(low, d[j]) : 0;
+      const maximum = d[j] >= valueAt(d, j - 1) && d[j] >= valueAt(d, j + 1);
+      if (maximum && d[j] >= minContrast * c.noise && d[j] - low >= SAME_EDGE * c.noise) {
+        out.push(j);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * (P13): the second derivative of d at i from the least-squares parabola through i - h ... i + h.
+ * With x = j - i and the mean m2 of x^2 over the window, y = b + beta x + kappa x^2 has kappa =
+ * sum (x^2 - m2) y / sum (x^2 - m2)^2 (the odd terms drop out of a symmetric window), and the
+ * second derivative is 2 kappa; NaN when a value is missing.
+ * @param {Float64Array} d
+ * @param {number} i
+ * @param {number} h
+ * @returns {number}
+ */
+function fittedCurvature(d, i, h) {
+  let m2 = 0;
+  for (let x = -h; x <= h; x++) {
+    m2 += (x * x) / (2 * h + 1);
+  }
+  let num = 0;
+  let den = 0;
+  for (let x = -h; x <= h; x++) {
+    const w = x * x - m2;
+    num += w * valueAt(d, i + x);
+    den += w * w;
+  }
+  return (2 * num) / den;
+}
+
+/**
+ * (P13): the scales that place the edge clicked, from its own scale on: a peak within its extent
+ * (one sample's margin), and, above the finest scale, no other edge (seen at this scale or a finer
+ * one from the edge's own) within 3 sigma, where the kernel would reach it.  Each with the
+ * uncertainty of its peak's place: the noise that moves the peak over its curvature.
+ * @param {Array<SlopeScale|null>} ladder
+ * @param {{s: number, pick: number}} clicked
+ * @param {[number, number]} extent
+ * @param {number} minContrast
+ * @returns {Array<{c: SlopeScale, pick: number, uncertainty: number}>}
+ */
+function placings(ladder, clicked, extent, minContrast) {
+  /** @type {number[]} */
+  const seen = [];
+  const out = [];
+  for (let s = clicked.s; s < ladder.length; s++) {
+    const c = ladder[s];
+    if (c === null) {
+      continue;
+    }
+    seen.push(...otherEdges(c, extent, minContrast));
+    let pick = s === clicked.s ? clicked.pick : -1;
+    for (let i = extent[0] - 1; s !== clicked.s && i <= extent[1] + 1; i++) {
+      if (c.d[i] >= minContrast * c.noise && isPeak(c, i) && (pick < 0 || c.d[i] > c.d[pick])) {
+        pick = i;
+      }
+    }
+    const at = pick;
+    if (at < 0 || (s > 0 && seen.some((j) => Math.abs(j - at) <= 3 * c.scale))) {
+      continue;
+    }
+    const curvature = fittedCurvature(c.d, at, Math.max(1, Math.round(c.scale / 2)));
+    out.push({ c, pick: at, uncertainty: curvature < 0 ? c.noiseStep / (2 * -curvature) : Infinity });
+  }
+  return out;
 }
 
 /**
  * (P13): where a marker put at the fractional sample index ``at`` settles: the steepest point of
- * the mean nearby, at the scale where it is most reliable.  At each scale sigma 2^(q/2), q = 0 ... 4,
- * the slope's departure from the trend d_i = |s_i - m| has candidates within ``radius`` samples:
- * peaks, the largest within 2 sigma, standing ``minContrast`` times the noise out and at least half
- * as high as the window's highest.  The one nearest ``at`` is taken, so that a click by one flank of
- * a bright line takes that flank.  Above the finest scale, a scale is passed over when another such
- * peak lies within 3 sigma: there the two would pull each other.  Of the scales left, the one where
- * the peak stands highest above the noise, d / noise, wins, and the peak is placed between samples
- * by the vertex of the parabola through it and its two neighbours.  A gradual edge, too noisy to
- * place at sigma, is placed at the scale of its own width: the noise of s falls as sigma^(-3/2),
- * the edge's slope hardly at all (MATH.md 6.7).  null, the marker staying where it was put, when no
- * scale has a candidate.
+ * the mean nearby.  The edge clicked is found at the finest scale that has a candidate within
+ * ``radius`` samples (clickedEdge); the scales that place it, unpulled by other edges, are those of
+ * placings(); of them the one where the peak stands highest above the noise wins, and the peak is
+ * placed between samples by the vertex of the parabola through it and its two neighbours.  null,
+ * the marker staying where it was put, when no scale has a candidate, or when even the best places
+ * the peak no better than ``tolerance`` samples (one standard deviation): no better than the click.
+ * MATH.md 6.7.
  * @param {Float64Array} mean
  * @param {number} at
  * @param {number} radius
  * @param {number} sigma
  * @param {number} minContrast
- * @returns {{at: number, sigma: number, snr: number}|null}
+ * @param {number} tolerance
+ * @returns {{at: number, sigma: number, snr: number, uncertainty: number}|null}
  */
-function snapToSlope(mean, at, radius, sigma, minContrast) {
-  const n = mean.length;
-  /** @type {{at: number, sigma: number, snr: number}|null} */
-  let best = null;
-  for (let q = 0; q <= 4; q++) {
-    const scale = sigma * 2 ** (q / 2);
-    const { slope, k, trend, noise } = slopeAtScale(mean, scale);
-    if (2 * k + 1 > n || !(noise >= 0)) {
-      break;
-    }
-    const d = (/** @type {number} */ i) => Math.abs(slope[i] - trend);   // NaN where there is no slope
-    const reach = Math.max(1, Math.round(2 * scale));
-    /** @param {number} i @returns {boolean} the largest within 2 sigma (a missing slope is not larger) */
-    const peak = (i) => {
-      for (let j = Math.max(0, i - reach); j <= Math.min(n - 1, i + reach); j++) {
-        if (d(j) > d(i)) {
-          return false;
-        }
-      }
-      return true;
-    };
-    const [lo, hi] = [Math.max(k, Math.floor(at - radius)), Math.min(n - k - 1, Math.ceil(at + radius))];
-    let highest = 0;
-    for (let i = lo; i <= hi; i++) {
-      highest = d(i) > highest ? d(i) : highest;
-    }
-    const strong = (/** @type {number} */ i) => d(i) > 0 && d(i) >= minContrast * noise && d(i) >= 0.5 * highest && peak(i);
-    let pick = -1;
-    for (let i = lo; i <= hi; i++) {
-      if (strong(i) && (pick < 0 || Math.abs(i - at) < Math.abs(pick - at))) {
-        pick = i;
-      }
-    }
-    if (pick < 0 || (q > 0 && crowded(pick, scale, reach, (j) => d(j) >= 0.5 * d(pick) && peak(j), n))) {
-      continue;
-    }
-    const snr = d(pick) / noise;
-    if (best === null || snr > best.snr) {
-      const [a, b, c] = [d(pick - 1), d(pick), d(pick + 1)];
-      const curvature = a - 2 * b + c;
-      const shift = Number.isFinite(a) && Number.isFinite(c) && curvature < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / curvature)) : 0;
-      best = { at: pick + shift, sigma: scale, snr };
-    }
+function snapToSlope(mean, at, radius, sigma, minContrast, tolerance) {
+  const ladder = scaleLadder(mean, at, radius, sigma);
+  const clicked = clickedEdge(ladder, at, radius, minContrast);
+  if (clicked === null) {
+    return null;
   }
-  return best;
-}
-
-/**
- * Whether another peak of the kind ``rival`` tells lies within 3 sigma of ``pick``, beyond its own
- * 2 sigma (``reach``): at that scale the two would pull each other's place (P13).
- * @param {number} pick
- * @param {number} scale
- * @param {number} reach
- * @param {(j: number) => boolean} rival
- * @param {number} n
- * @returns {boolean}
- */
-function crowded(pick, scale, reach, rival, n) {
-  const span = Math.ceil(3 * scale);
-  for (let j = Math.max(0, pick - span); j <= Math.min(n - 1, pick + span); j++) {
-    if (Math.abs(j - pick) > reach && rival(j)) {
-      return true;
-    }
+  const extent = edgeExtent(/** @type {SlopeScale} */ (ladder[clicked.s]), clicked.pick);
+  const placed = placings(ladder, clicked, extent, minContrast);
+  if (placed.length === 0) {
+    return null;
   }
-  return false;
+  const best = placed.reduce((a, b) => (b.c.d[b.pick] / b.c.noise > a.c.d[a.pick] / a.c.noise ? b : a));
+  if (!(best.uncertainty <= tolerance)) {
+    return null;
+  }
+  const { c, pick } = best;
+  const [a, b, e] = [c.d[pick - 1], c.d[pick], c.d[pick + 1]];
+  const curvature = a - 2 * b + e;
+  const shift = curvature < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - e)) / curvature)) : 0;
+  return { at: pick + shift, sigma: c.scale, snr: b / c.noise, uncertainty: best.uncertainty };
 }
 
 /**

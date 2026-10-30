@@ -147,7 +147,10 @@ const app = {
   /** @type {string[]} */
   future: [],
   dirty: false,
-  /** @type {{kind: "point"|"width", index: number, point: number, moved: boolean}|null} a measurement's point or a profile's band width */
+  /**
+   * @type {{kind: "point"|"width", index: number, point: number, moved: boolean, before: string}|null} a measurement's
+   *   point or a profile's band width; ``before``, the state before it, is recorded for undo at its first move
+   */
   drag: null,
   profileWidth: 1,                   // band width of new profiles, pixel widths of the corrected view
   /** @type {number|null} where the cursor is on the profile plot: 0 at the start of the line, 1 at its end */
@@ -831,7 +834,7 @@ function drawInsertPreview(toScreen) {
 }
 
 /**
- * Note Ctrl (or Cmd) and Alt from any event, and redraw when the insert preview may change.
+ * Note Ctrl (or Cmd) and Alt from any event, and redraw when the insert or the snap preview may change.
  * @param {KeyboardEvent|PointerEvent} e
  */
 function trackModifiers(e) {
@@ -839,6 +842,10 @@ function trackModifiers(e) {
   if (insert !== app.insertHeld || e.altKey !== app.altHeld) {
     app.insertHeld = insert;
     app.altHeld = e.altKey;
+    const c = app.cursor;
+    if (c !== null && app.lastPointer !== "touch") {   // the snap preview follows Alt at once, not at the next move
+      app.preview = insideImage(c[0], c[1]) && !app.altHeld && snapsNow() ? snapTarget(c[0], c[1]) : null;
+    }
     render();
   }
 }
@@ -1430,9 +1437,12 @@ function restore(state) {
   });
 }
 
-/** Record the state before an edit, for undo. */
-function pushHistory() {
-  app.history.push(snapshot());
+/**
+ * Record the state before an edit, for undo: by default the state now.
+ * @param {string} [state]   a snapshot taken earlier: for a drag, at the press, recorded at its first move
+ */
+function pushHistory(state = snapshot()) {
+  app.history.push(state);
   if (app.history.length > HISTORY) {
     app.history.shift();
   }
@@ -2914,17 +2924,20 @@ const profileCanvas = /** @type {HTMLCanvasElement} */ (el("profile-plot"));
 /** @typedef {{label: string, t: number, distance: number, value: number}} MarkerReading */
 
 /**
- * What the plot shows, and where its axis lies on the canvas (CSS pixels), for the cursor; a press
- * on the plot that may still be a click (it places a marker), and a marker being dragged.
+ * What the plot shows, and where its axes lie on the canvas (CSS pixels), for the cursor; a press
+ * on the plot that may still be a click (it places a marker), and a marker being dragged, with the
+ * state before it, recorded for undo at its first move.
  */
 const profilePlot = {
   /** @type {ProfileData|null} */
   data: null,
   left: 0,
   right: 1,
+  top: 0,
+  bottom: 0,
   /** @type {{x: number, y: number}|null} */
   press: null,
-  /** @type {{index: number, moved: boolean}|null} */
+  /** @type {{index: number, moved: boolean, before: string}|null} */
   markerDrag: null,
 };
 
@@ -3139,8 +3152,7 @@ function drawProfilePlot() {
   const g = /** @type {CanvasRenderingContext2D} */ (profileCanvas.getContext("2d"));
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   const axis = plotProfile(g, w, h, profilePlot.data, { cursor: app.profileCursor, title: null });
-  profilePlot.left = axis.left;
-  profilePlot.right = axis.right;
+  Object.assign(profilePlot, axis);
 }
 
 /**
@@ -3182,13 +3194,13 @@ function yAxisLabels(g, range, height) {
  * band shaded, 0 and the full scale of the image's values as solid lines, so that the values
  * clipped at either end show, the contours that cross the line as dashed verticals (those selected
  * thicker), the cursor (0 to 1 along the line, or null) and a title above (or null).  Returns where
- * the axis lies, for the cursor.
+ * the axes lie, for the cursor and the markers.
  * @param {CanvasRenderingContext2D} g
  * @param {number} w
  * @param {number} h
  * @param {ProfileData|null} data
  * @param {{cursor: number|null, title: TextParts|null}} how
- * @returns {{left: number, right: number}}
+ * @returns {{left: number, right: number, top: number, bottom: number}}
  */
 function plotProfile(g, w, h, data, how) {
   g.fillStyle = "#ffffff";
@@ -3213,7 +3225,7 @@ function plotProfile(g, w, h, data, how) {
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillText(data === null ? "no profile selected" : "no length: check the tilt correction", w / 2, h / 2);
-    return { left: 0, right: 1 };
+    return { left: 0, right: 1, top: 0, bottom: 0 };
   }
   const { profile, crossings, geometry } = data;
   const wide = geometry.offsets.length > 1;
@@ -3294,7 +3306,7 @@ function plotProfile(g, w, h, data, how) {
       g.stroke();
     }
   }
-  return { left, right };
+  return { left, right, top, bottom };
 }
 
 /**
@@ -3505,7 +3517,8 @@ function pointAlong(points, t) {
 /**
  * Where a marker put at the fraction t settles (P13): at the steepest slope of the mean within 12
  * pixels of the plot, while snapping markers is on and unless ``exact`` (Alt, or the Exact latch);
- * else, or when no slope there stands out of the noise, at t.
+ * else, or when no slope there stands out of the noise, or when the slope places the edge no better
+ * than 2 samples or 2 pixels of the plot (whichever is more, about what a click is good to), at t.
  * @param {number} t
  * @param {boolean} exact
  * @returns {number}
@@ -3517,8 +3530,9 @@ function settledFraction(t, exact) {
     return t;
   }
   const last = data.profile.mean.length - 1;
-  const radius = Math.max(2, (12 * last) / Math.max(1, profilePlot.right - profilePlot.left));
-  const found = snapToSlope(data.profile.mean, t * last, radius, settings.sigma(), settings.minContrast());
+  const perPixel = last / Math.max(1, profilePlot.right - profilePlot.left);    // samples per pixel of the plot
+  const found = snapToSlope(data.profile.mean, t * last, Math.max(2, 12 * perPixel), settings.sigma(),
+    settings.minContrast(), Math.max(2, 2 * perPixel));
   return found === null ? t : found.at / last;
 }
 
@@ -4120,16 +4134,14 @@ function startDragAt(sx, sy) {
   }
   const contour = app.tool === "contour";
   if (!contour && hitWidthHandle(sx, sy)) {
-    pushHistory();
-    app.drag = { kind: "width", index: app.selected, point: 0, moved: false };
+    app.drag = { kind: "width", index: app.selected, point: 0, moved: false, before: snapshot() };
     return true;
   }
   const hit = hitPoint(sx, sy, contour);
   if (hit === null) {
     return false;
   }
-  pushHistory();
-  app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false };
+  app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false, before: snapshot() };
   focusMeasurement(hit.index);
   refreshMeasurements();
   render();
@@ -4192,6 +4204,9 @@ function setOriginAt(sx, sy) {
  */
 function dragTo(x, y) {
   const points = draggedPoints();
+  if (app.drag !== null && !app.drag.moved) {
+    pushHistory(app.drag.before);    // the drag becomes an edit with its first move
+  }
   if (points !== null && app.drag !== null) {
     points[app.drag.point] = [x, y];
     app.drag.moved = true;
@@ -4224,7 +4239,7 @@ function endDrag(x, y, exact, toggle) {
     return;
   }
   if (!drag.moved) {
-    app.history.pop();             // a click on a point without moving it changed nothing
+    // a click on a point without moving it changed nothing, and recorded nothing: redo is kept
     if (drag.kind === "point" && app.measurements[drag.index].kind === "contour") {
       pickVertex(drag.point, toggle ? "toggle" : "only");
     }
@@ -4247,13 +4262,14 @@ function endDrag(x, y, exact, toggle) {
 
 /** Give up the drag in progress: what it moved goes back where it was. */
 function cancelDrag() {
-  if (app.drag === null) {
+  const drag = app.drag;
+  if (drag === null) {
     return;
   }
   app.drag = null;
-  const before = app.history.pop();
-  if (before !== undefined) {
-    restore(before);
+  if (drag.moved) {
+    app.history.pop();
+    restore(drag.before);
   }
 }
 
@@ -5272,19 +5288,25 @@ el("profile-square").addEventListener("click", () => squareSelected());
 el("clear-markers").addEventListener("click", () => clearMarkers());
 inputEl("square-profiles").addEventListener("change", () => refreshEdges());
 inputEl("profile-width").addEventListener("change", () => setProfileWidth(Number(inputEl("profile-width").value) / unitsPerView()));
-// On the plot a press on a marker drags it; any other press is a click, which places a marker,
-// until it moves more than 4 pixels and only reads values along the plot.
+// On the plot a press of the main button within the axes on a marker drags it; any other press
+// there is a click, which places a marker, until it moves more than 4 pixels and only reads values
+// along the plot.  A press on the labels around the axes, or of another button, places nothing.
 profileCanvas.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) {
+    return;
+  }
   try {
     profileCanvas.setPointerCapture(e.pointerId);    // a finger can slide along the plot, and off it
   } catch {
     // a scripted pointer cannot be captured
   }
-  const hit = markerUnder(e);
+  const r = profileCanvas.getBoundingClientRect();
+  const [x, y] = [e.clientX - r.left, e.clientY - r.top];
+  const within = x >= profilePlot.left && x <= profilePlot.right && y >= profilePlot.top && y <= profilePlot.bottom;
+  const hit = within ? markerUnder(e) : -1;
   if (hit >= 0) {
-    pushHistory();
-    profilePlot.markerDrag = { index: hit, moved: false };
-  } else {
+    profilePlot.markerDrag = { index: hit, moved: false, before: snapshot() };
+  } else if (within) {
     profilePlot.press = { x: e.clientX, y: e.clientY };
   }
   profilePlotPointer(e);
@@ -5292,6 +5314,9 @@ profileCanvas.addEventListener("pointerdown", (e) => {
 profileCanvas.addEventListener("pointermove", (e) => {
   const { markerDrag: drag, press } = profilePlot;
   if (drag !== null) {
+    if (!drag.moved) {
+      pushHistory(drag.before);      // the drag becomes an edit with its first move
+    }
     moveMarker(drag.index, plotFraction(e));
     drag.moved = true;
   } else if (press !== null && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4) {
@@ -5303,22 +5328,19 @@ profileCanvas.addEventListener("pointerup", (e) => {
   const { markerDrag: drag, press } = profilePlot;
   profilePlot.markerDrag = null;
   profilePlot.press = null;
-  if (drag !== null && !drag.moved) {
-    app.history.pop();               // a press on a marker without moving it changed nothing
-  } else if (drag !== null) {
+  if (drag !== null && drag.moved) {               // a press without moving changed nothing, and recorded nothing
     settleMarker(drag.index, e.altKey);
   } else if (press !== null) {
     placeMarker(plotFraction(e), e.altKey);
   }
 });
 profileCanvas.addEventListener("pointercancel", () => {
+  const drag = profilePlot.markerDrag;
   profilePlot.press = null;
-  if (profilePlot.markerDrag !== null) {
-    profilePlot.markerDrag = null;   // the marker goes back where it was
-    const before = app.history.pop();
-    if (before !== undefined) {
-      restore(before);
-    }
+  profilePlot.markerDrag = null;
+  if (drag !== null && drag.moved) {               // the marker goes back where it was
+    app.history.pop();
+    restore(drag.before);
     refreshMeasurements();
     render();
   }

@@ -36,7 +36,9 @@ function workFolder(tools) {
   fs.rmSync(work, { recursive: true, force: true });
   fs.mkdirSync(work, { recursive: true });
   for (const name of CHECKED) {
-    fs.cpSync(path.join(ROOT, name), path.join(work, name), { recursive: true });
+    // local test images under tests/images are large, and nothing here checks them
+    fs.cpSync(path.join(ROOT, name), path.join(work, name), { recursive: true,
+      filter: (src) => path.relative(path.join(ROOT, "tests", "images"), src).startsWith("..") });
   }
   return work;
 }

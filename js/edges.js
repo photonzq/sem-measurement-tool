@@ -46,10 +46,13 @@
  * The edge strength is |g|.  Its median over the image measures the noisy background, since
  * edges cover a small fraction of an image.  For pure noise g_x and g_y are independent Gaussians
  * of one standard deviation s_g, so |g| is Rayleigh distributed, P(|g| > r) = exp(-r^2 / (2
- * s_g^2)), with the median s_g sqrt(2 ln 2) = 1.18 s_g.  A snap target must be min_contrast times
- * stronger than the median: the default 3 is 3.53 s_g, exceeded by noise with probability
- * exp(-3.53^2 / 2) = 0.2 % per independent sample.  The median is estimated on about a million
- * evenly spread pixels.
+ * s_g^2)), with the median s_g sqrt(2 ln 2) = 1.18 s_g.  Hence P(|g| > c median) = exp(-c^2 ln 2) =
+ * 2^(-c^2): the default min_contrast k = 3 is 3.53 s_g, exceeded by noise with probability 2^-9 =
+ * 0.2 % per independent sample.  The median is estimated on about a million evenly spread pixels,
+ * leaving out those where |g| is exactly 0: a constant stretch wider than the kernel, such as a
+ * region clipped to black or white, tells nothing of the noise, and in an image more than half
+ * clipped it would make the median 0.  A click searches many samples, though, which (E9) below
+ * takes into account.
  *
  * Snapping
  * --------
@@ -57,8 +60,8 @@
  * across the edge (non-maximum suppression, as in Canny's detector).  With u = g / |g| rounded to
  * the nearest of the 8 neighbour directions s (a component counts when its magnitude exceeds
  * sin 22.5 deg = 0.383, so that each direction covers a 45 deg sector), p is a crest pixel when
- * |g|(p) >= |g|(p + s) and |g|(p) >= |g|(p - s), and it must be min_contrast times stronger than
- * the median.  Among the candidates, the one maximizing
+ * |g|(p) >= |g|(p + s) and |g|(p) >= |g|(p - s), and it must be c of (E9) times stronger than the
+ * median.  Among the candidates, the one maximizing
  *
  *     |g|(p) * exp(-d(p)^2 / (2 (radius / 2)^2)),     d(p) = distance from the click,     (E5)
  *
@@ -104,6 +107,20 @@
  *     half-widths  r sqrt(B11^2 + B12^2),  r sqrt(B21^2 + B22^2),   B = M^-1,               (E8)
  *
  * the box that the search scans.
+ *
+ * The threshold of a search.  The ellipse has the area A = pi r^2 / |det M| stored pixels, and holds
+ * about N = A / sigma^2 independent samples, the gradient being correlated over about sigma.  The
+ * chance that noise alone gives a candidate somewhere in it is then about N 2^(-c^2), which is
+ * 2^(-k^2), that of one sample at min_contrast k, for
+ *
+ *     c = sqrt(k^2 + log2 N),     N = max(1, A / sigma^2):                                  (E9)
+ *
+ * a snap target must be c times the median.  At the defaults (sigma 2, radius 12, k = 3) N = 113 and
+ * c = 3.98; for a finger (radius 30) N = 707 and c = 4.30.  On pure noise A / (N sigma^2) measures
+ * 0.46 to 1.38 for sigma 2 to 4, median windows 0, 3 and 5 and radii 6 to 30, which moves c by less
+ * than 0.15 at the defaults, and 1.5 to 1.6 for sigma 1 without a median window.  With sigma 1 after
+ * a median window the noise is far from Gaussian: the ratio falls to 0.04, and a click on noise
+ * snaps more often than 2^(-k^2).
  */
 
 /**
@@ -291,7 +308,7 @@ function percentileOf(sorted, percentile) {
   return sorted[lo] + (pos - lo) * (sorted[hi] - sorted[lo]);
 }
 
-/** The Gaussian-derivative gradient of an image (E1), its strength and snapping (E5, E6). */
+/** The Gaussian-derivative gradient of an image (E1), its strength and snapping (E5), (E6), (E9). */
 class EdgeMap {
   /**
    * @param {Float32Array} image   grey values, row-major
@@ -328,7 +345,12 @@ class EdgeMap {
     for (let i = 0; i < n; i++) {
       this.magnitude[i] = Math.sqrt(this.gx[i] * this.gx[i] + this.gy[i] * this.gy[i]);
     }
-    const sample = sortedSample(this.magnitude, 1e6);
+    const sorted = sortedSample(this.magnitude, 1e6);
+    let first = 0;                                   // constant stretches (|g| = 0) say nothing of the noise
+    while (first < sorted.length && !(sorted[first] > 0)) {
+      first++;
+    }
+    const sample = sorted.subarray(first);
     const typical = percentileOf(sample, 50);
     /** The median strength: the noisy background (a tiny positive floor for a constant image). */
     this.noise = typical > 0 ? typical : 1e-30;
@@ -411,9 +433,9 @@ class EdgeMap {
   }
 
   /**
-   * The edge point near (x, y): among the crest pixels within ``radius`` (E7) that are
-   * ``minContrast`` times stronger than the median, the maximum of (E5), refined by (E6).  null
-   * when none.
+   * The edge point near (x, y): among the crest pixels within ``radius`` (E7) that are c of (E9)
+   * times stronger than the median, ``minContrast`` being k, the maximum of (E5), refined by (E6).
+   * null when none.
    * @param {number} x
    * @param {number} y
    * @param {number} radius
@@ -437,7 +459,8 @@ class EdgeMap {
     const x1 = Math.min(this.width - 1, Math.ceil(x + halfX));
     const y0 = Math.max(0, Math.floor(y - halfY));
     const y1 = Math.min(this.height - 1, Math.ceil(y + halfY));
-    const threshold = minContrast * this.noise;
+    const samples = Math.max(1, (Math.PI * radius * radius) / (det * this.sigma * this.sigma));   // N of (E9)
+    const threshold = Math.sqrt(minContrast * minContrast + Math.log2(samples)) * this.noise;
     const spread = 2 * (radius / 2) * (radius / 2);
     let best = -Infinity;
     let bx = -1;

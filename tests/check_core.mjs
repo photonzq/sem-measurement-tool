@@ -14,7 +14,9 @@
 //    decoded; metadata files opened with an image (Hitachi, JEOL, TESCAN), on images decoded here;
 //    TESCAN text and Thermo Fisher XML found in TIFF tags by their content.
 // 2. Gradient: exact on a linear ramp.  Snapping: onto a noisy synthetic edge within 0.25 px, not
-//    on flat noise, and with the search radius measured through the view metric (E7).
+//    on flat noise, and with the search radius measured through the view metric (E7); on pure noise
+//    about as rarely per click as one sample exceeds the threshold (E9), with a mouse's radius and a
+//    finger's; the noise of an image mostly clipped measured on its unclipped part.
 // 3. Geometry (transform.js): correction factors, the map (G8) and its inverse, the tilt axis
 //    (G7), the rigid rotation, angles and line crossings, levelling (G13), the tilt axis along a
 //    line (G14), contour measures.
@@ -38,7 +40,11 @@
 //    in a tilted, turned frame, on a step, a bright line and a corner; the tensor of a noisy edge,
 //    on average, exact in a frame that stretches 3 times; the direction's scatter over noisy
 //    images, against one gradient and a sum of gradient vectors; the turn, also about the end not
-//    moved, with the crossing's slide along a straight edge; a segment's normal.
+//    moved, with the crossing's slide along a straight edge; a segment's normal.  Markers (P12): placed
+//    where they project, the mean between samples.  Snapping them (P13): sharp, gradual and noisy edges,
+//    a bright line's flanks, a ridge; the edge clicked, not merged with a step beside it nor taken by a
+//    stronger one farther off; nothing at the end of the data or on a clipped or quieter stretch; a
+//    ramp without a steepest point left as clicked; rarely a snap in noise alone.
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -583,6 +589,35 @@ function checkEdges() {
     && Math.abs(near[1] - rowEdge) < 0.25,
   `search radius through the view metric: an edge 7 px away is found (${plain && plain[1].toFixed(3)}), ` +
     `not when the rows count twice; 4 px away it is (${near && near[1].toFixed(3)})`);
+}
+
+/**
+ * The threshold of a search (E9): on pure noise, a click snaps about as rarely as one sample exceeds k times the median
+ * (2^-9 for k = 3), with the radius of a mouse (12) and of a finger (30), where k times the median alone let 19 % and
+ * 67 % of clicks snap.  An image more than half clipped to 0 keeps the noise of its unclipped part (the median over
+ * |g| > 0, not 0), and clicks there snap no more often than on the same noise unclipped.
+ */
+function checkSnapThreshold() {
+  const size = 300;
+  const noise = gaussian(31);
+  const image = Float32Array.from({ length: size * size }, () => 1000 + 30 * noise());
+  const plain = new api.EdgeMap(image, size, size, 2, 3);
+  /** @type {Array<[number, number]>} clicks at least 30 px from the borders */
+  const clicks = [];
+  for (let y = 30; y < size - 30; y += 15) {
+    for (let x = 30; x < size - 30; x += 15) {
+      clicks.push([x + 0.3, y + 0.6]);
+    }
+  }
+  const [mouse, finger] = [12, 30].map((r) => clicks.filter(([x, y]) => plain.snap(x, y, r, 3) !== null).length);
+  const clipped = new api.EdgeMap(Float32Array.from(image, (v, i) => (i < 160 * size ? 0 : v)), size, size, 2, 3);
+  const below = clicks.filter(([, y]) => y > 200);
+  const [onClipped, onPlain] = [clipped, plain].map((m) => below.filter(([x, y]) => m.snap(x, y, 12, 3) !== null).length);
+  const ratio = clipped.noise / plain.noise;
+  check(mouse <= 4 && finger <= 4 && Math.abs(ratio - 1) < 0.25 && onClipped <= onPlain + 1,
+    `threshold of a search (E9): of ${clicks.length} clicks on pure noise ${mouse} snap within 12 px and ${finger} ` +
+    `within 30 px; an image 53 % clipped to 0 keeps ${ratio.toFixed(2)} of the noise of its unclipped part, and of ` +
+    `${below.length} clicks on that part ${onClipped} snap (${onPlain} unclipped)`);
 }
 
 /** The largest absolute difference between two lists of numbers. */
@@ -1291,48 +1326,133 @@ function erfEdge(n, at, w, sd, noise) {
   return Float64Array.from({ length: n }, (_, i) => 100 + 50 * erf((i - at) / (Math.SQRT2 * w)) + sd * noise());
 }
 
+/** Rising erf steps [place, height, width] from 100, over ``n`` samples, plus noise() times ``sd``. */
+function erfSteps(n, list, sd, noise) {
+  return Float64Array.from({ length: n }, (_, i) => 100 + sd * noise()
+    + list.reduce((sum, [at, height, w]) => sum + (height / 2) * (1 + erf((i - at) / (Math.SQRT2 * w))), 0));
+}
+
+/** (P13) with the edge map's sigma of 2 samples, 3 noise and a tolerance of 2 samples; a window of 12 by default. */
+function snapMarker(mean, at, radius = 12) {
+  return api.snapToSlope(mean, at, radius, 2, 3, 2);
+}
+
+/** How far a marker settled from x: Infinity when it stayed. */
+function offBy(r, x) {
+  return r === null ? Infinity : Math.abs(r.at - x);
+}
+
 /**
- * Snapping markers (P13), the edge map's sigma of 2 samples, 3 noise, a window of 12 samples: a sharp edge found from
- * either side, clean and noisy; a gradual noisy edge, over 40 noisy profiles, at the scale of its width; a bright
- * line's nearer flank from either side; the two edges of a ridge 20 samples wide, unpulled by each other; rarely a
- * slope in noise alone; none across a missing value.
+ * Snapping markers (P13), the edge map's sigma of 2 samples, 3 noise, a window of 12 samples, a tolerance of 2: a sharp
+ * edge found from either side, nearly clean and noisy; a gradual noisy edge, over 40 noisy profiles, at the scale of
+ * its width, and left where it was put when no scale places it within 2 samples; a bright line's nearer flank from
+ * either side; the two edges of a ridge 20 samples wide, unpulled by each other; rarely a slope in noise alone; none
+ * across a missing value.  A profile without any noise has none to measure a slope against: the "clean" ones carry
+ * 0.05 % of their step.
  */
 function checkMarkerSnapping() {
-  const snap = (mean, at) => api.snapToSlope(mean, at, 12, 2, 3);
-  const off = (r, x) => (r === null ? Infinity : Math.abs(r.at - x));
   const noise = gaussian(77);
-  const clean = erfEdge(120, 40.3, 1.5, 0, noise);
+  const clean = erfEdge(120, 40.3, 1.5, 0.05, noise);
   const noisy = erfEdge(120, 40.3, 1.5, 2, noise);
-  const sharp = [snap(clean, 33), snap(noisy, 33), snap(noisy, 48)].map((r) => off(r, 40.3));
-  const gradual = Array.from({ length: 40 }, (_, s) => {
-    const g = gaussian(1 + s);
-    return snap(erfEdge(240, 120.4, 8, 10, g), 114);
-  });
-  const gradualErrors = gradual.map((r) => off(r, 120.4)).sort((a, b) => a - b);
-  const scales = gradual.map((r) => (r === null ? 0 : r.sigma)).sort((a, b) => a - b);
-  const line = Float64Array.from({ length: 200 }, (_, i) => 100 + 80 * Math.exp(-((i - 100) ** 2) / 18));
-  const flanks = [92, 99, 101, 108].map((at) => snap(line, at)?.at ?? NaN);
+  const sharp = [snapMarker(clean, 33), snapMarker(noisy, 33), snapMarker(noisy, 48)].map((r) => offBy(r, 40.3));
+  const gradual = Array.from({ length: 40 }, (_, s) => snapMarker(erfEdge(240, 120.4, 8, 10, gaussian(1 + s)), 114))
+    .filter((r) => r !== null);
+  const gradualErrors = gradual.map((r) => offBy(r, 120.4)).sort((a, b) => a - b);
+  const scales = gradual.map((r) => r.sigma).sort((a, b) => a - b);
+  const lineNoise = gaussian(9);
+  const line = Float64Array.from({ length: 200 }, (_, i) => 100 + 80 * Math.exp(-((i - 100) ** 2) / 18) + 0.05 * lineNoise());
+  const flanks = [92, 99, 101, 108].map((at) => snapMarker(line, at)?.at ?? NaN);
   const ridgeNoise = gaussian(101);
   const ridge = Float64Array.from({ length: 240 }, (_, i) => 100 + 25 * (erf((i - 100) / (Math.SQRT2 * 2))
     - erf((i - 120) / (Math.SQRT2 * 2))) + 3 * ridgeNoise());
-  const ridgeErrors = [off(snap(ridge, 97), 100), off(snap(ridge, 123), 120)];
+  const ridgeErrors = [offBy(snapMarker(ridge, 97), 100), offBy(snapMarker(ridge, 123), 120)];
   const flat = Float64Array.from({ length: 2000 }, () => 100 + 2 * noise());
-  const falseSnaps = Array.from({ length: 79 }, (_, j) => snap(flat, 25 + 25 * j)).filter((r) => r !== null).length;
+  const falseSnaps = Array.from({ length: 79 }, (_, j) => snapMarker(flat, 25 + 25 * j)).filter((r) => r !== null).length;
   const gap = Float64Array.from(clean);
   gap[38] = Number.NaN;
-  const missing = api.snapToSlope(gap, 40, 3, 2, 3);
+  const missing = snapMarker(gap, 40, 3);
   // a bright line of standard deviation 3 smoothed by 2 has its steepest points at 100 -+ sqrt(13)
   const flank = Math.sqrt(13);
   const flanksRight = Math.abs(flanks[0] - (100 - flank)) < 0.1 && Math.abs(flanks[1] - (100 - flank)) < 0.1
     && Math.abs(flanks[2] - (100 + flank)) < 0.1 && Math.abs(flanks[3] - (100 + flank)) < 0.1;
-  check(sharp[0] < 0.02 && sharp[1] < 0.2 && sharp[2] < 0.2 && gradualErrors[20] < 1 && gradualErrors[39] < 4.5
-    && scales[20] >= 4 && flanksRight && Math.max(...ridgeErrors) < 0.6 && falseSnaps <= 6 && missing === null,
+  const middle = gradualErrors[gradualErrors.length >> 1];
+  const wide = gradualErrors.filter((e) => e > 3).length;   // a noise peak beside the click taken for the edge: rare
+  check(sharp[0] < 0.02 && sharp[1] < 0.2 && sharp[2] < 0.2 && gradual.length >= 30 && middle < 1 && wide <= 2
+    && scales[scales.length >> 1] >= 4 && flanksRight && Math.max(...ridgeErrors) < 0.6 && falseSnaps <= 10
+    && missing === null,
   `snapping markers (P13): a sharp edge at 40.3 found from 7 samples before and after, ${sharp.map((e) => e.toFixed(3))
-    .join(", ")} samples off (clean, noisy, noisy); a gradual edge of width 8 with noise of 10 % of the step, over 40 ` +
-    `profiles, ${gradualErrors[20].toFixed(2)} samples off at the median, ${gradualErrors[39].toFixed(2)} at worst, at ` +
-    `the median scale ${scales[20].toFixed(2)}; a bright line's flanks, the nearer from either side, at ` +
-    `${flanks.map((f) => f.toFixed(2)).join(", ")}; a ridge 20 wide, its edges ${ridgeErrors.map((e) => e.toFixed(2))
-      .join(" and ")} samples off; in noise alone ${falseSnaps} of 79 windows snap; none across a missing value`);
+    .join(", ")} samples off (nearly clean, noisy, noisy); a gradual edge of width 8 with noise of 10 % of the step, ` +
+    `placed in ${gradual.length} of 40 profiles, ${middle.toFixed(2)} samples off at the median, ${wide} more than 3 ` +
+    `off (at worst ${gradualErrors[gradualErrors.length - 1].toFixed(2)}), at the median scale ${scales[scales.length >> 1]
+      .toFixed(2)}; a bright line's flanks, the nearer from either side, at ${flanks.map((f) => f.toFixed(2)).join(", ")}; ` +
+    `a ridge 20 wide, its edges ${ridgeErrors.map((e) => e.toFixed(2)).join(" and ")} samples off; in noise alone ` +
+    `${falseSnaps} of 79 windows snap; none across a missing value`);
+}
+
+/**
+ * Snapping markers (P13) beside other edges: of two rising steps 10, 14 or 18 samples apart, the one clicked, not the
+ * place between where the coarse scales merge them; a weak sharp step, not a strong gradual one 24 samples on that
+ * the coarse scales favour, in windows of 12, 24 and 60 samples; a noisy bright line's nearer flank, unpulled by the
+ * other.  100 noisy profiles each.
+ */
+function checkMarkerNeighbours() {
+  const runs = 100;
+  const stairs = [10, 14, 18].map((apart) => Array.from({ length: runs }, (_, k) =>
+    offBy(snapMarker(erfSteps(300, [[100, 40, 1], [100 + apart, 40, 1]], 6, gaussian(1000 + k)), 100), 100)));
+  const taken = [12, 24, 60].map((radius) => Array.from({ length: runs }, (_, k) =>
+    offBy(snapMarker(erfSteps(400, [[100, 20, 1], [124, 60, 6]], 3, gaussian(2000 + k)), 100, radius), 100)));
+  const flank = Math.sqrt(13);
+  const line = Array.from({ length: runs }, (_, k) => {
+    const g = gaussian(500 + k);
+    const mean = Float64Array.from({ length: 200 }, (_v, i) => 100 + 80 * Math.exp(-((i - 100) ** 2) / 18) + 2 * g());
+    return [offBy(snapMarker(mean, 96), 100 - flank), offBy(snapMarker(mean, 104), 100 + flank)];
+  }).flat();
+  const worst = (errors) => Math.max(...errors);
+  const stayed = (errors) => errors.filter((e) => e === Infinity).length;
+  const placed = (errors) => errors.filter((e) => e !== Infinity);
+  // steps 10 apart with noise of 15 % of each are barely told apart at the finest scale: a rare one merges
+  const merged = stairs.map((e) => placed(e).filter((v) => v > 2).length);
+  check(merged[0] <= 2 && merged[1] === 0 && merged[2] === 0 && stairs.every((e) => stayed(e) <= 2)
+    && taken.every((e) => worst(placed(e)) <= 2 && stayed(e) === 0) && worst(placed(line)) <= 2 && stayed(line) === 0,
+  `snapping markers beside other edges (P13), ${runs} noisy profiles each: two rising steps 10, 14 and 18 apart, the ` +
+    `first clicked, ${merged.join(", ")} more than 2 samples off (${stairs.map(stayed).join(", ")} stay; at ` +
+    `separation 14 and 18 at worst ${worst(placed(stairs[1])).toFixed(2)} and ${worst(placed(stairs[2])).toFixed(2)}); ` +
+    `a weak sharp step with a strong gradual one 24 on, windows 12, 24 and 60, ${taken.map((e) =>
+      worst(placed(e)).toFixed(2)).join(", ")} off at worst; a noisy bright line's nearer flank, ` +
+    `${worst(placed(line)).toFixed(2)} off at worst of ${line.length}`);
+}
+
+/**
+ * Snapping markers (P13) where the data end or carry no noise: an edge within K samples of an end, or of missing
+ * samples, is where the slopes stop, not a peak, and the marker stays; an edge clear of them but within the coarsest
+ * K is placed; a profile mostly clipped (exactly constant) or mostly quieter does not lower the noise of the rest,
+ * where clicks stay as on noise alone; a ramp of constant slope 60 samples long has no steepest point, and most
+ * clicks there stay.
+ */
+function checkMarkerDataEnds() {
+  const nearStart = snapMarker(erfSteps(200, [[3, 40, 1]], 2, gaussian(5)), 5);
+  const gapped = erfSteps(200, [[60, 40, 1]], 2, gaussian(5));
+  gapped.fill(Number.NaN, 0, 57);
+  const nearGap = snapMarker(gapped, 62);
+  const clear = snapMarker(erfSteps(200, [[20, 40, 1]], 2, gaussian(5)), 21);
+  const rest = (quiet) => {
+    const g = gaussian(11);
+    const mean = Float64Array.from({ length: 400 }, (_, i) => (i < 250 ? quiet * g() : 20 + 2 * g()));
+    return Array.from({ length: 26 }, (_, k) => snapMarker(mean, 280 + 4 * k)).filter((r) => r !== null).length;
+  };
+  const [clipped, quieter] = [rest(0), rest(0.5)];
+  const ramps = Array.from({ length: 50 }, (_, k) => {
+    const g = gaussian(3000 + k);
+    const mean = Float64Array.from({ length: 300 }, (_v, i) => 100 + 40 * Math.min(1, Math.max(0, (i - 120) / 60)) + 1.2 * g());
+    return snapMarker(mean, 150);
+  }).filter((r) => r !== null).length;
+  check(nearStart === null && nearGap === null && clear !== null && Math.abs(clear.at - 20) < 0.2 && clipped <= 1
+    && quieter <= 1 && ramps <= 5,
+  `snapping markers where the data end (P13): a step 3 samples from the start, clicked at 5, ${nearStart === null
+    ? "stays" : `to ${nearStart.at.toFixed(2)}`}; one beside 57 missing samples ${nearGap === null ? "stays" : "moves"}; one 20 ` +
+    `from the start, within the coarsest K, ${clear === null ? "stays" : `at ${clear.at.toFixed(2)}`}; 26 clicks on the ` +
+    `noise of a profile 62 % clipped snap ${clipped} times, of one 62 % quieter ${quieter}; 50 clicks on ramps of ` +
+    `constant slope ${ramps}`);
 }
 
 /** A square image whose value at stored u is f(q), q = V (u - c) its place in the view frame (G11), plus noise(). */
@@ -1554,6 +1674,7 @@ checkTescanText();
 checkPhenomAndVendors();
 checkInfoZone();
 checkEdges();
+checkSnapThreshold();
 checkGeometry();
 checkPolygonFile();
 checkMeasurementFile();
@@ -1572,6 +1693,8 @@ checkProfileCrossings();
 checkProfileFile();
 checkProfileMarkers();
 checkMarkerSnapping();
+checkMarkerNeighbours();
+checkMarkerDataEnds();
 checkEdgeNormal();
 checkEdgeNormalExpected();
 checkEdgeNormalNoise();

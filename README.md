@@ -143,9 +143,10 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - A click on the plot places A, a second one B. Later clicks move the nearer marker, and a marker can be dragged. A drag that starts elsewhere still reads values, and places nothing. *Clear A, B* removes both. Each of these is an edit that Ctrl+Z undoes.
   - The line under the reading gives where each marker is, the mean there, and the distance A–B. On the image, each is a tick across the band, in the profile's colour, with its letter.
   - *snap A, B to the steepest slope*, in the window and on from the start, lets a marker settle where the profile is steepest within 12 pixels of the plot. This is where an edge is, for an edge-to-edge distance.
-    - The slope is that of the mean, smoothed from the edge map's σ up to 4 times it: at the scale where the edge stands out of the noise best without a neighbouring edge in reach. A gradual edge in a noisy FIB image is thus placed nearly as well as a sharp one.
+    - The slope is that of the mean, smoothed from the edge map's σ up to 4 times it. The edge clicked is the one the finest of these scales finds; the coarser ones place it, and the one where it stands out of the noise best wins, as long as they find it where it was and no other edge is in their reach. A gradual edge in a noisy FIB image is thus placed nearly as well as a sharp one, and a weak edge is not given up for a stronger one nearby, nor merged with a step beside it.
     - Of two edges in reach, such as a bright line's flanks, the nearer is taken.
-    - A marker snaps only where the slope stands out of the profile's noise by the edge map's *min. edge strength*, 3 times by default; elsewhere it stays where it was put.
+    - A marker snaps only where the slope stands out of the noise by the edge map's *min. edge strength*, 3 times by default. The noise is measured near the click, leaving out stretches clipped to black or white, so a profile that runs mostly through a dark, quiet region does not lower the threshold for a noisier part.
+    - It also stays where it was put when the steepest point is poorly placed: when no scale places it better than 2 samples, or 2 pixels of the plot, about what a click is good to. A long ramp of nearly constant slope has no steepest point to snap to.
     - Alt places or lets go of one exactly. MATH.md 6.7 derives all this.
   - A marker is kept as a point of the image, and its place along the line is where it projects onto it. When the profile is moved, the markers therefore stay on their features of the image. After squaring, a marker on a straight edge lies on the edge where the turned profile crosses it.
 - **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band, the crossings, and the markers with the distance between them.
@@ -219,11 +220,11 @@ The view draws the stored image through the same map, so a change of calibration
 With *Snap* on, as it is from the start (S switches it), a click lands on the strongest edge nearby, and a magenta ring shows in advance where it will land. The method is in MATH.md, Part 2:
 
 - **Edge strength.** The gradient of a Gaussian-smoothed image, after an optional 3 × 3 or 5 × 5 median filter: *smoothing σ*, in pixels of the stored image. Larger σ resists noise better, but merges edges closer than about 2σ.
-- **Threshold.** Candidates must be *min. edge strength* times the median gradient of the image. Pure noise exceeds $c$ times the median with the probability $2^{-c^2}$ per independent sample, 0.2 % at the default 3.
+- **Threshold.** Pure noise exceeds $c$ times the median gradient with the probability $2^{-c^2}$ per independent pixel. A click searches many pixels, though, so candidates must be $\sqrt{k^2 + \log_2 N}$ times the median, $k$ being the *min. edge strength* and $N$ about the number of independent pixels in the search. A click on flat noise then snaps about as rarely as one pixel exceeds $k$ times the median: $2^{-k^2}$, 0.2 % at the default 3. At the default radius that asks for 4.0 times the median, and 4.3 for a finger. Pixels on constant stretches, such as regions clipped to black or white, are left out of the median.
 - **Candidates and choice.** Candidates are the crest pixels within the *search radius*, measured in pixels of the corrected view. The choice weighs strength against distance, and a parabola places the point between pixels, to within 0.05 px for a crest one pixel wide. The point may slide a pixel or two **along** the edge.
 - **Where the map is computed.** The edge map is computed on the stored image, without the info bar, once per σ and median setting. The noise is independent pixel to pixel there and the probe round, so this is also the matched filter.
 - **Bright lines.** Many SEM edges appear as bright lines, which have two flanks. A click snaps to the flank nearest to it, so trace one flank consistently, or use Alt to place points on the line's centre.
-- **Profiles** are not snapped but squared to the edge they cross, when placed and when an end is dragged, while *square profiles to the edge they cross* is on (see *Line profiles*). The image's edge must reach the same threshold.
+- **Profiles** are not snapped but squared to the edge they cross, when placed and when an end is dragged, while *square profiles to the edge they cross* is on (see *Line profiles*). The image's edge must reach *min. edge strength* times the median gradient: squaring looks along a line, not over a disc.
 
 *Show the edge map* (G) overlays the edge strength in green, which shows what the snapping sees.
 
@@ -407,7 +408,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `index.html` | the page: layout, panel, styles |
 | `js/metadata.js` | FEI, Zeiss, Hitachi, JEOL, TESCAN and Thermo Fisher XML metadata: pixel size, data bar, tilt, beam, detector |
 | `js/tiff.js` | TIFF decoding with UTIF.js into grey values and calibration; metadata in tags and in files beside the image; the Zeiss info zone and the Hitachi data bar, (Z1) and (H1) in the header |
-| `js/edges.js` | edge strength, crests, snapping and the structure tensor; derivations (E1)–(E8) in the header |
+| `js/edges.js` | edge strength, crests, snapping and the structure tensor; derivations (E1)–(E9) in the header |
 | `js/transform.js` | the affine map, measures, levelling, the arrow-key step; derivations (G1)–(G15) in the header |
 | `js/polygons.js` | the polygon, measurements and profile files (CSV) |
 | `js/session.js` | the session file (JSON) |
@@ -465,7 +466,7 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - Thermo Fisher's XML in tag 34683 gives its values.
   - The vendor of each text is told by its content, and a polygon file is told from them.
 - **Info zone.** On synthetic images the search finds a zone between two black lines and a zone running to the last row. It finds none in an image without one, in a black line alone, or in a saturated band without lines.
-- **Edges.** The gradient on a ramp, snapping on a noisy edge and on flat noise, and the radius through the view metric.
+- **Edges.** The gradient on a ramp, snapping on a noisy edge and on flat noise, and the radius through the view metric. On pure noise, how rarely a click snaps with a mouse's radius and a finger's; the noise of an image mostly clipped to black.
 - **Geometry.** The geometry checks:
   - correction factors;
   - the map and its inverse;
@@ -504,7 +505,9 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - Markers:
     - a point off the line, in a tilted, turned frame, placed where it projects, and points beyond the ends held to them;
     - the mean between samples;
-    - snapping, which finds an edge from either side, clean and noisy, rarely snaps in noise alone, and not where a value is missing;
+    - snapping, which finds an edge from either side, sharp or gradual, nearly clean and noisy, and a bright line's nearer flank;
+    - the edge clicked, which is neither merged with a step beside it nor given up for a stronger edge farther off;
+    - no snap at the end of the data or beside missing values, nor on a clipped or quieter stretch, nor on a ramp without a steepest point, and rarely in noise alone;
     - the markers in the session and in the profile file's header.
 
 The decoding checks need SEM images of your own, which the repository does not hold. Name them on the command line:
