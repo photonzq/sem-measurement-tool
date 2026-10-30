@@ -4,5 +4,7 @@
     { "file": "path/to/a/Zeiss/image.tif", "pixel_nm": 11.58859, "tilt_deg": 0, "info_bar_rows": 77,
       "tilt_correction_on": false, "scan_rotation_deg": 0 },
     { "file": "path/to/another/Zeiss/image.tif" }
-  ]
+  ],
+  "hitachi_folder": "path/to/a/folder/of/Hitachi/TIFF/files/with/their/txt/files",
+  "hitachi_bar_rows": 64
 }

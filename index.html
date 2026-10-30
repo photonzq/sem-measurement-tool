@@ -16,7 +16,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
-  body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; color: var(--text); background: var(--panel); }
+  body { font: 13px/1.4 Bahnschrift, Arial, "Helvetica Neue", Helvetica, system-ui, sans-serif; color: var(--text); background: var(--panel); }
   #app { display: grid; grid-template-columns: 1fr 360px; grid-template-rows: 1fr auto; height: 100vh; }
   #view-wrap { position: relative; background: var(--view); overflow: hidden; min-width: 0; }
   #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
@@ -32,7 +32,7 @@
   #panel section:first-child h2 { margin-top: 4px; }
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
   .row button { flex: 1 1 auto; }
-  .row.tools button { flex: 1 1 0; padding: 4px 4px; }
+  .row.tools button { flex: 1 1 0; padding: 4px 4px; white-space: nowrap; }   /* each name on one line, in any font */
   .row.tools button kbd { display: block; width: max-content; margin: 2px auto 0; }   /* the key under the name, however wide the panel */
   button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--text); cursor: pointer; }
   button:hover:enabled { border-color: var(--accent); }
@@ -55,6 +55,7 @@
   .list .item[aria-selected="true"] .box::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
                                                    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
   label { user-select: none; }
+  .file { font-family: ui-monospace, Consolas, monospace; font-size: 0.95em; }      /* file names: always monospace */
   #panel section > label:has(> input[type=checkbox]) { display: block; width: fit-content; }   /* a switch: a line of its own */
   .note { color: var(--muted); white-space: pre-line; margin: 4px 0; }
   .note.warn { color: var(--warn); }
@@ -169,7 +170,7 @@
 <div id="app">
   <main id="view-wrap">
     <canvas id="view"></canvas>
-    <div id="drop-hint">Drop an SEM image here (TIFF from FEI / Thermo Fisher or Zeiss, or PNG, JPEG), then a session or<br>polygon file if you have one; or use "Open image".  Nothing leaves this computer.</div>
+    <div id="drop-hint">Drop an SEM image here, with its .txt or .hdr metadata file when the microscope writes one (Hitachi, JEOL,<br>TESCAN), then a session or polygon file if you have one; or use "Open image".  Nothing leaves this computer.</div>
     <div id="busy"></div>
     <section id="vertex-window" class="floating" aria-label="Vertices of the selected contour" hidden>
       <header id="vertex-bar"><span id="vertex-title">Vertices</span><button type="button" id="vertex-close" class="close" title="Close (T)" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5"/></svg></button></header>
@@ -227,11 +228,11 @@
     <section>
       <h2>Files</h2>
       <div class="row">
-        <button type="button" id="open-image" title="Open an image (Ctrl+O); dropping a file on the view works too">Open image&hellip;</button>
+        <button type="button" id="open-image" title="Open an image (Ctrl+O); select its metadata file too (.txt, .hdr) when the microscope writes one beside it.  Dropping the files on the view works too">Open image&hellip;</button>
         <button type="button" id="open-session" title="Take up a session (.json), or load the contours of a polygon file (.csv)">Open session&hellip;</button>
         <button type="button" id="save-session" title="Save the measurements and the calibration as a session file (Ctrl+S)" disabled>Save session</button>
       </div>
-      <input type="file" id="image-file" accept=".tif,.tiff,image/tiff,image/png,image/jpeg,image/bmp" hidden>
+      <input type="file" id="image-file" accept=".tif,.tiff,image/tiff,image/png,image/jpeg,image/bmp,.txt,.hdr,text/plain" multiple hidden>
       <input type="file" id="session-file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" hidden>
       <div id="image-info" class="note">No image.</div>
     </section>

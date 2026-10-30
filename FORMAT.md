@@ -21,7 +21,7 @@ All the files give points in **pixel coordinates of the image as stored in the f
 
 - $x$ is the column and $y$ the row, with $y$ down;
 - pixel centres lie at integers: the pixel in row $i$ and column $j$ is centred at $(j, i)$, with its edges at $j \pm 0.5$ and $i \pm 0.5$;
-- an info bar, an FEI data bar or a Zeiss info zone, is part of the stored image.
+- an info bar, an FEI or Hitachi data bar or a Zeiss info zone, is part of the stored image.
 
 These coordinates never change when the calibration does.
 
@@ -60,7 +60,7 @@ Readers ignore keys they do not know.
 | `image` | text | file name of the image |
 | `image_sha256` | hex | SHA-256 of that file; the app asks before loading onto a different image |
 | `image_size_px` | `width height` | size of the stored image in pixels, an info bar included |
-| `databar_rows` | integer | rows of info bar at the bottom: an FEI data bar, or a Zeiss info zone and the rows below it (0 when none). The edge detection, the histogram and the auto levels left them out. |
+| `databar_rows` | integer | rows of info bar at the bottom: an FEI data bar, a Zeiss info zone and the rows below it, a Hitachi data bar, a JEOL data bar below the recorded image size, or a TESCAN info strip (0 when none). The edge detection, the histogram and the auto levels left them out. |
 | `microscope` | text | vendor and system, for the record |
 | `pixel_size_nm` | `x y` | pixel width and height in nm. Absent when unknown: micrometres are then empty |
 | `tilt_deg` | number | stage tilt θ in degrees |

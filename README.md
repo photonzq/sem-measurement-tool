@@ -28,7 +28,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
 ## Working with it
 
-1. **Open an image**: *Open image…*, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, which the panel shows under *Metadata*. The image opens with automatic contrast; *Display*, at the bottom of the panel, shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
+1. **Open an image**: *Open image…*, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, and Hitachi TIFFs with their pixel size. Where the microscope writes its metadata to a file beside the image (Hitachi's and JEOL's `.txt`, TESCAN's `.hdr`), select or drop both files together; that file is then used, for an image of any format, JPEG included. The panel shows the metadata under *Metadata*. The image opens with automatic contrast; *Display*, at the bottom of the panel, shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
 2. **Check the calibration** under *Scale, tilt and rotation*. Choose the tilt correction:
    - *cross-section* for a FIB face;
    - *tilted surface* for features in a tilted surface;
@@ -261,7 +261,39 @@ Images from the chamber camera have no pixel size. In the FEI test image the mic
 
 Tested on two GeminiSEM TIFFs (1024 × 768, 8-bit grey palette). Their zones start at row 691 (GeminiSEM 360) and row 675 (GeminiSEM 560), so the info bar is 77 and 93 rows.
 
-**Other images.** Other TIFFs open without metadata: 8, 16 or 32 bits, grey, palette or RGB, in the compressions UTIF.js decodes. Only uncompressed FEI and Zeiss files were tested. PNG, JPEG and BMP open too, decoded by the browser. Enter the pixel size by hand.
+**Metadata files beside the image.** Hitachi, JEOL and TESCAN write their metadata to a text file of the image's name. Select or drop the image and that file together, and the app uses the file in place of anything the image file holds. It works for an image of any format, a JPEG or a BMP included.
+
+- **Which file.** A `.txt` or `.hdr` file counts as metadata by its content. Any other `.txt` is read as a polygon file, as before. With several metadata files, the one of the image's name is taken.
+- **Checks.** When the file describes an image of another size, the pixel size is not taken, for instance for a JPEG saved at half size. When a Hitachi file names another image, the app says so. Either way the status bar and *Metadata* tell what to check.
+- **Alone.** A metadata file opened without its image is not used, and the status bar says to open both together.
+
+**Hitachi** (SU8200 and others of its software) writes the full set to the `.txt` file, `[SemImageFile]` followed by key=value lines. Part of it also goes into the TIFF, as UTF-16 text in the Windows tags *XPComment* (40092) and *XPAuthor* (40093, the instrument). The app reads:
+
+- **Pixel size**: `PixelSize`, in nm, from the TIFF or the `.txt`. Three checks, all on the 17 files tested:
+  - it equals 127 mm / (magnification × image width) to the 7 digits written, as Hitachi defines its magnification with a display of 127 mm × 95 mm (a 4 × 5 inch picture);
+  - it agrees with the micron marker the microscope draws into the data bar to within 0.1 % (±1 px over 350–544 px);
+  - EM-tool, an ImageJ toolset, also reads `PixelSize` as nm.
+
+  Older instruments used another reference: the S-4800's photo screen is 120 mm × 90 mm. The app never computes the pixel size from the magnification; it takes `PixelSize` as written.
+- **Beam conditions and detector**: in the `.txt`, `AcceleratingVoltage` and `WorkingDistance` (in µm). The TIFF has them only in `Condition`, as rounded on the screen, e.g. `WD=8.2mm`. Also `SignalName`, the model and the date.
+- **Stage tilt** (`StagePositionT`, read as degrees, as the rotation `StagePositionR` is), the microscope's **tilt compensation** (`TiltCompensation`) and the **raster rotation**: in the `.txt` only.
+- **Data bar**: with `DataDisplayCombine=1`, the microscope draws its data bar, white text and a scale bar on black, over the bottom rows of the image and records nothing about it. The app finds it in each image by its pattern (MATH.md, 5.1): the rows at the bottom that are at least half black and almost entirely black or white, also in a JPEG. They stay in the image below a dashed line, and the histogram, the auto levels and the edge detection leave them out.
+
+Tested on 17 TIFFs from an SU8200 (1280 × 960, 8-bit RGB, the three channels equal). Each decoded to the pixel size of its `.txt` file, with a data bar of 64 rows. The `.txt` opened with its TIFF gave the same, with the stage tilt and the precise working distance. A JPEG copy with the `.txt` gave the same in the browser, and the bar's rule finds the whole bar in JPEG copies saved at quality 50 to 95.
+
+**Not yet tested on real images.** These are read from published descriptions and sample files. *Metadata* says so, and asks you to check the pixel size against the scale bar.
+
+- **JEOL** writes a `.txt` file of `$KEY value` lines (`$$` before some keys).
+  - **Pixel size**: from the micron bar, `$$SM_MICRON_MARKER` (e.g. `100um`) over `$$SM_MICRON_BAR` pixels. That is exact to the bar's rounding, half a pixel. Where 120 mm / (`$CM_MAG` × width) falls within that rounding, the app takes this more precise value. The sample file, 1280 px wide at ×95, fits 120 mm; 127 mm is tried too.
+  - **Other values**: the voltage, working distance, probe current, scan rotation, detector, model and date. Rows below `$CM_FULL_SIZE` count as a data bar.
+  - **Stage tilt**: it sits somewhere in `$CM_STAGE_POS`, whose order of values is not documented, so it is not read.
+- **TESCAN** writes `[MAIN]` and `[SEM]` sections of key=value lines in SI units, both to a `.hdr` file and into a TIFF tag. The app finds the tag by its content.
+  - **Pixel size**: `PixelSizeX` and `PixelSizeY` (m).
+  - **Info strip**: `ImageStripSize`, the rows at the bottom.
+  - **Other values**: `HV` or `AcceleratorVoltage`, `WD`, the beam current, `StageTilt` and `ScanRotation` (read as degrees), `Detector`, `Device` and the date.
+- **Thermo Fisher XML** (*FeiImage*), as Phenom desktop SEMs write it into TIFF tag 34683: `pixelWidth`, `pixelHeight`, `workingDistance` and `highVoltage`, with their units.
+
+**Other images.** Other TIFFs open without metadata: 8, 16 or 32 bits, grey, palette or RGB, in the compressions UTIF.js decodes. Only uncompressed FEI, Zeiss and Hitachi files were tested. PNG, JPEG and BMP open too, decoded by the browser. Enter the pixel size by hand.
 
 ## Touch screens, pens and touchpads
 
@@ -357,8 +389,8 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | Path | Content |
 |:--|:--|
 | `index.html` | the page: layout, panel, styles |
-| `js/metadata.js` | FEI and Zeiss metadata: pixel size, data bar, tilt, beam, detector |
-| `js/tiff.js` | TIFF decoding with UTIF.js into grey values and calibration; the Zeiss info zone, (Z1) in the header |
+| `js/metadata.js` | FEI, Zeiss, Hitachi, JEOL, TESCAN and Thermo Fisher XML metadata: pixel size, data bar, tilt, beam, detector |
+| `js/tiff.js` | TIFF decoding with UTIF.js into grey values and calibration; metadata in tags and in files beside the image; the Zeiss info zone and the Hitachi data bar, (Z1) and (H1) in the header |
 | `js/edges.js` | edge strength, crests, snapping and the structure tensor; derivations (E1)–(E8) in the header |
 | `js/transform.js` | the affine map, measures, levelling, the arrow-key step; derivations (G1)–(G15) in the header |
 | `js/polygons.js` | the polygon, measurements and profile files (CSV) |
@@ -406,7 +438,16 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
 
 *npm test* runs `tests/check_core.mjs`, which loads the scripts in Node and covers:
 
-- **Decoding.** Every FEI TIFF of a folder and the Zeiss files given are decoded and checked: vendor, size, bits per sample, info bar, pixel size, and the values against the file's bytes. With `tests/local_data.json` (below), each Zeiss file must also decode to the pixel size, tilt and info bar given there.
+- **Decoding.** Every FEI TIFF of a folder and the Zeiss files given are decoded and checked: vendor, size, bits per sample, info bar, pixel size, and the values against the file's bytes. With `tests/local_data.json` (below):
+  - each Zeiss file must also decode to the pixel size, tilt and info bar given there;
+  - every TIFF of a folder of Hitachi images is decoded too, with its data bar of the rows given there. Its pixel size must equal the `PixelSize` of the `.txt` file beside it, a file the microscope writes apart from the TIFF, and 127 mm / (magnification × width).
+- **Hitachi files built in the test.** A small RGB TIFF with *XPComment* and *XPAuthor* tags decodes to its pixel size, beam, detector and data bar. On synthetic images the data bar is found where drawn and nowhere else: not in noise, a dark band with grey text, a bar too short or too tall, or a white band.
+- **Metadata files and tags.** These checks run on images decoded in the test:
+  - A Hitachi `.txt` opened with an image decoded as a browser decodes a JPEG gives all its values. On an image of another size it gives no pixel size, and a file written for another image is noted.
+  - JEOL `.txt` files give the micron bar's pixel size, refined by the magnification where that fits, with markers in nm and µm. A marker in degrees gives none.
+  - A TESCAN `.hdr`, and the same text in a TIFF tag, give their values and info strip.
+  - Thermo Fisher's XML in tag 34683 gives its values.
+  - The vendor of each text is told by its content, and a polygon file is told from them.
 - **Info zone.** On synthetic images the search finds a zone between two black lines and a zone running to the last row. It finds none in an image without one, in a black line alone, or in a saturated band without lines.
 - **Edges.** The gradient on a ramp, snapping on a noisy edge and on flat noise, and the radius through the view metric.
 - **Geometry.** The geometry checks:
@@ -449,7 +490,7 @@ The decoding checks need SEM images of your own, which the repository does not h
 node tests/check_core.mjs "<FEI folder>" "<Zeiss TIFF>" "<Zeiss TIFF>"
 ```
 
-Or name them once in `tests/local_data.json`, which git ignores. `tests/local_data.example.json` shows its form, including the pixel size, tilt and info bar that each Zeiss file must decode to. Without test images, the decoding checks are skipped and the others run.
+Or name them once in `tests/local_data.json`, which git ignores. `tests/local_data.example.json` shows its form: the pixel size, tilt and info bar that each Zeiss file must decode to, and a folder of Hitachi TIFFs with their `.txt` files (`hitachi_folder`, `hitachi_bar_rows`), which only this file can name. Without test images, the decoding checks are skipped and the others run.
 
 ## Third-party code
 
@@ -465,6 +506,8 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
 - **TIFF files.** Only the first image of a multi-image TIFF is read.
 - **Console message.** UTIF.js writes "unknown TIFF tag type: 13" to the browser console for FEI files, about a directory-pointer tag it skips; it is harmless.
 - **Zeiss info zone.** It is recognised by its pattern (MATH.md, 5.1). A zone drawn otherwise, for instance without its black lines, is not found, and then takes part in the histogram, the auto levels and the edge map. Image rows that happened to show the pattern in the lowest third would be taken for a zone and left out.
+- **Hitachi files.** The data bar is likewise recognised by its pattern (MATH.md, 5.1). The stage tilt is not in the TIFF: open the image with its `.txt` file for it. Hitachi TIFFs without the *XPComment* tag, as older instruments may write, open without metadata unless opened with their `.txt`.
+- **JEOL, TESCAN and Thermo Fisher XML** are read from published descriptions and sample files, not yet from real images. Their angles' units and JEOL's stage tilt are not established. Check the pixel size against the scale bar the first time.
 - **Snapping.** Bright lines have two flanks; edges closer than about 2σ merge; a snapped point may slide a pixel or two along its edge.
 - **Line profiles.**
   - Straight lines only.

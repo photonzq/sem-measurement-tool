@@ -6,7 +6,8 @@
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
    selectionRange, valueRange, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
-   widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile */
+   widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, metadataVendor, withMetadataText,
+   fileStem */
 /*
  * The SEM measurement tool: open an image, take measurements (contours, rulers, angles, profiles) with
  * optional snapping to edges, correct a tilted specimen, turn the image, and keep the work in a
@@ -47,7 +48,8 @@ const EDGE_RGB = [0, 255, 170];      // edge-strength overlay
 const HIT_PX = 8;                    // screen pixels within which a point is under the cursor
 const ARC_PX = 22;                   // radius of the angle arcs
 const HISTORY = 500;
-const LABEL_FONT = "12px system-ui, -apple-system, 'Segoe UI', Arial, sans-serif";
+const LABEL_FONT = "12px Bahnschrift, Arial, 'Helvetica Neue', Helvetica, system-ui, sans-serif";   // as the page's
+const FILE_FONT = "12px ui-monospace, Consolas, monospace";      // file names, as on the page (.file)
 const LABEL_HEIGHT = 18;             // of the dark chip a label sits on, CSS pixels
 
 /** "pan" is no tool: the mouse, one finger or two only move and zoom the view. @typedef {"pan"|MeasureKind} Tool */
@@ -288,11 +290,34 @@ function setStatus(text) {
   el("status").textContent = text;
 }
 
-/** @param {string} text  "" hides it */
+/** @param {string|TextParts} text  "" hides it */
 function setBusy(text) {
   const b = el("busy");
-  b.textContent = text;
-  b.style.display = text ? "block" : "none";
+  fillParts(b, typeof text === "string" ? [text] : text);
+  b.style.display = b.textContent ? "block" : "none";
+}
+
+/**
+ * Text in which file names stand apart: each {file} is shown in the monospace font, as file names
+ * always are.
+ * @typedef {Array<string|{file: string}>} TextParts
+ */
+
+/**
+ * Fill an element with text parts, each file name in a span of class "file".
+ * @param {HTMLElement} element
+ * @param {TextParts} parts
+ */
+function fillParts(element, parts) {
+  element.replaceChildren(...parts.map((part) => {
+    if (typeof part === "string") {
+      return document.createTextNode(part);
+    }
+    const span = document.createElement("span");
+    span.className = "file";
+    span.textContent = part.file;
+    return span;
+  }));
 }
 
 /** Let the browser paint (e.g. a "busy" message) before a long computation. */
@@ -409,13 +434,16 @@ function paintPicture() {
 }
 
 /**
- * Open an image from the bytes of a file.  Returns false (with a message) when it cannot be read.
+ * Open an image from the bytes of a file, with the text of its metadata file when one was opened
+ * with it (used in place of the image file's own).  Returns false (with a message) when it cannot
+ * be read.
  * @param {string} name
  * @param {ArrayBuffer} buffer
+ * @param {{name: string, text: string}|null} [metadata]
  * @returns {Promise<boolean>}
  */
-async function openImageBuffer(name, buffer) {
-  setBusy(`Reading ${name} ...`);
+async function openImageBuffer(name, buffer, metadata = null) {
+  setBusy(["Reading ", { file: name }, " ..."]);
   await nextPaint();
   /** @type {SEMImage} */
   let image;
@@ -423,6 +451,9 @@ async function openImageBuffer(name, buffer) {
     const head = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
     const tiff = (head[0] === 0x49 && head[1] === 0x49) || (head[0] === 0x4d && head[1] === 0x4d);
     image = tiff ? decodeSEMImage(buffer, name) : await decodeBrowserImage(buffer, name);
+    if (metadata !== null) {
+      image = withMetadataText(image, metadata.text, metadata.name) ?? image;
+    }
   } catch (err) {
     setBusy("");
     window.alert(`Could not read ${name}:\n${err instanceof Error ? err.message : String(err)}`);
@@ -464,7 +495,9 @@ async function openImageBuffer(name, buffer) {
   refreshDisplay();
   fit();
   setBusy("");
-  setStatus(`Opened ${name}: ${image.width} x ${image.height} pixels`);
+  const from = cal.metadataFile === null ? "" : ` with the metadata of ${cal.metadataFile}`;
+  const notes = cal.notes.length ? `; check: ${cal.notes.join("; ")}` : "";
+  setStatus(`Opened ${name}${from}: ${image.width} x ${image.height} pixels${notes}`);
   await refreshEdges();
   return true;
 }
@@ -1675,7 +1708,7 @@ function showImageInfo() {
     ? `\ninfo bar: the bottom ${image.height - image.imageRows} rows, below the dashed line, left out of the histogram, ` +
       "the auto contrast and the edge detection"
     : "";
-  el("image-info").textContent = `${image.name}\n${image.width} x ${image.height} pixels (${image.sampleType})${bar}`;
+  fillParts(el("image-info"), [{ file: image.name }, `\n${image.width} x ${image.height} pixels (${image.sampleType})${bar}`]);
 }
 
 function showMetadata() {
@@ -2424,17 +2457,60 @@ function loadSessionText(text, name) {
 }
 
 /**
- * Open a file: a session (.json) or polygon file (.csv, .txt), else an image.
+ * The text of a small file: UTF-8, or Windows-1252 when it is not valid UTF-8 (a micro sign, say).
  * @param {File} file
+ * @returns {Promise<string>}
  */
-async function openFile(file) {
-  const buffer = await file.arrayBuffer();
-  if (/\.json$/i.test(file.name)) {
-    loadSessionText(new TextDecoder("utf-8").decode(buffer), file.name);
-  } else if (/\.(csv|txt)$/i.test(file.name)) {
-    loadPolygonText(new TextDecoder("utf-8").decode(buffer), file.name);
-  } else if (!app.dirty || !hasWork() || window.confirm("Discard the unsaved work and open another image?")) {
-    await openImageBuffer(file.name, buffer);
+async function readText(file) {
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
+}
+
+/**
+ * Open files chosen or dropped together: an image with its metadata file (a .txt or .hdr file
+ * whose text one vendor's is: Hitachi, JEOL, TESCAN), then sessions (.json) and polygon files
+ * (.csv, other .txt).  The metadata file of the image's name is taken, else the only one.
+ * @param {File[]} files
+ */
+async function openFiles(files) {
+  /** @type {File[]} */
+  const images = [];
+  /** @type {Array<{name: string, text: string}>} */
+  const metadata = [];
+  /** @type {Array<{name: string, text: string}>} */
+  const others = [];
+  for (const file of files) {
+    if (/\.(json|csv|txt|hdr)$/i.test(file.name)) {
+      const text = await readText(file);
+      (/\.(txt|hdr)$/i.test(file.name) && metadataVendor(text) !== null ? metadata : others).push({ name: file.name, text });
+    } else {
+      images.push(file);
+    }
+  }
+  const image = images[0];
+  if (image === undefined && metadata.length > 0) {
+    setStatus(`${metadata[0].name} holds microscope metadata: open it together with its image (select or drop both).`);
+  }
+  if (image !== undefined && (!app.dirty || !hasWork() || window.confirm("Discard the unsaved work and open another image?"))) {
+    const own = metadata.find((m) => fileStem(m.name) === fileStem(image.name)) ?? (metadata.length === 1 ? metadata[0] : null);
+    if (!(await openImageBuffer(image.name, await image.arrayBuffer(), own))) {
+      return;
+    }
+    const left = [...images.slice(1).map((f) => f.name), ...metadata.filter((m) => m !== own).map((m) => m.name)];
+    if (left.length) {
+      setStatus(`${el("status").textContent}; not opened: ${left.join(", ")} (one image, and its metadata file, at a time)`);
+    }
+  }
+  for (const other of others) {
+    if (/\.json$/i.test(other.name)) {
+      loadSessionText(other.text, other.name);
+    } else {
+      loadPolygonText(other.text, other.name);
+    }
   }
 }
 
@@ -2891,7 +2967,7 @@ function drawProfilePlot() {
  * @param {number} w
  * @param {number} h
  * @param {ProfileData|null} data
- * @param {{cursor: number|null, title: string|null}} how
+ * @param {{cursor: number|null, title: TextParts|null}} how
  * @returns {{left: number, right: number}}
  */
 function plotProfile(g, w, h, data, how) {
@@ -2899,11 +2975,16 @@ function plotProfile(g, w, h, data, how) {
   g.fillRect(0, 0, w, h);
   const top = how.title === null ? 10 : 34;
   if (how.title !== null) {
-    g.font = `600 ${LABEL_FONT}`;
     g.fillStyle = "#272727";
     g.textAlign = "left";
     g.textBaseline = "top";
-    g.fillText(how.title, 12, 10);
+    let x = 12;
+    for (const part of how.title) {                 // a file name in the monospace font
+      g.font = `600 ${typeof part === "string" ? LABEL_FONT : FILE_FONT}`;
+      const text = typeof part === "string" ? part : part.file;
+      g.fillText(text, x, 10);
+      x += g.measureText(text).width;
+    }
   }
   g.font = LABEL_FONT;
   const length = data === null ? NaN : data.geometry.length;
@@ -3116,7 +3197,7 @@ function exportProfilePng(ms = shownProfile()) {
   const { length, width, unit } = data.geometry;
   const u = unit === null ? "" : ` ${unitText(unit)}`;
   const about = Number.isFinite(length) ? `: ${show(length)}${u} long, band ${show(width)}${u} wide` : "";
-  plotProfile(g, w, h, data, { cursor: null, title: `${ms.name} on ${app.image ? app.image.name : "no image"}${about}` });
+  plotProfile(g, w, h, data, { cursor: null, title: [`${ms.name} on `, app.image ? { file: app.image.name } : "no image", about] });
   const name = `${stem()}_${fileSafe(ms.name)}.png`;
   c.toBlob((blob) => {
     if (blob !== null) {
@@ -4479,9 +4560,9 @@ window.addEventListener("drop", (e) => {
   }
   e.preventDefault();
   wrap.classList.remove("dragover");
-  const file = e.dataTransfer && e.dataTransfer.files[0];
-  if (file) {
-    openFile(file);
+  const files = e.dataTransfer ? [...e.dataTransfer.files] : [];
+  if (files.length) {
+    openFiles(files);
   }
 });
 
@@ -4491,9 +4572,9 @@ el("save-session").addEventListener("click", () => saveSession());
 for (const id of ["image-file", "session-file"]) {
   inputEl(id).addEventListener("change", () => {
     const input = inputEl(id);
-    const file = input.files && input.files[0];
-    if (file) {
-      openFile(file);
+    const files = input.files ? [...input.files] : [];
+    if (files.length) {
+      openFiles(files);
     }
     input.value = "";
   });
@@ -4801,7 +4882,7 @@ setTool("pan");                     // the app opens with no tool: the view pans
 /** The page's state and actions, for scripts that drive it (tests, automation). */
 Object.assign(window, {
   semMeasurementTool: {
-    state: app, openImageBuffer, loadPolygonText, loadSessionText, polygonText, measurementText, sessionText,
+    state: app, openImageBuffer, openFiles, loadPolygonText, loadSessionText, polygonText, measurementText, sessionText,
     addVertex, finishContour, undo, redo, fit, frameInputsChanged, refreshEdges, storedToScreen, screenToStored,
     snapTarget, setTool, placePoint, levelSelected, axisFromSelected, draw, insertTarget, pickVertex, movePicked,
     dropPicked, makePickedFirst, reversePicked, setVertexCoordinate, zoomToPicked, toggleVertexWindow, gdsElements,

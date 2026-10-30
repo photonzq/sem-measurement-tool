@@ -9,7 +9,7 @@ This document derives what the app computes from an image:
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
 - **Part 6:** line profiles: the band, the samples, the contours that cross the line, and squaring a profile to the edge it crosses.
 
-Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P11) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
+Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P11) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
 
 ## Part 1. Geometry
 
@@ -549,6 +549,36 @@ Everything from $y_0$ down counts as the info bar: $H - y_0$ rows.
 - Rows of image below the zone, 1 and 17 in the test images, are left out with it. The processed rows thereby stay one block, from row 0 to the zone.
 
 The tests run (Z1) on synthetic images. It must find a zone between two lines and a zone running to the last row. It must find none in an image without one, in a black line alone, or in a saturated band without lines.
+
+**Hitachi** files record that a bar is there (`DataDisplayCombine=1`) but not where. The microscope draws it over the bottom rows of the image: white text and a scale bar on black. Call a pixel *black* when $v \le v_{\min} + 0.1\,R$ and *white* when $v \ge v_{\max} - 0.1\,R$. That is wider than for Zeiss, because a JPEG blurs the edges of the text. The bar is the block of rows that reaches the last row and in which every row is
+
+1. at least half black;
+2. at least 90 % black or white;
+
+provided the block is at least 16 rows and at most $H/4$. (H1)
+
+**Why these numbers.** In the 17 test images, from an SU8200 at 1280 × 960, the bar is the bottom 64 rows, 896–959.
+
+- Its rows are 63–100 % black, and every pixel in it is exactly 0 or 255, so both tests pass with wide margins.
+- No row of image above it is more than 0.2 % black, far from half a row.
+- Saved as JPEG at quality 50 to 95, the bar's rows stay at least 60 % black and 91 % black or white, and the whole bar is found. The second test is the closer one at quality 50; at quality 75 and above every row passes it by over 8 points.
+- With the 2 % of the Zeiss test and 99 % here, a JPEG saved at quality 90 kept only the bottom 16 rows of the bar: the ringing around the text pushed its rows out of the second test.
+
+The limits on the block's height keep out two things:
+
+- one or a few black rows at the bottom, which a bar of text cannot be;
+- a large region of saturated black and white image reaching the last row, which would otherwise be read as one tall bar. A larger bar is not taken: all the rows then count as image.
+
+**What it gets wrong, by construction.** Rows of image at the bottom that are mostly saturated black, with the rest saturated white, would join the bar. Snapping would then not work there. No test image comes near this.
+
+The tests run (H1) on synthetic images. It must find a bar drawn as Hitachi draws it. It must find none in an image without one, in a dark band whose text is grey, in bars of 10 rows or of more than $H/4$, or in a white band. A Hitachi TIFF built in the tests, with `DataDisplayCombine=0`, must keep all its rows.
+
+**JEOL and TESCAN** record their bars, so nothing is found in the pixels.
+
+- JEOL's `.txt` gives the image's size in `$CM_FULL_SIZE`. When the file has the same width and more rows, the rows below are the data bar.
+- TESCAN's `ImageStripSize` gives the rows of its info strip at the bottom.
+
+Neither is yet tested on real images (README, *Microscope files*).
 
 ### 5.2 Levels (D1) and the auto levels (D2)
 

@@ -7,7 +7,12 @@
 //    FEI folder and every Zeiss file is decoded: vendor, size, bits per sample and info bar must
 //    agree, an electron image must have a pixel size, and the decoded values must equal the bytes
 //    of the file read directly at the strip offsets.  The local file may also give each Zeiss
-//    file's expected pixel size, tilt and info bar.  Without test images these checks are skipped.
+//    file's expected pixel size, tilt and info bar.  Every TIFF of a Hitachi folder (local file
+//    only) is decoded too, its pixel size checked against the .txt file the microscope writes
+//    beside it, and that file opened with the image must give the same, with the stage tilt.
+//    Without test images these checks are skipped.  Always: a Hitachi TIFF built in the test is
+//    decoded; metadata files opened with an image (Hitachi, JEOL, TESCAN), on images decoded here;
+//    TESCAN text and Thermo Fisher XML found in TIFF tags by their content.
 // 2. Gradient: exact on a linear ramp.  Snapping: onto a noisy synthetic edge within 0.25 px, not
 //    on flat noise, and with the search radius measured through the view metric (E7).
 // 3. Geometry (transform.js): correction factors, the map (G8) and its inverse, the tilt axis
@@ -19,8 +24,8 @@
 //    gdstk and KLayout write for the units), random round trips, and a file read back record by
 //    record, with the elements it must leave out.
 // 6. The vertex window's operations (vertices.js) and the screen step of the arrow keys (G15).
-// 7. The Zeiss info zone (Z1): found in the Zeiss files where the local file expects it, and on
-//    synthetic images found where drawn and nowhere else.  The session keeps the display levels.
+// 7. The Zeiss info zone (Z1) and the Hitachi data bar (H1): found in the files where the local
+//    file expects them, and on synthetic images found where drawn and nowhere else.  The session keeps the display levels.
 // 8. The display (display.js): the histogram's bins of whole values (D4), over 0-255 for 8-bit
 //    images and over the values for 16 and 32 bits; brightness and contrast (D3) against the
 //    arithmetic of ImageJ's ContrastAdjuster, transcribed here, and their round trips; the grey
@@ -62,7 +67,7 @@ function loadApi() {
     normalizeDegrees, lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, levelRotation,
     axisFromLine, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatSession,
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
-    reverseContour, selectionRange, findInfoZone, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness,
+    reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness,
     sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
     widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, UTIF })`, context);
 }
@@ -75,16 +80,17 @@ function readBuffer(file) {
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 }
 
-/** Sample i of an uncompressed, single-sample image read straight from the file. */
+/** Sample i of an uncompressed image read straight from the file: its first channel when in colour. */
 function directSample(buffer, i) {
   const ifd = api.UTIF.decode(buffer)[0];
   const bits = ifd.t258[0];
   const offsets = ifd.t273;
   const rowsPerStrip = Math.min(ifd.t278 ? ifd.t278[0] : ifd.t257[0], ifd.t257[0]);
   const width = ifd.t256[0];
+  const channels = ifd.t277 ? ifd.t277[0] : 1;
   const row = Math.floor(i / width);
   const strip = Math.floor(row / rowsPerStrip);
-  const within = (row - strip * rowsPerStrip) * width + (i % width);
+  const within = ((row - strip * rowsPerStrip) * width + (i % width)) * channels;
   const view = new DataView(buffer);
   const little = new Uint8Array(buffer, 0, 1)[0] === 0x49;
   return bits === 16 ? view.getUint16(offsets[strip] + 2 * within, little) : view.getUint8(offsets[strip] + within);
@@ -92,19 +98,22 @@ function directSample(buffer, i) {
 
 /**
  * The test images: from the command line, or else from tests/local_data.json (git-ignored, see
- * tests/local_data.example.json), which may also give what each Zeiss file must decode to.
+ * tests/local_data.example.json), which may also give what each Zeiss file must decode to, and a
+ * folder of Hitachi images with the rows of their data bar.
  * @returns {{feiFolder: string|null, zeiss: Array<{file: string, pixel_nm?: number, tilt_deg?: number,
- *     info_bar_rows?: number, tilt_correction_on?: boolean, scan_rotation_deg?: number}>}}
+ *     info_bar_rows?: number, tilt_correction_on?: boolean, scan_rotation_deg?: number}>,
+ *     hitachiFolder: string|null, hitachiBarRows?: number}}
  */
 function testImages(args) {
   if (args.length > 0) {
-    return { feiFolder: args[0], zeiss: args.slice(1).map((file) => ({ file })) };
+    return { feiFolder: args[0], zeiss: args.slice(1).map((file) => ({ file })), hitachiFolder: null };
   }
   if (!fs.existsSync(LOCAL_DATA)) {
-    return { feiFolder: null, zeiss: [] };
+    return { feiFolder: null, zeiss: [], hitachiFolder: null };
   }
   const data = JSON.parse(fs.readFileSync(LOCAL_DATA, "utf-8"));
-  return { feiFolder: data.fei_folder ?? null, zeiss: data.zeiss ?? [] };
+  return { feiFolder: data.fei_folder ?? null, zeiss: data.zeiss ?? [], hitachiFolder: data.hitachi_folder ?? null,
+    hitachiBarRows: data.hitachi_bar_rows };
 }
 
 function checkFei(folder) {
@@ -169,6 +178,298 @@ function checkZeiss(entries) {
       `${cal.tiltCorrectionOn}; info zone found from row ${image.imageRows} (${cal.databarRows} rows left out); values as ` +
       `in the file${given.length ? `; as expected: ${given.join(", ")}` : ""}`);
   }
+}
+
+/**
+ * Every TIFF of a folder of Hitachi images: decoded as Hitachi, its values as in the file.  With the .txt
+ * file the microscope writes beside it: its pixel size that file's PixelSize, and that size 127 mm /
+ * (magnification x width).  With ``barRows``: a data bar of so many rows.
+ * @param {string|null} folder
+ * @param {number|undefined} barRows
+ */
+function checkHitachi(folder, barRows) {
+  if (folder === null) {
+    console.log("SKIP  Hitachi: no folder of test images (tests/local_data.json)");
+    return;
+  }
+  const files = fs.existsSync(folder) ? fs.readdirSync(folder).filter((f) => /\.tiff?$/i.test(f)).sort() : [];
+  if (files.length === 0) {
+    console.log(`SKIP  Hitachi: no TIFF files in ${folder}`);
+    return;
+  }
+  let worst = 0;
+  let paired = 0;
+  for (const name of files) {
+    const buffer = readBuffer(path.join(folder, name));
+    const image = api.decodeSEMImage(buffer, name);
+    const cal = image.calibration;
+    const n = image.width * image.height;
+    const same = [0, image.width - 1, Math.floor(n / 2) + 5, n - 1].every((i) => image.data[i] === directSample(buffer, i));
+    const txt = path.join(folder, name.replace(/\.tiff?$/i, ".txt"));
+    let asTxt = true;
+    if (fs.existsSync(txt)) {
+      const text = fs.readFileSync(txt, "latin1");
+      const md = api.parseKeyValueText(text);
+      const width = Number(md.DataSize.split("x")[0]);
+      const pixel = Number(md.PixelSize) * 1e-9;
+      worst = Math.max(worst, Math.abs((pixel * Number(md.Magnification) * width) / 127e-3 - 1));
+      // the .txt opened with the image: used in place of the TIFF's tags
+      const opened = api.withMetadataText(image, text, path.basename(txt));
+      const oc = opened.calibration;
+      asTxt = cal.pixelSizeM !== null && cal.pixelSizeM[0] === pixel && width === image.width
+        && oc.pixelSizeM[0] === pixel && oc.metadataFile === path.basename(txt) && oc.tiltDeg === Number(md.StagePositionT)
+        && oc.tiltCorrectionOn === (md.TiltCompensation !== "0") && oc.databarRows === cal.databarRows
+        && Math.abs(oc.workingDistanceM - Number(md.WorkingDistance.split(" ")[0]) * 1e-6) < 1e-15 && oc.notes.length === 0;
+      paired++;
+    }
+    check(image.vendor === "Hitachi" && same && asTxt && image.imageRows === image.height - cal.databarRows
+      && (barRows === undefined || cal.databarRows === barRows),
+    `Hitachi ${name}: ${image.width} x ${image.height} ${image.sampleType}, ${cal.system}, pixel ` +
+      `${cal.pixelSizeM ? (cal.pixelSizeM[0] * 1e9).toFixed(6) : "none"} nm${fs.existsSync(txt) ? " as in its .txt, " +
+        "which opened with it gives the same, the stage tilt and the precise WD" : ""}, ` +
+      `data bar found from row ${image.imageRows} (${cal.databarRows} rows left out); values as in the file`);
+  }
+  if (paired > 0) {
+    check(worst < 1e-6, `Hitachi pixel size: PixelSize = 127 mm / (magnification x width) in all ${paired} .txt files, ` +
+      `to ${worst.toExponential(1)} (relative)`);
+  }
+}
+
+/**
+ * A little-endian, uncompressed RGB TIFF of grey values 0-255 (``w`` x ``h``, w h even), with tags of
+ * type BYTE added: {code: bytes}.  The pixels follow the header and the directory follows them.
+ */
+function rgbTiff(grey, w, h, byteTags) {
+  const p = w * h * 3;
+  /** tag, type (1 byte, 3 short, 4 long), values */
+  const entries = [[256, 3, [w]], [257, 3, [h]], [258, 3, [8, 8, 8]], [259, 3, [1]], [262, 3, [2]], [273, 4, [8]],
+    [277, 3, [3]], [278, 3, [h]], [279, 4, [p]], [284, 3, [1]],
+    ...Object.entries(byteTags).map(([tag, bytes]) => [Number(tag), 1, bytes])];
+  const size = { 1: 1, 3: 2, 4: 4 };
+  const ifd = 8 + p;
+  let extra = ifd + 2 + 12 * entries.length + 4;
+  const room = entries.reduce((sum, [, type, v]) => sum + (v.length * size[type] > 4 ? v.length * size[type] + 1 : 0), 0);
+  const buffer = new ArrayBuffer(extra + room);
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  view.setUint16(0, 0x4949, true);
+  view.setUint16(2, 42, true);
+  view.setUint32(4, ifd, true);
+  grey.forEach((v, i) => bytes.fill(v, 8 + 3 * i, 11 + 3 * i));
+  view.setUint16(ifd, entries.length, true);
+  entries.forEach(([tag, type, values], k) => {
+    const at = ifd + 2 + 12 * k;
+    const length = values.length * size[type];
+    view.setUint16(at, tag, true);
+    view.setUint16(at + 2, type, true);
+    view.setUint32(at + 4, values.length, true);
+    let to = at + 8;
+    if (length > 4) {
+      view.setUint32(at + 8, extra, true);
+      to = extra;
+      extra += length + (length % 2);
+    }
+    values.forEach((v, j) => {
+      if (type === 1) {
+        bytes[to + j] = v;
+      } else if (type === 3) {
+        view.setUint16(to + 2 * j, v, true);
+      } else {
+        view.setUint32(to + 4 * j, v, true);
+      }
+    });
+  });
+  return buffer;
+}
+
+/** UTF-16LE bytes of a text and its ending 0, as Windows writes its "XP" tags. */
+function utf16(text) {
+  const out = new Uint8Array(2 * text.length + 2);
+  for (let i = 0; i < text.length; i++) {
+    out[2 * i] = text.charCodeAt(i) & 255;
+    out[2 * i + 1] = text.charCodeAt(i) >> 8;
+  }
+  return out;
+}
+
+/**
+ * A Hitachi TIFF built here, 64 x 96 RGB with a data bar of 20 rows (black, a seventh white): its
+ * calibration from the XPComment and XPAuthor tags, the bar found (H1), and no bar looked for when
+ * DataDisplayCombine is 0.  Also (H1) on synthetic grey images: a bar found where drawn, and none in
+ * noise, in a dark band that is not black and white, in a bar shorter than 16 rows or taller than a
+ * quarter of the image, or in a white band.
+ */
+function checkHitachiSynthetic() {
+  const [w, h] = [64, 96];
+  const noise = gaussian(5);
+  const picture = (barRows, value = () => 255) => {
+    const g = Array.from({ length: w * h }, () => Math.round(Math.min(250, Math.max(10, 120 + 8 * noise()))));
+    for (let y = h - barRows; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        g[y * w + x] = (x + 3 * y) % 7 === 0 ? value() : 0;
+      }
+    }
+    return g;
+  };
+  const comment = (combine) => utf16(["SerialNumber=0000-0000-00", "DataNumber=000000 0001", "SampleName=test",
+    "PixelSize=5.512153", "Condition=Vacc=2.0kV   Mag=x18.0k   WD=8.2mm", "EmissionCurrent=4.7", "SignalName=SE(L)",
+    `DataDisplayCombine=${combine}`, ""].join("\r\n"));
+  const decode = (combine) => api.decodeSEMImage(
+    rgbTiff(picture(20), w, h, { 40092: comment(combine), 40093: utf16("SU8200") }), "hitachi.tif");
+  const image = decode(1);
+  const cal = image.calibration;
+  const lines = api.describeCalibration(cal);
+  const without = decode(0);
+  check(image.vendor === "Hitachi" && cal.system === "Hitachi SU8200" && Math.abs(cal.pixelSizeM[0] - 5.512153e-9) < 1e-20
+    && cal.pixelSizeM[1] === cal.pixelSizeM[0] && Math.abs(cal.fieldWidthM - 64 * 5.512153e-9) < 1e-20
+    && cal.highVoltageV === 2000 && Math.abs(cal.workingDistanceM - 8.2e-3) < 1e-15 && cal.detector === "SE(L)"
+    && cal.tiltDeg === null && cal.databarRows === 20 && image.imageRows === 76 && without.calibration.databarRows === 0
+    && lines.includes("stage tilt: not in the TIFF (Hitachi writes it to the .txt file beside the image: open both together)")
+    && image.metadataText.startsWith("SerialNumber="),
+  "Hitachi TIFF built here (XPComment and XPAuthor, UTF-16): SU8200, pixel 5.512153 nm, field width, 2 kV, WD 8.2 mm, " +
+    "SE(L), no stage tilt; data bar of 20 rows found, none looked for with DataDisplayCombine=0");
+  const md = api.parseKeyValueText(["[SemImageFile]", "InstructName=SU8200", "Condition=Vacc=2.0kV   WD=8.2mm", "no equals",
+    ""].join("\r\n"));
+  const grey = (g) => Float32Array.from(g);
+  const found = {
+    bar: api.findHitachiBar(grey(picture(20)), w, h),
+    none: api.findHitachiBar(grey(picture(0)), w, h),
+    grey: api.findHitachiBar(grey(picture(20, () => 128)), w, h),
+    short: api.findHitachiBar(grey(picture(10)), w, h),
+    tall: api.findHitachiBar(grey(picture(30)), w, h),
+  };
+  const white = picture(0);
+  white.fill(255, (h - 20) * w);
+  white[0] = 0;
+  found.white = api.findHitachiBar(grey(white), w, h);
+  check(JSON.stringify(md) === '{"InstructName":"SU8200","Condition":"Vacc=2.0kV   WD=8.2mm"}' && found.bar === 76
+    && found.none === null && found.grey === null && found.short === null && found.tall === null && found.white === null,
+  `Hitachi data bar (H1) on synthetic images: found from row ${found.bar}; none in noise, in a dark band with grey ` +
+    "text, in a bar of 10 rows or of 30 (over a quarter of 96), or in a white band; the .txt's section header skipped " +
+    "and Condition kept whole");
+}
+
+/** The bytes of an ASCII text and its ending 0, as a TIFF tag of type BYTE holds text. */
+function asciiBytes(text) {
+  return Uint8Array.from(`${text}\0`, (c) => c.charCodeAt(0));
+}
+
+/**
+ * Metadata files opened with an image (withMetadataText), and metadata in TIFF tags found by their content, on a
+ * 64 x 96 image with a Hitachi-style data bar of 20 rows, as a browser decodes a JPEG.
+ */
+const META = (() => {
+  const [w, h] = [64, 96];
+  const grey = Array.from({ length: w * h }, (_, i) => 100 + (i % 37));
+  for (let i = (h - 20) * w; i < w * h; i++) {
+    grey[i] = i % 7 === 0 ? 255 : 0;
+  }
+  return { w, h, grey };
+})();
+
+/** The image of META as a browser decodes it (no metadata), named ``name``. */
+function metaImage(name) {
+  return { ...api.decodeSEMImage(rgbTiff(META.grey, META.w, META.h, {}), "x.tif"), name };
+}
+
+/** A Hitachi .txt for the image of META. */
+function hitachiText() {
+  return ["[SemImageFile]", "InstructName=SU8200", "ImageName=sample_0001.tif", `DataSize=${META.w}x${META.h}`,
+    "PixelSize=5.512153", "AcceleratingVoltage=2000 Volt", "WorkingDistance=8206.67 um", "SignalName=SE(L)",
+    "DataDisplayCombine=1", "StagePositionT=12.5", "TiltCompensation=1", "RasterRotation=3.0", "Date=10/29/2026",
+    "Time=19:00:54", ""].join("\r\n");
+}
+
+/** A JEOL .txt: magnification, micron bar (pixels) and marker; the recorded size 64 x 80. */
+function jeolText(mag, bar, marker) {
+  return ["$CM_FORMAT JEOL-SEM", `$CM_MAG ${mag}`, "$CM_FULL_SIZE 64 80", `$$SM_MICRON_BAR ${bar}`,
+    `$$SM_MICRON_MARKER ${marker}`, "$CM_ACCEL_VOLT 7.00", "$$SM_WD 10.52", "$$SM_PROBE_CURRENT 1.64e-008",
+    "$$SM_SCAN_ROTATION 0.00", "$CM_SIGNAL SEI", "$CM_INSTRUMENT 8530F", "$CM_DATE 2020/08/31", "$CM_TIME 15:32:31", ""]
+    .join("\r\n");
+}
+
+/** A TESCAN .hdr. */
+function tescanText() {
+  return ["[MAIN]", "Date=2024-02-07", "Time=10:11:12", "Device=TESCAN SOLARIS X", "ImageStripSize=12",
+    "PixelSizeX=5e-09", "PixelSizeY=5e-09", "", "[SEM]", "AcceleratorVoltage=5000.0", "HV=5000", "WD=0.0061",
+    "BeamCurrent=1e-10", "StageTilt=55", "ScanRotation=0", "Detector=SE", ""].join("\r\n");
+}
+
+/** Thermo Fisher's FeiImage XML, as a Phenom writes it. */
+function phenomXml() {
+  return '<?xml version="1.0"?><FeiImage xmlns="http://schemas.fei.com/Metadata/v1/2013/07">' +
+    "<time>2026-10-29T10:00:00</time><instrument><type>Phenom XL</type></instrument>" +
+    '<workingDistance unit="m">0.0049</workingDistance><pixelWidth unit="m">5.555556E-08</pixelWidth>' +
+    '<pixelHeight unit="m">5.555556E-08</pixelHeight><highVoltage unit="V">-10000</highVoltage>' +
+    "<detector>BSD Full</detector></FeiImage>";
+}
+
+/** Hitachi's .txt on an image decoded as a browser decodes a JPEG; on another size; written for another image. */
+function checkHitachiText() {
+  const browser = metaImage("sample_0001.jpg");
+  const hit = api.withMetadataText(browser, hitachiText(), "sample_0001.txt");
+  const hc = hit.calibration;
+  const half = { ...browser, width: META.w / 2, height: META.h / 2, data: new Float32Array((META.w * META.h) / 4).fill(100) };
+  const small = api.withMetadataText(half, hitachiText(), "sample_0001.txt").calibration;
+  const other = api.withMetadataText(browser, hitachiText().replace("sample_0001.tif", "other.tif"), "other.txt").calibration;
+  check(hit.vendor === "Hitachi" && hc.metadataFile === "sample_0001.txt" && Math.abs(hc.pixelSizeM[0] - 5.512153e-9) < 1e-20
+    && hc.highVoltageV === 2000 && Math.abs(hc.workingDistanceM - 8.20667e-3) < 1e-15 && hc.tiltDeg === 12.5
+    && hc.tiltCorrectionOn === true && hc.scanRotationDeg === 3 && hc.acquired === "10/29/2026 19:00:54"
+    && hc.system === "Hitachi SU8200" && hc.databarRows === 20 && hit.imageRows === META.h - 20 && hc.notes.length === 0
+    && !hc.untested && small.pixelSizeM === null && small.notes.length === 1
+    && other.notes[0] === "the metadata file was written for other.tif",
+  "Hitachi .txt opened with an image decoded as a browser decodes a JPEG: pixel 5.512153 nm, 2 kV, WD 8.20667 mm, stage " +
+    "tilt 12.5 deg, tilt compensation on, raster rotation 3 deg, date, data bar found; for an image of another size " +
+    "the pixel size is not taken, and a file written for another image is noted");
+}
+
+/**
+ * JEOL's .txt: the micron bar's pixel size refined to 120 mm / (magnification x width) when that fits it to half a
+ * pixel, else as it is; markers in nm, in um with two encodings of the micro sign, and in degrees (none); a data bar
+ * below the recorded size.
+ */
+function checkJeolText() {
+  const browser = metaImage("image000.jpg");
+  const opened = api.withMetadataText(browser, jeolText(1894, 101, "100um"), "image000.txt");
+  const fits = opened.calibration;
+  const rough = api.withMetadataText(browser, jeolText(1000, 101, "100um"), "image000.txt").calibration;
+  const markers = ["500nm", "1\u03bcm", "1\u00ce\u00bcm", "5deg."]
+    .map((m) => api.withMetadataText(browser, jeolText(1000, 101, m), "image000.txt").calibration.pixelSizeM);
+  check(opened.vendor === "JEOL" && Math.abs(fits.pixelSizeM[0] - 0.12 / (1894 * 64)) < 1e-20
+    && Math.abs(rough.pixelSizeM[0] - 100e-6 / 101) < 1e-20 && fits.untested && opened.imageRows === 80
+    && fits.databarRows === 16 && fits.highVoltageV === 7000 && Math.abs(fits.workingDistanceM - 10.52e-3) < 1e-15
+    && fits.beamCurrentA === 1.64e-8 && fits.system === "JEOL 8530F" && fits.detector === "SEI"
+    && fits.acquired === "2020/08/31 15:32:31" && Math.abs(markers[0][0] - 5e-7 / 101) < 1e-20
+    && Math.abs(markers[1][0] - 1e-6 / 101) < 1e-20 && Math.abs(markers[2][0] - 1e-6 / 101) < 1e-20 && markers[3] === null,
+  "JEOL .txt: the micron bar's pixel size refined to 120 mm / (magnification x width) where that fits it to half a " +
+    "pixel, as it is where not; markers in nm and um (two encodings), none in degrees; data bar below the recorded " +
+    "size; 7 kV, WD 10.52 mm, 16.4 nA; marked untested");
+}
+
+/** TESCAN's .hdr opened with an image, and the same text in a TIFF tag. */
+function checkTescanText() {
+  const opened = api.withMetadataText(metaImage("image.jpg"), tescanText(), "image.hdr");
+  const tc = opened.calibration;
+  const tagged = api.decodeSEMImage(rgbTiff(META.grey, META.w, META.h, { 50431: asciiBytes(tescanText()) }), "tescan.tif");
+  check(opened.vendor === "TESCAN" && tc.pixelSizeM[0] === 5e-9 && tc.highVoltageV === 5000 && tc.workingDistanceM === 0.0061
+    && tc.beamCurrentA === 1e-10 && tc.tiltDeg === 55 && tc.detector === "SE" && tc.system === "TESCAN SOLARIS X"
+    && tc.databarRows === 12 && opened.imageRows === META.h - 12 && tc.untested && tagged.vendor === "TESCAN"
+    && tagged.calibration.metadataFile === null && tagged.calibration.databarRows === 12,
+  "TESCAN .hdr opened with an image, and the same text in a TIFF tag found by its content: pixel 5 nm, 5 kV, WD 6.1 mm, " +
+    "stage tilt 55 deg, info strip of 12 rows; marked untested");
+}
+
+/** Thermo Fisher's FeiImage XML (Phenom) in TIFF tag 34683, and the vendor of each text by its content. */
+function checkPhenomAndVendors() {
+  const phenom = api.decodeSEMImage(rgbTiff(META.grey, META.w, META.h, { 34683: asciiBytes(phenomXml()) }), "phenom.tif");
+  const pc = phenom.calibration;
+  const vendors = [hitachiText(), jeolText(95, 101, "100um"), tescanText(), phenomXml(),
+    "# sem-measurement-tool polygons 1\nname,x_px,y_px\n", "x=1"].map((text) => api.metadataVendor(text));
+  check(phenom.vendor === "Phenom" && Math.abs(pc.pixelSizeM[0] - 5.555556e-8) < 1e-20 && pc.highVoltageV === 10000
+    && pc.workingDistanceM === 0.0049 && pc.detector === "BSD Full" && pc.system === "Phenom XL" && pc.untested
+    && vendors.join() === "Hitachi,JEOL,TESCAN,Phenom,,",
+  "Thermo Fisher's FeiImage XML (Phenom) in tag 34683: pixel 55.56 nm, 10 kV, WD 4.9 mm, marked untested; the vendor " +
+    `of a text, by its content: ${vendors.map((v) => v ?? "none").join(", ")}`);
 }
 
 /**
@@ -1060,6 +1361,12 @@ function checkSquaredProfile() {
 const images = testImages(process.argv.slice(2));
 checkFei(images.feiFolder);
 checkZeiss(images.zeiss);
+checkHitachi(images.hitachiFolder, images.hitachiBarRows);
+checkHitachiSynthetic();
+checkHitachiText();
+checkJeolText();
+checkTescanText();
+checkPhenomAndVendors();
 checkInfoZone();
 checkEdges();
 checkGeometry();
