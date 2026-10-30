@@ -29,7 +29,18 @@
                font-size: 15px; pointer-events: none; text-align: center; padding: 24px; }
   #busy { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.75); color: #fff;
           padding: 6px 12px; border-radius: 4px; display: none; pointer-events: none; }
-  #panel { grid-row: 1 / 3; grid-column: 2; overflow-y: auto; border-left: 1px solid var(--line); padding: 8px 12px 16px; }
+  #panel { grid-row: 1; grid-column: 2; overflow-y: auto; border-left: 1px solid var(--line); padding: 8px 12px 16px; }
+  /* the status bar's switch, pinned at the bottom right; the bar itself is hidden unless switched on */
+  #panel-foot { grid-row: 2; grid-column: 2; display: flex; align-items: center; justify-content: flex-end; padding: 2px 12px;
+                border-top: 1px solid var(--line); border-left: 1px solid var(--line); font-size: 12px; min-height: var(--status-height); }
+  #app.no-status { --status-height: 0px; }
+  #app.no-status #status { display: none; }
+  #app.no-status #view-wrap { grid-row: 1 / 3; }
+  /* a status message over the view, for a moment, while the bar is hidden */
+  #toast { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: calc(100% - 32px); z-index: 7;
+           background: rgba(0, 0, 0, 0.78); color: #fff; padding: 6px 12px; border-radius: 4px; pointer-events: none;
+           font: 12px ui-monospace, Consolas, monospace; white-space: pre-wrap; opacity: 0; transition: opacity 0.3s; }
+  #toast.shown { opacity: 1; }
   #panel h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
   #panel section:first-child h2 { margin-top: 4px; }
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
@@ -107,14 +118,16 @@
   #vertex-table tr.picked td { background: #e1d8ff; }
   #vertex-table td input { width: 100%; font: inherit; text-align: right; padding: 0 2px; }
   #vertex-note { margin: 4px 8px 6px; }
-  #profile-window { top: auto; right: auto; bottom: calc(var(--status-height) + 12px); left: 12px; width: 560px; height: 330px; min-width: 300px; min-height: 220px; }
+  #profile-window { top: auto; right: auto; bottom: calc(var(--status-height) + 12px); left: 12px; width: 560px; height: 380px; min-width: 300px; min-height: 260px; }
   #profile-window .row { align-items: center; flex-wrap: wrap; }
   #profile-window .row input[type=number] { width: 96px; flex: 0 0 auto; }
   #profile-window .row button { flex: 0 0 auto; margin-left: auto; }
   #profile-window .row button + button { margin-left: 0; }
   #profile-plot { display: block; flex: 1 1 0; min-height: 0; height: 0; width: calc(100% - 12px); margin: 0 6px;
                   border: 1px solid var(--line); background: #fff; cursor: crosshair; touch-action: none; }
-  #profile-readout { margin: 3px 8px 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #profile-readout, #profile-markers { margin: 3px 8px 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #profile-markers { margin-top: 1px; }
+  #profile-markers:empty { display: none; }
   #profile-note { margin: 2px 8px 6px; }
   #colour-window { width: 250px; height: auto; min-height: 0; }
   #colour-window .note { margin: 2px 10px 8px; }
@@ -145,6 +158,8 @@
   body.touch .floating .row button { min-height: 40px; padding: 4px 10px; }
   body.touch .floating .grip { width: 30px; height: 30px; }
   body.touch #profile-window .row input[type=number] { min-height: 36px; }
+  body.touch .floating input[type=checkbox], body.touch #panel-foot input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
+  body.touch #panel-foot { min-height: 40px; }
   body.touch #panel button, body.touch dialog button { min-height: 38px; }
   body.touch #panel input[type=number], body.touch #panel select, body.touch dialog input:not([type=checkbox]) { min-height: 34px; }
   body.touch #panel input[type=checkbox], body.touch dialog input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
@@ -175,6 +190,7 @@
     <canvas id="view"></canvas>
     <div id="drop-hint">Drop an SEM image here, with its .txt or .hdr metadata file when the microscope writes one (Hitachi, JEOL,<br>TESCAN), then a session or polygon file if you have one; or use "Open image".  Nothing leaves this computer.</div>
     <div id="busy"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
     <section id="vertex-window" class="floating" aria-label="Vertices of the selected contour" hidden>
       <header id="vertex-bar"><span id="vertex-title">Vertices</span><button type="button" id="vertex-close" class="close" title="Close (T)" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5"/></svg></button></header>
       <div class="row">
@@ -211,8 +227,13 @@
         <button type="button" id="profile-png" title="Save the plot as a PNG image">Export PNG</button>
         <button type="button" id="profile-square" title="Turn the profile square to the edge it crosses (E)">&perp; Square</button>
       </div>
+      <div class="row">
+        <label class="inline" title="A marker placed or let go on the plot settles on the steepest slope of the profile nearby, unless Alt is held"><input type="checkbox" id="snap-markers" checked> snap A, B to the steepest slope</label>
+        <button type="button" id="clear-markers" title="Remove the markers A and B (Ctrl+Z brings them back)" disabled>Clear A, B</button>
+      </div>
       <canvas id="profile-plot"></canvas>
       <div id="profile-readout" class="note"></div>
+      <div id="profile-markers" class="note"></div>
       <div id="profile-note" class="note"></div>
     </section>
     <section id="colour-window" class="floating" aria-label="Custom colours" hidden>
@@ -401,6 +422,7 @@
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
           <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; new and moved profiles up to 15&deg; off square are squared while the option under Snapping to edges is on (<kbd>Alt</kbd> with the click or the release: as it is; <kbd>Ctrl</kbd>+<kbd>Z</kbd> right after: back as it was)</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
+          <tr><td>click on the profile plot</td><td>place marker A, then B, then move the nearer one; snapped to the steepest slope while that option is on (<kbd>Alt</kbd>: exactly); drag a marker to move it</td></tr>
           <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot or square to edge (a profile)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements</td></tr>
@@ -417,6 +439,7 @@
   </aside>
 
   <footer id="status">Open an image to start.</footer>
+  <div id="panel-foot"><label title="Show the status bar under the view: the cursor's position and grey value, and the app's messages, which otherwise show for a moment over the view"><input type="checkbox" id="show-status"> status bar</label></div>
 </div>
 <div id="download-menu" role="menu" aria-label="Download" hidden></div>
 <dialog id="gds-dialog" aria-labelledby="gds-heading">

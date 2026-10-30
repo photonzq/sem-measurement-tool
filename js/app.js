@@ -6,8 +6,8 @@
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
    selectionRange, valueRange, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
-   widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, metadataVendor, withMetadataText,
-   fileStem */
+   widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, markerPlace, profileValueAt, snapToSlope,
+   metadataVendor, withMetadataText, fileStem */
 /*
  * The SEM measurement tool: open an image, take measurements (contours, rulers, angles, profiles) with
  * optional snapping to edges, correct a tilted specimen, turn the image, and keep the work in a
@@ -39,6 +39,7 @@ const PALETTES = {
   "okabe-ito": ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"],   // colour-blind safe
 };
 const COLOURS_KEY = "sem-measurement-tool colours";       // where the browser keeps the choice (localStorage)
+const STATUS_KEY = "sem-measurement-tool status bar";     // "on" when the status bar is shown (localStorage)
 /** The colours chosen: a palette, or "custom" with its own order. */
 const colours = { palette: "matlab", custom: [...PALETTES.matlab] };
 const PREVIEW_COLOR = "#ff3ec8";     // magenta: where a click lands (with Snap on, or inserting)
@@ -73,6 +74,7 @@ const TOOL_HINTS = {
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = { contour: "contour", ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
 const PLOT_COLOR = "#385c9e";        // the profile's mean in its window
+const MARKER_COLOR = "#272727";      // the markers A and B on the profile plot
 const TAP_PX = 10;                   // a touch that moves less than this is a tap
 const TOUCH_HIT_PX = 22;             // HIT_PX for a finger, which covers far more than a cursor tip
 const TOUCH_SNAP = 2.5;              // a finger searches this many times the snap radius for an edge
@@ -136,6 +138,7 @@ const app = {
   exactOnce: false,                  // the next point placed or released lands exactly, without snapping
   /** @type {{text: string, at: Point, until: number, done: boolean}|null} a note beside the cursor, for a moment */
   flash: null,
+  message: "",                       // the status bar's last message (not the cursor's readout)
   /** @type {Frame} */
   frame: defaultFrame(),
   view: { s: 1, tx: 0, ty: 0 },
@@ -222,6 +225,7 @@ function numberFrom(id, fallback) {
 const settings = {
   snap: () => inputEl("snap").checked,
   squareProfiles: () => inputEl("square-profiles").checked,
+  snapMarkers: () => inputEl("snap-markers").checked,
   edgesShown: () => inputEl("show-edges").checked,
   sigma: () => numberFrom("sigma", 2),
   median: () => Number(selectEl("median").value),
@@ -288,7 +292,56 @@ function insideImage(x, y) {
 
 /** @param {string} text */
 function setStatus(text) {
+  app.message = text;
   el("status").textContent = text;
+  if (!statusBarShown()) {
+    showToast(text);
+  }
+}
+
+/** @returns {boolean} whether the status bar is shown under the view */
+function statusBarShown() {
+  return inputEl("show-status").checked;
+}
+
+/**
+ * Show or hide the status bar under the view; the browser keeps the choice.  Hidden, the view takes
+ * its row, the cursor's readout is not kept up, and messages show for a moment over the view.
+ * @param {boolean} on
+ * @param {boolean} [keep]   false: only apply it (at start)
+ */
+function showStatusBar(on, keep = true) {
+  inputEl("show-status").checked = on;
+  el("app").classList.toggle("no-status", !on);
+  if (on) {
+    el("status").textContent = app.message || el("status").textContent;
+    el("toast").classList.remove("shown");
+  }
+  if (keep) {
+    try {
+      localStorage.setItem(STATUS_KEY, on ? "on" : "off");
+    } catch {
+      // storage refused (a private window, say): the choice lasts as long as the page
+    }
+  }
+  keepWindowsInView();
+  render();
+  drawHistogram();
+}
+
+/** @type {number} the timer that hides the message over the view */
+let toastTimer = 0;
+
+/**
+ * A message of the status bar over the view, for a few seconds, longer for a longer one.
+ * @param {string} text
+ */
+function showToast(text) {
+  const toast = el("toast");
+  toast.textContent = text;
+  toast.classList.toggle("shown", text !== "");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove("shown"), Math.min(10000, 3000 + 40 * text.length));
 }
 
 /** @param {string|TextParts} text  "" hides it */
@@ -1140,6 +1193,52 @@ function drawProfileCursor(toScreen) {
 }
 
 /**
+ * A profile's markers on the image: ticks across the band, at least 16 screen pixels long, where
+ * they lie along the line (P12), in the profile's colour, with their letters beyond one end.
+ * @param {FixedMeasurement} ms
+ * @param {(p: Point) => Point} toScreen
+ * @param {string} color
+ */
+function drawProfileMarkers(ms, toScreen, color) {
+  const markers = ms.markers ?? [];
+  if (markers.length === 0) {
+    return;
+  }
+  const [u1, u2] = ms.points;
+  const h = widthHandle(ms.points, Math.max(ms.width ?? 1, 16 / Math.max(app.view.s, 1e-9)), app.frame);
+  /** @type {Point} half the tick, stored */
+  const half = [h[0] - (u1[0] + u2[0]) / 2, h[1] - (u1[1] + u2[1]) / 2];
+  const ticks = new Path2D();
+  /** @type {Array<[string, Point, Point]>} the letter, the tick's end and its direction on screen */
+  const letters = [];
+  markers.forEach((m, k) => {
+    const t = markerPlace(ms.points, m, app.frame);
+    /** @type {Point} */
+    const p = [u1[0] + t * (u2[0] - u1[0]), u1[1] + t * (u2[1] - u1[1])];
+    const a = toScreen([p[0] - half[0], p[1] - half[1]]);
+    const b = toScreen([p[0] + half[0], p[1] + half[1]]);
+    addSegment(ticks, a, b);
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    letters.push(["AB"[k], b, [(b[0] - a[0]) / length, (b[1] - a[1]) / length]]);
+  });
+  strokeOverlay(ticks, color, { width: 2.4 });
+  ctx.save();
+  ctx.font = `600 ${LABEL_FONT}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  for (const [letter, b, u] of letters) {
+    const [x, y] = [b[0] + 9 * u[0], b[1] + 9 * u[1]];
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = casingOf(color);
+    ctx.strokeText(letter, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(letter, x, y);
+  }
+  ctx.restore();
+}
+
+/**
  * A measurement other than a contour, complete or being placed (``pending``, dashed), possibly with
  * fewer points than its kind: selected, thicker with a halo and white points; the profile edited
  * (``handle``) with the square that sets its width.
@@ -1176,6 +1275,9 @@ function drawMeasurement(ms, color, toScreen, how) {
   }
   strokeOverlay(solid, color, { selected, dash: how.pending ? [5, 4] : [] });
   strokeOverlay(dashed, color, { dash: [3, 4], width: 1.2 });
+  if (ms.kind === "profile" && !how.pending && pts.length >= 2) {
+    drawProfileMarkers(ms, toScreen, color);
+  }
   if (ms.kind === "profile" && how.handle && !how.pending && pts.length >= 2) {
     drawWidthHandle(ms, toScreen, color);
   }
@@ -1838,10 +1940,12 @@ function describeMeasurement(ms) {
       return line;
     }
     const g = profileGeometry(ms.points, ms.width ?? 1, app.frame);
+    const at = (ms.markers ?? []).map((m) => markerPlace(ms.points, m, app.frame));
+    const markers = at.length === 2 ? `markers A, B ${show(Math.abs(at[1] - at[0]) * g.length)} ${u} apart\n` : "";
     return {
       brief: `${show(r.length)} ${u}, band ${show(g.width)} ${u}`,
       details: `${line.details}\nband ${show(g.width)} ${u} wide (${show(ms.width ?? 1)} px of the corrected view): ` +
-        `${g.offsets.length} line${g.offsets.length === 1 ? "" : "s"} across, ${g.samples} samples along\n` +
+        `${g.offsets.length} line${g.offsets.length === 1 ? "" : "s"} across, ${g.samples} samples along\n${markers}` +
         "P shows the profile window",
     };
   }
@@ -2253,7 +2357,7 @@ function toggleColourWindow() {
 function snapSettings() {
   return {
     on: settings.snap(), sigmaPx: settings.sigma(), median: settings.median(), radiusPx: settings.radius(),
-    minContrast: settings.minContrast(), squareProfiles: settings.squareProfiles(),
+    minContrast: settings.minContrast(), squareProfiles: settings.squareProfiles(), snapMarkers: settings.snapMarkers(),
   };
 }
 
@@ -2458,6 +2562,7 @@ function loadSessionText(text, name) {
   const s = session.snap;
   inputEl("snap").checked = s.on;
   inputEl("square-profiles").checked = s.squareProfiles;
+  inputEl("snap-markers").checked = s.snapMarkers;
   inputEl("sigma").value = String(s.sigmaPx);
   selectEl("median").value = String(s.median);
   inputEl("radius").value = String(s.radiusPx);
@@ -2520,7 +2625,7 @@ async function openFiles(files) {
     }
     const left = [...images.slice(1).map((f) => f.name), ...metadata.filter((m) => m !== own).map((m) => m.name)];
     if (left.length) {
-      setStatus(`${el("status").textContent}; not opened: ${left.join(", ")} (one image, and its metadata file, at a time)`);
+      setStatus(`${app.message}; not opened: ${left.join(", ")} (one image, and its metadata file, at a time)`);
     }
   }
   for (const other of others) {
@@ -2802,14 +2907,25 @@ const profileCanvas = /** @type {HTMLCanvasElement} */ (el("profile-plot"));
  * @property {ProfileGeometry} geometry
  * @property {Profile} profile
  * @property {Array<{name: string, index: number, t: number, distance: number}>} crossings   index: the contour's in the list
+ * @property {MarkerReading[]} markers   A, then B: as many as the profile has
  */
 
-/** What the plot shows, and where its axis lies on the canvas (CSS pixels), for the cursor. */
+/** A marker as the window reads it (P12): its label, its place t along the line, its distance and the mean there. */
+/** @typedef {{label: string, t: number, distance: number, value: number}} MarkerReading */
+
+/**
+ * What the plot shows, and where its axis lies on the canvas (CSS pixels), for the cursor; a press
+ * on the plot that may still be a click (it places a marker), and a marker being dragged.
+ */
 const profilePlot = {
   /** @type {ProfileData|null} */
   data: null,
   left: 0,
   right: 1,
+  /** @type {{x: number, y: number}|null} */
+  press: null,
+  /** @type {{index: number, moved: boolean}|null} */
+  markerDrag: null,
 };
 
 function toggleProfileWindow() {
@@ -2852,12 +2968,28 @@ function profileData(ms) {
   }
   const geometry = profileGeometry(ms.points, ms.width ?? 1, app.frame);
   const contours = app.measurements.flatMap((m, i) => (m.kind === "contour" ? [{ index: i, contour: m }] : []));
+  const profile = sampleProfile(app.image, geometry);
   return {
-    geometry, profile: sampleProfile(app.image, geometry),
+    geometry, profile,
     crossings: profileCrossings(ms.points, contours.map((c) => c.contour)).map((c) => ({
       name: contours[c.contour].contour.name, index: contours[c.contour].index, t: c.t, distance: c.t * geometry.length,
     })),
+    markers: markerReadings(ms, geometry, profile),
   };
+}
+
+/**
+ * The markers of a profile, A then B, as the window reads them (P12).
+ * @param {Measurement} ms
+ * @param {ProfileGeometry} geometry
+ * @param {Profile} profile
+ * @returns {MarkerReading[]}
+ */
+function markerReadings(ms, geometry, profile) {
+  return (ms.markers ?? []).map((m, k) => {
+    const t = markerPlace(ms.points, m, app.frame);
+    return { label: "AB"[k], t, distance: t * geometry.length, value: profileValueAt(profile, t) };
+  });
 }
 
 /**
@@ -2902,7 +3034,35 @@ function refreshProfileWindow() {
   buttonEl("profile-square").disabled = data === null;
   el("profile-note").textContent = profileNote(data);
   showProfileReadout();
+  showMarkerReadout();
   drawProfilePlot();
+}
+
+/** The line of the markers under the readout: A and B, where they are, the mean there, and how far apart. */
+function showMarkerReadout() {
+  const data = profilePlot.data;
+  const out = el("profile-markers");
+  buttonEl("clear-markers").disabled = data === null || data.markers.length === 0;
+  if (data === null || data.markers.length === 0) {
+    out.textContent = "";
+    return;
+  }
+  const unit = data.geometry.unit;
+  const parts = data.markers.map((m) => `${m.label} at ${profileDistanceText(m.distance, unit)}: ` +
+    `${Number.isFinite(m.value) ? greyText(m.value) : "no value"}`);
+  const [a, b] = data.markers;
+  parts.push(b === undefined ? "click again for B" : `A–B ${profileDistanceText(Math.abs(b.distance - a.distance), unit)}`);
+  out.textContent = parts.join("; ");
+}
+
+/**
+ * A distance along a profile as the window writes it: 4 decimals in µm, 2 in pixels.
+ * @param {number} s
+ * @param {"um"|"px"|null} unit
+ * @returns {string}
+ */
+function profileDistanceText(s, unit) {
+  return Number.isFinite(s) ? `${s.toFixed(unit === "um" ? 4 : 2)}${unit === null ? "" : ` ${unitText(unit)}`}` : "?";
 }
 
 /**
@@ -2935,7 +3095,7 @@ function showProfileReadout() {
   const t = app.profileCursor;
   const out = el("profile-readout");
   if (data === null || t === null) {
-    out.textContent = data === null ? "" : "Point at the plot to read a value; the image marks the place.";
+    out.textContent = data === null ? "" : "Point at the plot to read a value; click it to place markers A and B.";
     return;
   }
   const { profile, geometry } = data;
@@ -3116,6 +3276,9 @@ function plotProfile(g, w, h, data, how) {
   drawPlotCrossings(g, crossings.map((c) => ({
     x: X(c.distance), name: c.name, color: colorOf(app.measurements[c.index]), active: checked.has(c.index),
   })), top, bottom);
+  const [ma, mb] = data.markers;
+  drawPlotMarkers(g, data.markers.map((m) => ({ x: left + m.t * (right - left), label: m.label })), top, bottom,
+    mb === undefined ? null : profileDistanceText(Math.abs(mb.distance - ma.distance), geometry.unit));
   if (how.cursor !== null) {
     const x = X(how.cursor * length);
     g.strokeStyle = PREVIEW_COLOR;
@@ -3210,6 +3373,63 @@ function drawPlotCrossings(g, marks, top, bottom) {
 }
 
 /**
+ * The markers on the plot: solid dark lines, their letters on dark chips at the foot, and between
+ * A and B a double arrow with the distance.
+ * @param {CanvasRenderingContext2D} g
+ * @param {Array<{x: number, label: string}>} marks
+ * @param {number} top
+ * @param {number} bottom
+ * @param {string|null} apart     the distance between A and B, when both are set
+ */
+function drawPlotMarkers(g, marks, top, bottom, apart) {
+  g.save();
+  g.strokeStyle = MARKER_COLOR;
+  g.fillStyle = MARKER_COLOR;
+  g.lineWidth = 1.5;
+  for (const m of marks) {
+    g.beginPath();
+    g.moveTo(m.x, top);
+    g.lineTo(m.x, bottom);
+    g.stroke();
+  }
+  g.font = `600 ${LABEL_FONT}`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  /** @param {string} text @param {number} x @param {number} y */
+  const chip = (text, x, y) => {
+    const w = g.measureText(text).width + 8;
+    g.fillStyle = MARKER_COLOR;
+    g.beginPath();
+    g.roundRect(x - w / 2, y - 8, w, 16, 3);
+    g.fill();
+    g.fillStyle = "#ffffff";
+    g.fillText(text, x, y + 0.5);
+  };
+  if (apart !== null && marks.length === 2) {
+    const [x0, x1] = [Math.min(marks[0].x, marks[1].x), Math.max(marks[0].x, marks[1].x)];
+    const y = bottom - Math.max(32, 0.1 * (bottom - top));   // clear of the chips, and of the 0 line on a tall plot
+    g.beginPath();
+    g.moveTo(x0, y);
+    g.lineTo(x1, y);
+    if (x1 - x0 > 14) {                              // the heads, pointing out to the markers
+      g.moveTo(x0 + 6, y - 4);
+      g.lineTo(x0, y);
+      g.lineTo(x0 + 6, y + 4);
+      g.moveTo(x1 - 6, y - 4);
+      g.lineTo(x1, y);
+      g.lineTo(x1 - 6, y + 4);
+    }
+    g.stroke();
+    const w = g.measureText(apart).width + 8;
+    chip(apart, x1 - x0 > w + 16 ? (x0 + x1) / 2 : x1 + 6 + w / 2, y);   // beside B when they are close
+  }
+  for (const m of marks) {
+    chip(m.label, m.x, bottom - 12);
+  }
+  g.restore();
+}
+
+/**
  * The band width of the shown profile, in pixel widths of the corrected view (an undoable edit).
  * @param {number} width
  */
@@ -3236,11 +3456,137 @@ function profilePlotPointer(e) {
   if (profilePlot.data === null) {
     return;
   }
-  const r = profileCanvas.getBoundingClientRect();
-  const t = (e.clientX - r.left - profilePlot.left) / (profilePlot.right - profilePlot.left);
-  app.profileCursor = Math.min(1, Math.max(0, t));
+  app.profileCursor = plotFraction(e);
   showProfileReadout();
   drawProfilePlot();
+  render();
+}
+
+/**
+ * @param {PointerEvent} e
+ * @returns {number} where the pointer is along the line on the plot: 0 at its start, 1 at its end
+ */
+function plotFraction(e) {
+  const r = profileCanvas.getBoundingClientRect();
+  return Math.min(1, Math.max(0, (e.clientX - r.left - profilePlot.left) / (profilePlot.right - profilePlot.left)));
+}
+
+/**
+ * @param {PointerEvent} e
+ * @returns {number} the marker under the pointer on the plot (0: A, 1: B), -1 for none
+ */
+function markerUnder(e) {
+  const data = profilePlot.data;
+  if (data === null) {
+    return -1;
+  }
+  const x = e.clientX - profileCanvas.getBoundingClientRect().left;
+  let best = -1;
+  let reach = e.pointerType === "touch" ? 14 : 6;
+  data.markers.forEach((m, k) => {
+    const dx = Math.abs(profilePlot.left + m.t * (profilePlot.right - profilePlot.left) - x);
+    if (dx <= reach) {
+      [best, reach] = [k, dx];
+    }
+  });
+  return best;
+}
+
+/**
+ * @param {Point[]} points
+ * @param {number} t
+ * @returns {Point} the point at the fraction t along the line from the first point to the second
+ */
+function pointAlong(points, t) {
+  const [u1, u2] = points;
+  return [u1[0] + t * (u2[0] - u1[0]), u1[1] + t * (u2[1] - u1[1])];
+}
+
+/**
+ * Where a marker put at the fraction t settles (P13): at the steepest slope of the mean within 12
+ * pixels of the plot, while snapping markers is on and unless ``exact`` (Alt, or the Exact latch);
+ * else, or when no slope there stands out of the noise, at t.
+ * @param {number} t
+ * @param {boolean} exact
+ * @returns {number}
+ */
+function settledFraction(t, exact) {
+  const data = profilePlot.data;
+  const loose = takeExact() || exact;
+  if (data === null || loose || !settings.snapMarkers() || data.profile.mean.length < 3) {
+    return t;
+  }
+  const last = data.profile.mean.length - 1;
+  const radius = Math.max(2, (12 * last) / Math.max(1, profilePlot.right - profilePlot.left));
+  const found = snapToSlope(data.profile.mean, t * last, radius, settings.sigma(), settings.minContrast());
+  return found === null ? t : found.at / last;
+}
+
+/**
+ * A click on the plot at the fraction t: A, then B, then the nearer of the two moves there; snapped
+ * (P13) unless ``exact``.  An edit that Ctrl+Z undoes.
+ * @param {number} t
+ * @param {boolean} exact
+ */
+function placeMarker(t, exact) {
+  const ms = shownProfile();
+  if (ms === null || profilePlot.data === null) {
+    return;
+  }
+  pushHistory();
+  const markers = ms.markers ?? [];
+  const p = pointAlong(ms.points, settledFraction(t, exact));
+  if (markers.length < 2) {
+    markers.push(p);
+  } else {
+    const [ta, tb] = markers.map((m) => markerPlace(ms.points, m, app.frame));
+    markers[Math.abs(tb - t) < Math.abs(ta - t) ? 1 : 0] = p;
+  }
+  ms.markers = markers;
+  refreshMeasurements();
+  render();
+}
+
+/**
+ * Move a marker of the shown profile to the fraction t as it is dragged; the plot follows.
+ * @param {number} index
+ * @param {number} t
+ */
+function moveMarker(index, t) {
+  const ms = shownProfile();
+  const data = profilePlot.data;
+  if (ms === null || ms.markers === undefined || data === null) {
+    return;
+  }
+  ms.markers[index] = pointAlong(ms.points, t);
+  data.markers = markerReadings(ms, data.geometry, data.profile);
+  showMarkerReadout();
+}
+
+/**
+ * Let go of a dragged marker: it settles (P13) unless ``exact``.
+ * @param {number} index
+ * @param {boolean} exact
+ */
+function settleMarker(index, exact) {
+  const ms = shownProfile();
+  if (ms === null || ms.markers === undefined) {
+    return;
+  }
+  ms.markers[index] = pointAlong(ms.points, settledFraction(markerPlace(ms.points, ms.markers[index], app.frame), exact));
+  refreshMeasurements();
+  render();
+}
+
+/** Clear A and B of the shown profile: an edit that Ctrl+Z undoes. */
+function clearMarkers() {
+  const ms = shownProfile();
+  if (ms === null || ms.markers === undefined || ms.markers.length === 0) {
+    return;
+  }
+  pushHistory();
+  delete ms.markers;
+  refreshMeasurements();
   render();
 }
 
@@ -3683,6 +4029,9 @@ function eventPoint(e) {
  * @param {number} y
  */
 function showCursor(x, y) {
+  if (!statusBarShown()) {
+    return;
+  }
   const parts = [`x ${x.toFixed(1)}  y ${y.toFixed(1)} px`];
   const um = app.frame.pixelNm ? toMeasurement(app.frame, x, y) : null;
   if (um !== null) {
@@ -3699,7 +4048,7 @@ function showCursor(x, y) {
       parts.push(`edge ${app.edges.contrast(x, y).toFixed(1)} × median`);
     }
   }
-  setStatus(parts.join("    "));
+  el("status").textContent = parts.join("    ");     // not a message: no note over the view, and not kept
 }
 
 /**
@@ -4906,21 +5255,74 @@ window.addEventListener("pointerdown", (e) => {
 if (window.matchMedia("(any-pointer: coarse)").matches) {
   enterTouchLayout();                // a touch screen: the touch layout from the start
 }
+inputEl("show-status").addEventListener("change", () => showStatusBar(inputEl("show-status").checked));
+{
+  let shown = false;                 // hidden unless the browser kept "on"
+  try {
+    shown = localStorage.getItem(STATUS_KEY) === "on";
+  } catch {
+    // storage refused: hidden
+  }
+  showStatusBar(shown, false);
+}
 el("profile-close").addEventListener("click", () => toggleProfileWindow());
 el("profile-export").addEventListener("click", () => exportProfile());
 el("profile-png").addEventListener("click", () => exportProfilePng());
 el("profile-square").addEventListener("click", () => squareSelected());
+el("clear-markers").addEventListener("click", () => clearMarkers());
 inputEl("square-profiles").addEventListener("change", () => refreshEdges());
 inputEl("profile-width").addEventListener("change", () => setProfileWidth(Number(inputEl("profile-width").value) / unitsPerView()));
+// On the plot a press on a marker drags it; any other press is a click, which places a marker,
+// until it moves more than 4 pixels and only reads values along the plot.
 profileCanvas.addEventListener("pointerdown", (e) => {
   try {
     profileCanvas.setPointerCapture(e.pointerId);    // a finger can slide along the plot, and off it
   } catch {
     // a scripted pointer cannot be captured
   }
+  const hit = markerUnder(e);
+  if (hit >= 0) {
+    pushHistory();
+    profilePlot.markerDrag = { index: hit, moved: false };
+  } else {
+    profilePlot.press = { x: e.clientX, y: e.clientY };
+  }
   profilePlotPointer(e);
 });
-profileCanvas.addEventListener("pointermove", (e) => profilePlotPointer(e));
+profileCanvas.addEventListener("pointermove", (e) => {
+  const { markerDrag: drag, press } = profilePlot;
+  if (drag !== null) {
+    moveMarker(drag.index, plotFraction(e));
+    drag.moved = true;
+  } else if (press !== null && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4) {
+    profilePlot.press = null;
+  }
+  profilePlotPointer(e);
+});
+profileCanvas.addEventListener("pointerup", (e) => {
+  const { markerDrag: drag, press } = profilePlot;
+  profilePlot.markerDrag = null;
+  profilePlot.press = null;
+  if (drag !== null && !drag.moved) {
+    app.history.pop();               // a press on a marker without moving it changed nothing
+  } else if (drag !== null) {
+    settleMarker(drag.index, e.altKey);
+  } else if (press !== null) {
+    placeMarker(plotFraction(e), e.altKey);
+  }
+});
+profileCanvas.addEventListener("pointercancel", () => {
+  profilePlot.press = null;
+  if (profilePlot.markerDrag !== null) {
+    profilePlot.markerDrag = null;   // the marker goes back where it was
+    const before = app.history.pop();
+    if (before !== undefined) {
+      restore(before);
+    }
+    refreshMeasurements();
+    render();
+  }
+});
 profileCanvas.addEventListener("pointerleave", (e) => {
   if (e.pointerType === "touch") {
     return;                          // a lifted finger leaves its reading in place

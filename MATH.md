@@ -7,9 +7,9 @@ This document derives what the app computes from an image:
 - **Part 3:** what each step costs, and where the limits lie.
 - **Part 4:** the GDSII export: its grid and its eight-byte reals.
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
-- **Part 6:** line profiles: the band, the samples, the contours that cross the line, and squaring a profile to the edge it crosses.
+- **Part 6:** line profiles: the band, the samples, the contours that cross the line, squaring a profile to the edge it crosses, and markers for a distance along it.
 
-Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P11) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
+Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E8) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P13) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
 
 ## Part 1. Geometry
 
@@ -417,7 +417,7 @@ The FEI test image is 3072 × 2188 pixels at 16 bits (13.5 MB), with 3072 × 204
 | edge map, $\sigma = 2$, 5 × 5 median | 4.22 s |
 | edge map, $\sigma = 4$, 3 × 3 median | 3.15 s |
 | one snap search, radius 12, cross-section view rotated by 30° | 6.5 µs |
-| a line profile of 3001 samples along a band of 83 lines (249 000 values) | 4.9 ms (6.7) |
+| a line profile of 3001 samples along a band of 83 lines (249 000 values) | 4.9 ms (6.8) |
 | the profile window refreshed for a profile of 476 samples × 30 lines, plot included | 0.5 ms |
 
 ### 3.3 Memory
@@ -1194,7 +1194,97 @@ A horizontal profile across a sidewall steeper than 75° is turned; Ctrl+Z gives
 - M. Kass and A. Witkin, "Analyzing oriented patterns," *Computer Vision, Graphics, and Image Processing* **37**(3), 362–385 (1987). [doi:10.1016/0734-189X(87)90043-0](https://doi.org/10.1016/0734-189X(87)90043-0).
 - A. R. Rao and B. G. Schunck, "Computing oriented texture fields," *CVGIP: Graphical Models and Image Processing* **53**(2), 157–185 (1991). [doi:10.1016/1049-9652(91)90059-S](https://doi.org/10.1016/1049-9652(91)90059-S).
 
-### 6.7 Cost
+### 6.7 Markers (P12)–(P13)
+
+Two markers, A and B, measure a distance along a profile: from one edge to the other, say. They are placed on the plot, kept with the profile in the session, written to the profile file's header, and drawn as ticks across the band on the image.
+
+**What a marker is (P12).** A marker is a stored point $m$, like every point the app keeps. Its place along the profile from $u_1$ to $u_2$ is the fraction of its projection onto the line in the view, the projection of (P11):
+
+$$t_m = \min\Big(1, \max\Big(0, \frac{V(m - u_1)\cdot Vd}{L^2}\Big)\Big), \qquad L = |Vd|. \qquad \text{(P12)}$$
+
+Its distance from $u_1$ is $s_m = t_m\,|Ad| = t_m\,cL$ (6.2), and the distance between the markers is $|t_B - t_A|\,cL$. Three reasons for this form:
+
+- **The projection is the band's own.** In the view a point of the band is $Vu_1 + s\,\hat t + r\,n$ (P1). Its dot product with $\hat t = Vd/L$, after subtracting $Vu_1$, is $s$, because $n \perp \hat t$. So a marker anywhere in the band, on the line or off it, is read at the sample position of the band's cross-line through it.
+- **A point of the image, not a fraction of the line.** When an end of the profile is dragged, or the profile is squared, a fraction $t$ would carry the marker along with the line, away from the feature it marked. A stored point stays on its feature, and its place along the new line follows from (P12).
+- **Squaring keeps a marker on its edge.** Let a straight edge have the normal $\hat n$ in the view, and let the squared profile run along $\hat n$ through a point $p$ of the edge: the crossing for E, or $c'$ of *Turning about the end not moved* (6.6). For a point $m$ of the edge, $(Vm - Vp)\cdot\hat n = 0$, so $m$ projects onto the new line at $p$ itself. A marker that sat on the edge where the old profile crossed it therefore lands where the turned profile crosses the edge.
+
+The mean at a marker is interpolated linearly between the two samples that bracket $x = t\,N$: $m(t) = m_i + (x - i)(m_{i+1} - m_i)$ with $i = \lfloor x\rfloor$. It is missing when either of the two is missing, unless $x$ falls on the other.
+
+**Snapping to the steepest slope (P13).** The plot shows the band-averaged mean $m_i$, about one stored pixel per sample (P2). An edge in it is a rise or fall over some samples. Its position, for an edge-to-edge distance, is where it is steepest. For an edge whose profile is symmetric about its centre $c$, $f(c + u) - f_{1/2}$ odd in $u$, that is the centre itself, half way between the levels on either side. The slope is taken as the edge map takes the gradient (2.1): the mean is smoothed by a Gaussian of $\sigma$ samples and differentiated, in one filter:
+
+$$s_i(\sigma) = \sum_{j=-K}^{K} w_j\, m_{i+j}, \qquad w_j = \frac{j\,G_j}{\sum_k k^2 G_k}, \qquad G_j = e^{-j^2/2\sigma^2}, \qquad K = \lceil 3\sigma\rceil. \qquad \text{(P13)}$$
+
+Three properties of the filter, step by step:
+
+- **It reads a ramp's slope exactly.** For $m_i = \alpha i + \beta$, $s_i = (\alpha i + \beta)\sum_j w_j + \alpha\sum_j j\,w_j$. The weights are odd in $j$, so $\sum_j w_j = 0$. And $\sum_j j\,w_j = \sum_j j^2 G_j / \sum_k k^2 G_k = 1$. Hence $s_i = \alpha$: the slope in grey levels per sample.
+- **Its noise falls fast with $\sigma$.** White noise of standard deviation $\sigma_m$ on the samples gives $s_i$ the standard deviation $\sigma_s = \sigma_m\sqrt{\sum_j w_j^2} = \sigma_m\sqrt{\sum_j j^2 G_j^2}\,\big/\sum_j j^2 G_j$.
+  - For $\sigma = 2$, $\sum_j j^2 G_j = 19.79$ and $\sum_j j^2 G_j^2 = 7.09$, so $\sigma_s = 0.135\,\sigma_m$. The central difference $(m_{i+1} - m_{i-1})/2$ has $0.707\,\sigma_m$, 5.3 times as much.
+  - With the sums taken as integrals, $\sum_j j^2 G_j \approx \sqrt{2\pi}\,\sigma^3$ and $\sum_j j^2 G_j^2 \approx \tfrac{\sqrt\pi}{2}\,\sigma^3$. So $\sigma_s \approx \sigma_m\big/\big(2\pi^{1/4}\sigma^{3/2}\big)$: 0.133 for $\sigma = 2$, and as $\sigma^{-3/2}$ in general.
+- **It keeps a symmetric edge's centre.** Write the response at any real position $x$, $r(x) = \sum_j w_j f(x + j)$, for an edge symmetric about $c$: $f(c - v) = 2f_{1/2} - f(c + v)$. Then $r(c - u) = \sum_j w_j f(c - u + j)$. Substitute $j \to -j$, with $w_{-j} = -w_j$: this is $-\sum_j w_j f(c - u - j) = -\sum_j w_j\big(2f_{1/2} - f(c + u + j)\big) = r(c + u)$, since $\sum_j w_j = 0$. So $r$ is symmetric about $c$, its largest magnitude lies at $c$, and smoothing at any scale moves no symmetric edge.
+
+**Which scale.** Take an edge of height $H$ whose profile is an erf of width $\sigma_e$. Smoothed at $\sigma$, its slope is a Gaussian of width $\sigma_t = \sqrt{\sigma_e^2 + \sigma^2}$ and height $H/(\sqrt{2\pi}\,\sigma_t)$. Its height over the slope's noise is then
+
+$$\frac{H}{\sqrt{2\pi}\,\sigma_t}\cdot\frac{2\pi^{1/4}\sigma^{3/2}}{\sigma_m} \;\propto\; \frac{\sigma^{3/2}}{\sqrt{\sigma_e^2 + \sigma^2}}.$$
+
+It grows as $\sigma^{3/2}$ while $\sigma \ll \sigma_e$, and only as $\sigma^{1/2}$ beyond. A sharp edge stands far out of the noise at the edge map's $\sigma$. A gradual edge in a noisy image does not. In the FIB test image, with 1.35 nm pixels, the top of the rib is a fall of 9000 grey levels over some 60 samples. At $\sigma = 2$ its steepest slope stands only 2.5 times its noise out. The more a peak stands out, the less the noise moves it, so such an edge is placed more precisely at a larger scale. A larger scale has a price, though: a neighbouring edge within reach of the kernel adds its own slope there and pulls the peak.
+
+The app therefore tries five scales, $\sigma_q = \sigma\,2^{q/2}$, $q = 0, \dots, 4$: from the edge map's $\sigma$ to 4 times it, 2 to 8 samples by default. At each scale it takes the departure from the trend, $d_i = |s_i - \tilde s|$ (*When it snaps*, below), and the candidates within the search window: the samples where $d_i$ is
+
+1. a peak: the largest within $2\sigma_q$;
+2. at least $k\,\hat\sigma_s$ (*When it snaps*);
+3. at least half the largest $d_i$ in the window.
+
+Of these, it takes the one nearest the click. A click beside one flank of a bright line thus takes that flank, and the half-height rule keeps out the noise's small peaks on the shoulders of an edge's slope. Above the finest scale, a scale is passed over when another such peak lies within $3\sigma_q$ of the one taken, beyond its own $2\sigma_q$: there the two would pull each other. Of the scales left, the one where the peak stands highest above the noise, $d/\hat\sigma_s$, wins. This is the scale where the noise moves the peak least.
+
+Choosing an edge's scale from the data is an old idea, and two published rules were tried against this one:
+
+- **Lindeberg (1998)** takes the scale where $\sigma^{1/2}|s|$, the slope normalised by the scale, is largest; for a noise-free erf edge that is $\sigma = \sigma_e$. In noise, though, the noise's own $\sigma^{1/2}\sigma_s$ falls as $\sigma^{-1}$, so the finest scale's noise wins as often as the edge does. In the tests, that rule put a gradual edge up to 11 samples off.
+- **Elder and Zucker (1998)** take the smallest scale at which the slope is reliably above the noise. That keeps neighbouring edges apart, but it places a gradual edge at a scale where its peak is barely reliable. In the tests it was 1.3 to 1.9 samples off at the median, against 0.4 to 0.9 here.
+
+The rule above takes the most reliable scale at which no neighbour interferes. On the tests' ridge, two sharp edges 20 samples apart, it places both within 0.2 samples. Taking the most reliable scale without that condition leaves 0.8.
+
+**Between samples.** At the chosen scale the peak $i^*$ is placed between samples by the vertex of the parabola through $(-1, a)$, $(0, b)$, $(1, c)$, with $a, b, c = d_{i^*-1}, d_{i^*}, d_{i^*+1}$. Write it $y(u) = \kappa u^2 + \beta u + b$. Then $a = \kappa - \beta + b$ and $c = \kappa + \beta + b$ give $\kappa = (a - 2b + c)/2$ and $\beta = (c - a)/2$, and the vertex lies at
+
+$$u^* = -\frac{\beta}{2\kappa} = \frac{a - c}{2\,(a - 2b + c)},$$
+
+held to $\pm\tfrac12$. The parabola only approximates the peak: for a Gaussian peak it is biased towards the nearest sample. For $\sigma_t = 2.5$ and a peak 0.3 samples from $i^*$, the vertex is at 0.292, 0.008 samples short; the tests measure 0.008.
+
+**Where it searches.** Within 12 pixels of the plot around the click or the release: $R = \max(2, 12N/W)$ samples, the plot being $W$ pixels wide for $N$ samples. A click is good to a few pixels, and the window takes in the edge clicked near.
+
+**When it snaps.** A marker clicked on a flat stretch should stay where it was put, not jump to a peak of the noise. At each scale take the median slope $\tilde s$, the profile's trend (0 when flat), and the slope's noise as the scaled median absolute deviation
+
+$$\hat\sigma_s = 1.4826\ \operatorname{median}_i |s_i - \tilde s|.$$
+
+For normal noise the median of $|z|$ is $0.6745$ standard deviations, and $1.4826 = 1/0.6745$. Being a median, $\hat\sigma_s$ is unmoved by the few samples on edges, up to half of them. A candidate must stand $k\,\hat\sigma_s$ out, $k$ being the edge map's *min. edge strength*, 3 by default. In noise alone a sample exceeds $3\hat\sigma_s$ with probability 0.27 %. The smoothed slopes are correlated over a few samples, so a window holds only a handful of independent values. Over five scales, the tests count 5 of 79 windows snapping in noise alone. With no candidate at any scale, the marker stays where it was put.
+
+Why not the edge map's own rule, $k$ times the median strength (2.3)? In two dimensions the strength of noise, $|\nabla|$, is Rayleigh distributed with the median $1.18\,\sigma$, so $3\times$ median is $3.5\,\sigma$. In one dimension $|s|$ is half normal with the median $0.67\,\sigma_s$, and $3\times$ median would be only $2.0\,\sigma_s$. That is exceeded by 4.3 % of the samples, and in noise alone most windows would snap. The scaled deviation gives $k$ the same meaning in one dimension: so many standard deviations of the noise.
+
+**Limits.**
+
+- An edge whose profile is not symmetric is placed at its steepest point, at the scale chosen. That differs from a threshold crossing, for instance half way between the levels, by an amount that depends on the shape and the scale. An edge with a bright bloom on one side, as SE edges often have, is an example.
+- Of two edges within the window, the nearer is taken, provided it reaches half the height of the stronger.
+- The band averages the edge across its width, smeared when the profile is off square (P6). Square it first (6.6).
+- No slope is taken within $K$ samples of a missing value or of an end; there a marker stays where it was put.
+
+**Tests.** The tests check that:
+
+- a point 7 view units off the line, in the tests' tilted, turned frame, is placed where it projects, at 0.37 and 0.9 along the line, and points beyond the ends are held to 0 and 1;
+- the mean between samples is linear, and missing next to a missing sample;
+- (P13) finds a sharp erf edge at 40.3 from 7 samples before and after it: 0.008 samples off without noise, 0.028 with noise of 2 % of the step;
+- over 40 noisy profiles, it places an edge of width 8, with noise of 10 % of the step, 0.63 samples off at the median and 3.1 at worst, at the scale 8;
+- it takes a bright line's nearer flank from either side, at $100 \mp \sqrt{13}$ for a line of standard deviation 3 smoothed at 2;
+- it places the two edges of a ridge 20 samples wide 0.19 and 0.02 samples off;
+- in noise alone, 5 of 79 windows snap, and no slope is taken across a missing value;
+- the session keeps the markers to $10^{-4}$ px and refuses a third, and the profile file's header gives each marker's distance and mean and the distance between them.
+
+On the FIB test image, take the session example's profile with a band width of 5. Clicks at samples 103.5 and 112 both snap to its rib top at sample 109.2, at the scale 2.8, 3.2 times the noise. Where it crosses the slab top's contour, no edge marks the line, and a marker clicked there stays where it is put.
+
+**References.**
+
+- T. Lindeberg, "Edge detection and ridge detection with automatic scale selection," *International Journal of Computer Vision* **30**(2), 117–156 (1998). [doi:10.1023/A:1008097225773](https://doi.org/10.1023/A:1008097225773).
+- J. H. Elder and S. W. Zucker, "Local scale control for edge detection and blur estimation," *IEEE Transactions on Pattern Analysis and Machine Intelligence* **20**(7), 699–716 (1998). [doi:10.1109/34.689301](https://doi.org/10.1109/34.689301).
+
+### 6.8 Cost
 
 Each value takes four pixel reads and a dozen arithmetic operations. The window computes the profile again at every step of a drag:
 

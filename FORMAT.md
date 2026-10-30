@@ -224,7 +224,8 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
     "median": 3,
     "radius_px": 12,
     "min_contrast": 3,
-    "square_profiles": true
+    "square_profiles": true,
+    "snap_markers": true
   },
   "measurements": [
     {
@@ -289,6 +290,10 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
       "points_px": [
         [1500, 750],
         [1500, 1100]
+      ],
+      "markers_px": [
+        [1500, 859.1702],
+        [1500, 965.0001]
       ]
     }
   ],
@@ -306,8 +311,8 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
 | `saved` | when the file was written (ISO 8601, UTC) |
 | `image` | the image the work belongs to: `name`, `sha256` (or null), `size_px`, `databar_rows` (the info bar, as in the CSV header), `microscope` (or null). The pixels themselves are not in the file. |
 | `frame` | the measurement frame, the keys of the CSV header: `pixel_size_nm` (null when unknown), `tilt_deg`, `correction`, `custom_factor`, `tilt_axis_deg`, `rotation_deg`, `origin_px` |
-| `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`, and `square_profiles`: whether new profiles are squared to the edge they cross (MATH.md 6.6), true when absent. Optional; without it the defaults apply: snapping on, 2, 3, 12, 3, squaring on. |
-| `measurements` | the list of measurements, in its order. Each has `name` (unique among all of them, on one line), `kind`, `color` and `points_px` (pixel coordinates, rounded to 1e-4 px). `color` is the measurement's place in the colour order of the overlay, an integer 0 or more, taken modulo the order's length (its place in the list when absent); the colours themselves are a preference of the browser, not of the session. The `kind` is `contour` (any number of points), `ruler` (2), `angle` (3), `line-angle` (4) or `profile` (2), the points in the order of the measurements file. A contour adds `closed` (true when absent) and `gds_layer`: its GDSII layer and datatype, integers in 0–32767, [1, 0] when absent. A profile adds `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent). |
+| `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`, `square_profiles`: whether new and moved profiles are squared to the edge they cross (MATH.md 6.6), and `snap_markers`: whether a profile's markers snap to the steepest slope (MATH.md 6.7); both true when absent. Optional; without it the defaults apply: snapping on, 2, 3, 12, 3, squaring on, markers snapping. |
+| `measurements` | the list of measurements, in its order. Each has `name` (unique among all of them, on one line), `kind`, `color` and `points_px` (pixel coordinates, rounded to 1e-4 px). `color` is the measurement's place in the colour order of the overlay, an integer 0 or more, taken modulo the order's length (its place in the list when absent); the colours themselves are a preference of the browser, not of the session. The `kind` is `contour` (any number of points), `ruler` (2), `angle` (3), `line-angle` (4) or `profile` (2), the points in the order of the measurements file. A contour adds `closed` (true when absent) and `gds_layer`: its GDSII layer and datatype, integers in 0–32767, [1, 0] when absent. A profile adds `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent); and `markers_px` when it has markers: A, then B, at most two points of the image (pixel coordinates), each read where it projects onto the line (MATH.md, (P12)). |
 | `selected` | the index of the measurement selected, the one the contour tool extends when it is a contour; null when none |
 | `display` | the display levels when the session was saved: `black_level` and `white_level`, grey values of the stored image, the black level below the white (MATH.md, 5.2). Optional; without it the image opens with the auto levels. The levels change no measure. |
 
@@ -325,6 +330,7 @@ Derived values are not stored but recomputed when the session is opened: lengths
 - a GDS layer or datatype is not an integer in 0–32767;
 - the black level does not lie below the white level;
 - a profile's band width is negative or not a number;
+- a profile has more than two markers, or a marker is not a pair of numbers;
 - a colour is not a whole number, 0 or more.
 
 ## Profile file, version 1
@@ -358,6 +364,9 @@ The samples of one line profile (MATH.md, Part 6), written by **Export CSV** in 
 # crossing: 0.177116 rib
 # crossing: 0.368069 slab top
 # crossing: 0.368107 rib
+# marker: A 0.186894 32020.38
+# marker: B 0.368069 24225.32
+# marker_distance: 0.181175
 # distance along the line in the unit above; mean, std and count of the grey values across the band
 distance,mean,std,count,x_px,y_px
 0.000000,31389.4,899.06031,5,1500.000,750.000
@@ -377,6 +386,8 @@ distance,mean,std,count,x_px,y_px
 | `samples` | integer | samples along the line: about one per stored pixel (MATH.md, (P2)) |
 | `lines_across` | integer | lines averaged across the band (MATH.md, (P3)) |
 | `crossing` | `distance name` | a contour crossing the line: the distance from `from_px` in the unit, then the contour's name. One line per crossing, in order along the line. |
+| `marker` | `label distance mean` | a marker, `A` or `B`: its distance from `from_px` in the unit (where it projects onto the line, MATH.md, (P12)), then the mean there, interpolated between samples (`?` when missing). One line per marker, A first. |
+| `marker_distance` | number | the distance between A and B in the unit, when the profile has both |
 
 **Rows.** One per sample, in order along the line:
 

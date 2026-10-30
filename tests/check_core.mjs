@@ -71,7 +71,8 @@ function loadApi() {
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
     reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness,
     sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle,
-    widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, UTIF })`, context);
+    widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, markerPlace, profileValueAt,
+    snapToSlope, UTIF })`, context);
 }
 
 const api = loadApi();
@@ -780,14 +781,14 @@ function checkSession() {
     image: IMAGE,
     frame: { pixelNm: [1.34896, 1.34896], tiltDeg: 51.996, correction: "cross-section", customFactor: 1, axisDeg: 0.5,
       rotationDeg: -1.25, originPx: [1536.5, 1024.25] },
-    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4, squareProfiles: false },
+    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4, squareProfiles: false, snapMarkers: false },
     measurements: [
       { name: "rib", kind: "contour", color: 0, closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
       { name: "ruler 1", kind: "ruler", color: 1, points: [[1, 2], [3, 4]] },
       { name: 'slab "top", left', kind: "contour", color: 9, closed: false, points: [[100, 965], [2972, 965]] },
       { name: "angle 1", kind: "angle", points: [[1, 2], [3, 4], [5, 7]] },
       { name: "line angle 1", kind: "line-angle", points: [[0, 0], [1, 0], [0, 1], [1, 2]] },
-      { name: "profile 1", kind: "profile", points: [[10, 20], [30, 25]], width: 7.25 }],
+      { name: "profile 1", kind: "profile", points: [[10, 20], [30, 25]], width: 7.25, markers: [[14.123456, 21], [26, 24]] }],
     selected: 2,
     display: [1520, 61200.5],
   };
@@ -796,7 +797,10 @@ function checkSession() {
   const ms = back.measurements;
   const older = JSON.parse(text);
   delete older.snap.square_profiles;
-  const squaredByDefault = api.parseSession(JSON.stringify(older)).snap.squareProfiles === true;
+  delete older.snap.snap_markers;
+  const olderSnap = api.parseSession(JSON.stringify(older)).snap;
+  const squaredByDefault = olderSnap.squareProfiles === true;
+  checkSessionMarkers(text, ms, olderSnap);
   check(JSON.stringify(back.frame) === JSON.stringify(session.frame) && JSON.stringify(back.snap) === JSON.stringify(session.snap)
     && ms.map((m) => m.kind).join() === "contour,ruler,contour,angle,line-angle,profile"
     && worstOf(ms[0].points[0], [933.7961, 853.6115]) === 0 && ms[2].name === 'slab "top", left' && ms[0].closed && !ms[2].closed
@@ -808,9 +812,9 @@ function checkSession() {
     && api.parseSession(api.formatSession({ ...session, selected: -1 }, "x")).selected === -1
     && ms.map((m) => m.color).join() === "0,1,9,3,4,5"
     && text.includes('"square_profiles": false') && squaredByDefault,
-  "session round trip: frame, snap settings (squaring profiles: absent, on), the measurements in their order with " +
-    "contours among them (points to 1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band width, colours " +
-    "(absent: the place in the list), the selected one (none: -1), display levels (absent: Auto)");
+  "session round trip: frame, snap settings (squaring profiles: absent, on), the measurements in " +
+    "their order with contours among them (points to 1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band " +
+    "width, colours (absent: the place in the list), the selected one (none: -1), display levels (absent: Auto)");
   const good = JSON.parse(text);
   const bad = [
     "{ not json",
@@ -826,6 +830,8 @@ function checkSession() {
     { ...good, display: { black_level: 5, white_level: 5 } },
     { ...good, measurements: [{ name: "p", kind: "profile", width_px: -1, points_px: [[0, 0], [1, 1]] }] },
     { ...good, measurements: [{ name: "r", kind: "ruler", color: 1.5, points_px: [[0, 0], [1, 1]] }] },
+    { ...good, measurements: [{ name: "p", kind: "profile", points_px: [[0, 0], [9, 0]], markers_px: [[1, 0], [2, 0], [3, 0]] }] },
+    { ...good, measurements: [{ name: "p", kind: "profile", points_px: [[0, 0], [9, 0]], markers_px: [[1, "x"]] }] },
   ];
   let refused = 0;
   for (const b of bad) {
@@ -837,7 +843,24 @@ function checkSession() {
   }
   check(refused === bad.length, `bad session files are refused (${refused} of ${bad.length}: not JSON, format, version, ` +
     "no list, point count, kind, a name used twice across kinds, correction, number, GDS layer, display levels, band width, " +
-    "colour)");
+    "colour, three markers, a marker not a pair of numbers)");
+}
+
+/**
+ * A profile's markers A, B in the session of checkSession: written as markers_px to 1e-4 px and read back; none
+ * written for the other kinds of measurement; the switch that snaps them written, and on when absent.
+ * @param {string} text   the session file
+ * @param {Array<object>} ms   its measurements read back, the profile last
+ * @param {object} olderSnap   the snap settings read from the file without square_profiles and snap_markers
+ */
+function checkSessionMarkers(text, ms, olderSnap) {
+  const written = JSON.parse(text).measurements;
+  const others = written.slice(0, -1).every((m) => !("markers_px" in m));
+  check(JSON.stringify(ms[5].markers) === "[[14.1235,21],[26,24]]" && ms[1].markers === undefined && others
+    && JSON.stringify(written[5].markers_px) === "[[14.1235,21],[26,24]]" && text.includes('"snap_markers": false')
+    && olderSnap.snapMarkers === true,
+  "session: a profile's markers A, B kept as markers_px to 1e-4 px and read back, none written for other kinds; " +
+    "snapping markers written, and on when absent");
 }
 
 /** The records of a GDSII file, [type, data type, data], every length checked. */
@@ -1225,7 +1248,8 @@ function checkProfileCrossings() {
 function checkProfileFile() {
   const ramp = rampImage(40, 30, (x, y) => 2 * x + 3 * y + 5);
   const frame = { ...PLAIN, pixelNm: [2, 2] };
-  const ms = { name: "profile 1", kind: "profile", points: [[5, 10], [25, 10]], width: 3 };
+  // markers: B at x = 20.5 on the line (t = 0.775, 0.031 um, mean 2 x + 35 = 76), A off the line at x = 8.25 (t = 0.1625)
+  const ms = { name: "profile 1", kind: "profile", points: [[5, 10], [25, 10]], width: 3, markers: [[8.25, 13], [20.5, 10]] };
   const p = api.sampleProfile(ramp, api.profileGeometry(ms.points, ms.width, frame));
   const text = api.formatProfileFile(IMAGE, frame, ms, p, [{ name: "square", distance: 0.01 }, { name: "square", distance: 0.03 }]);
   const lines = text.split("\n");
@@ -1234,9 +1258,81 @@ function checkProfileFile() {
   check(lines[0] === "# sem-measurement-tool profile 1" && has("# profile: profile 1") && has("# band_width_px: 3")
     && has("# length: 0.040000") && has("# band_width: 0.006000") && has("# samples: 21") && has("# lines_across: 3")
     && has("# crossing: 0.010000 square") && has("# crossing: 0.030000 square") && has("# unit: um")
+    && has("# marker: A 0.006500 51.5") && has("# marker: B 0.031000 76") && has("# marker_distance: 0.024500")
     && rows[0] === "distance,mean,std,count,x_px,y_px" && rows.length === 22 && rows[1] === "0.000000,45,2.4494897,3,5.000,10.000",
-  "profile file: header with the line, its band (3 view px, 0.006 um), samples, lines and crossings; rows of distance, " +
-    "mean, spread across the band (sqrt 6 over rows 9-11), count and position");
+  "profile file: header with the line, its band (3 view px, 0.006 um), samples, lines, crossings, and markers A, B (one " +
+    "off the line, taken where it projects) with the mean there and the distance between them; rows of distance, mean, " +
+    "spread across the band (sqrt 6 over rows 9-11), count and position");
+}
+
+/**
+ * Markers (P12): a marker's place along the line, a point off it taken where it projects in a tilted, turned frame
+ * and points beyond the ends held to them; the mean between samples.  Snapping (P13): see checkMarkerSnapping.
+ */
+function checkProfileMarkers() {
+  const v = api.viewMatrix(SLANTED);
+  const points = [[10, 20], [70, 45]];
+  const along = (t) => [10 + t * 60, 20 + t * 25];
+  const [dx, dy] = api.matApply(v, 60, 25);
+  const across = api.matApply(api.matInverse(v), (-dy / Math.hypot(dx, dy)) * 7, (dx / Math.hypot(dx, dy)) * 7);
+  const off = (t) => [along(t)[0] + across[0], along(t)[1] + across[1]];      // 7 view units across the line
+  const places = [0.37, 0.9].map((t) => api.markerPlace(points, off(t), SLANTED));
+  const held = [-0.2, 1.3].map((t) => api.markerPlace(points, along(t), SLANTED));
+  const placed = Math.abs(places[0] - 0.37) < 1e-12 && Math.abs(places[1] - 0.9) < 1e-12 && held.join() === "0,1";
+  const values = [0, 0.125, 0.25, 0.5, 0.625, 1].map((t) => api.profileValueAt({ mean: Float64Array.from([10, 20, 30, NaN, 50]) }, t));
+  const between = values.slice(0, 4).join() === "10,15,20,30" && Number.isNaN(values[4]) && values[5] === 50;
+  check(placed && between,
+    "markers (P12): a point 7 view units off the line in a tilted, turned frame placed where it projects (0.37, 0.9), " +
+    "beyond the ends held to 0 and 1; the mean between samples, none next to a missing one");
+}
+
+/** An erf edge from 50 to 150 at ``at``, of the width ``w`` samples, over ``n`` samples, plus noise() times ``sd``. */
+function erfEdge(n, at, w, sd, noise) {
+  return Float64Array.from({ length: n }, (_, i) => 100 + 50 * erf((i - at) / (Math.SQRT2 * w)) + sd * noise());
+}
+
+/**
+ * Snapping markers (P13), the edge map's sigma of 2 samples, 3 noise, a window of 12 samples: a sharp edge found from
+ * either side, clean and noisy; a gradual noisy edge, over 40 noisy profiles, at the scale of its width; a bright
+ * line's nearer flank from either side; the two edges of a ridge 20 samples wide, unpulled by each other; rarely a
+ * slope in noise alone; none across a missing value.
+ */
+function checkMarkerSnapping() {
+  const snap = (mean, at) => api.snapToSlope(mean, at, 12, 2, 3);
+  const off = (r, x) => (r === null ? Infinity : Math.abs(r.at - x));
+  const noise = gaussian(77);
+  const clean = erfEdge(120, 40.3, 1.5, 0, noise);
+  const noisy = erfEdge(120, 40.3, 1.5, 2, noise);
+  const sharp = [snap(clean, 33), snap(noisy, 33), snap(noisy, 48)].map((r) => off(r, 40.3));
+  const gradual = Array.from({ length: 40 }, (_, s) => {
+    const g = gaussian(1 + s);
+    return snap(erfEdge(240, 120.4, 8, 10, g), 114);
+  });
+  const gradualErrors = gradual.map((r) => off(r, 120.4)).sort((a, b) => a - b);
+  const scales = gradual.map((r) => (r === null ? 0 : r.sigma)).sort((a, b) => a - b);
+  const line = Float64Array.from({ length: 200 }, (_, i) => 100 + 80 * Math.exp(-((i - 100) ** 2) / 18));
+  const flanks = [92, 99, 101, 108].map((at) => snap(line, at)?.at ?? NaN);
+  const ridgeNoise = gaussian(101);
+  const ridge = Float64Array.from({ length: 240 }, (_, i) => 100 + 25 * (erf((i - 100) / (Math.SQRT2 * 2))
+    - erf((i - 120) / (Math.SQRT2 * 2))) + 3 * ridgeNoise());
+  const ridgeErrors = [off(snap(ridge, 97), 100), off(snap(ridge, 123), 120)];
+  const flat = Float64Array.from({ length: 2000 }, () => 100 + 2 * noise());
+  const falseSnaps = Array.from({ length: 79 }, (_, j) => snap(flat, 25 + 25 * j)).filter((r) => r !== null).length;
+  const gap = Float64Array.from(clean);
+  gap[38] = Number.NaN;
+  const missing = api.snapToSlope(gap, 40, 3, 2, 3);
+  // a bright line of standard deviation 3 smoothed by 2 has its steepest points at 100 -+ sqrt(13)
+  const flank = Math.sqrt(13);
+  const flanksRight = Math.abs(flanks[0] - (100 - flank)) < 0.1 && Math.abs(flanks[1] - (100 - flank)) < 0.1
+    && Math.abs(flanks[2] - (100 + flank)) < 0.1 && Math.abs(flanks[3] - (100 + flank)) < 0.1;
+  check(sharp[0] < 0.02 && sharp[1] < 0.2 && sharp[2] < 0.2 && gradualErrors[20] < 1 && gradualErrors[39] < 4.5
+    && scales[20] >= 4 && flanksRight && Math.max(...ridgeErrors) < 0.6 && falseSnaps <= 6 && missing === null,
+  `snapping markers (P13): a sharp edge at 40.3 found from 7 samples before and after, ${sharp.map((e) => e.toFixed(3))
+    .join(", ")} samples off (clean, noisy, noisy); a gradual edge of width 8 with noise of 10 % of the step, over 40 ` +
+    `profiles, ${gradualErrors[20].toFixed(2)} samples off at the median, ${gradualErrors[39].toFixed(2)} at worst, at ` +
+    `the median scale ${scales[20].toFixed(2)}; a bright line's flanks, the nearer from either side, at ` +
+    `${flanks.map((f) => f.toFixed(2)).join(", ")}; a ridge 20 wide, its edges ${ridgeErrors.map((e) => e.toFixed(2))
+      .join(" and ")} samples off; in noise alone ${falseSnaps} of 79 windows snap; none across a missing value`);
 }
 
 /** A square image whose value at stored u is f(q), q = V (u - c) its place in the view frame (G11), plus noise(). */
@@ -1474,6 +1570,8 @@ checkProfileFastPath();
 checkProfileBand();
 checkProfileCrossings();
 checkProfileFile();
+checkProfileMarkers();
+checkMarkerSnapping();
 checkEdgeNormal();
 checkEdgeNormalExpected();
 checkEdgeNormalNoise();

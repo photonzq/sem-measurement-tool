@@ -48,6 +48,8 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
 Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes points, measurements and calibration changes. While a measurement is being placed, Ctrl+Z first takes back its last point.
 
+**The status bar** under the view is hidden at first. The *status bar* switch, pinned at the bottom right under the panel, shows it, and the browser keeps the choice. It gives the cursor's position in pixels and micrometres, the grey value there and the edge strength, and the app's messages: a file opened or saved, why a profile was not squared, what to select first. While it is hidden, each message shows for a few seconds in a box at the bottom of the view.
+
 ## Tools
 
 - **Pan** (0): no tool. A drag pans and the wheel zooms, and no click edits anything. The app opens with it, and a click on the active tool's button also returns to it.
@@ -133,12 +135,22 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - the mean across the band against the distance from the first end;
   - the spread across the band (± one standard deviation), shaded;
   - 0 and the full scale of the image's values, as solid lines labelled on the y axis, which always spans both. A profile clipped at black or at white runs flat along one of them. The full scale is 255 for 8-bit images and those the browser decodes, 65535 for 16-bit ones and $2^{32}-1$ for 32-bit whole numbers. Float images have none: the line marks their largest value above the info bar (see also *Limits*);
-  - every contour that crosses the line, as a dashed line in the contour's colour with its name.
+  - every contour that crosses the line, as a dashed line in the contour's colour with its name;
+  - the markers A and B, as solid dark lines, with the distance between them on a double arrow.
 
   Point at the plot to read the distance, the mean and the spread there; the image marks the same place with a magenta tick. Where part of the band lies outside the image, the reading also gives how many of its values are left. The note under the plot gives the number of samples along the line and, when contours cross it, which and where along it. Drag the window by its title bar, anywhere on the page, over the panel too, and resize it from its lower right corner.
-- **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band and the crossings.
-- **Export PNG**, in the window or under *Download*, writes the plot as an image of 1200 × 750 pixels at twice that resolution. A title above it names the profile and the image and gives its length and band width.
-- **Kept like the other measurements.** A profile is listed under *Measurements*, saved in the session with its band width, and written to the measurements file with its length, band width and mean grey value.
+- **Markers A and B** measure a distance along the profile, for instance from one edge to the other.
+  - A click on the plot places A, a second one B. Later clicks move the nearer marker, and a marker can be dragged. A drag that starts elsewhere still reads values, and places nothing. *Clear A, B* removes both. Each of these is an edit that Ctrl+Z undoes.
+  - The line under the reading gives where each marker is, the mean there, and the distance A–B. On the image, each is a tick across the band, in the profile's colour, with its letter.
+  - *snap A, B to the steepest slope*, in the window and on from the start, lets a marker settle where the profile is steepest within 12 pixels of the plot. This is where an edge is, for an edge-to-edge distance.
+    - The slope is that of the mean, smoothed from the edge map's σ up to 4 times it: at the scale where the edge stands out of the noise best without a neighbouring edge in reach. A gradual edge in a noisy FIB image is thus placed nearly as well as a sharp one.
+    - Of two edges in reach, such as a bright line's flanks, the nearer is taken.
+    - A marker snaps only where the slope stands out of the profile's noise by the edge map's *min. edge strength*, 3 times by default; elsewhere it stays where it was put.
+    - Alt places or lets go of one exactly. MATH.md 6.7 derives all this.
+  - A marker is kept as a point of the image, and its place along the line is where it projects onto it. When the profile is moved, the markers therefore stay on their features of the image. After squaring, a marker on a straight edge lies on the edge where the turned profile crosses it.
+- **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band, the crossings, and the markers with the distance between them.
+- **Export PNG**, in the window or under *Download*, writes the plot as an image of 1200 × 750 pixels at twice that resolution, its markers included. A title above it names the profile and the image and gives its length and band width.
+- **Kept like the other measurements.** A profile is listed under *Measurements*, saved in the session with its band width and markers, and written to the measurements file with its length, band width and mean grey value. The details under *Measurements* give the distance between its markers.
 
 ## Overlay colours
 
@@ -329,7 +341,7 @@ Touch has no hover, so the previews that follow the cursor (snap, insert with Ct
 - **The measurement list** takes a tap as a click. A tap on a row selects it alone, a tap on its box adds it to the selection or takes it out, and two taps on a row open its window. Its rows and boxes are larger in the touch layout.
 - **Larger targets.** A finger hits a point within 22 px, where the mouse needs 8. After touch input, points and handles are drawn larger. Snapping searches 2.5 times the search radius for a finger, which covers far more of the image than a cursor. The panel's buttons, fields and boxes grow to finger size as well.
 - **Floating windows** get title bars and close buttons 44 px tall, and a resize corner that answers a finger; the browser's own corner answers the mouse only.
-- **The profile plot** reads out under a finger dragged along it, and the reading stays after the finger lifts.
+- **The profile plot** reads out under a finger dragged along it, and the reading stays after the finger lifts. A tap places a marker, and a marker can be dragged by a finger.
 - **Number fields** open the number keypad of the Windows touch keyboard.
 - **A long press on the controls** no longer selects their text.
 
@@ -348,6 +360,8 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | Alt+click | place the point exactly, without snapping |
 | drag a point | move a vertex or a measurement point; it snaps when released (Alt: not). A profile's end never snaps; the profile turns square about its other end instead (Alt: not) |
 | drag the white square | widen or narrow the band of the selected profile |
+| click on the profile plot | place marker A, then B, then move the nearer one; snapped to the steepest slope while that option is on (Alt: exactly) |
+| drag a marker on the plot | move it; it snaps when let go (Alt: not); a drag that starts elsewhere reads values |
 | right click | contour: delete the vertex; other tools: delete the measurement, or cancel the one being placed |
 | wheel, touchpad pinch | zoom about the cursor |
 | middle drag, Space+drag; drag with no tool | pan |
@@ -379,7 +393,7 @@ The costs, measured on the FEI test image of 3072 × 2188 pixels (6.29 Mpx above
 - **A change of levels** repaints the picture in 40–70 ms, one table look-up per pixel, so the sliders and the histogram handles follow the pointer.
 - **The edge map** takes 1.1 s with σ = 2 and no median, 2.1 s with the 3 × 3 median (the default), and 4.2 s with 5 × 5. It is computed only when snapping or the overlay needs it, and again only when σ or the median changes.
 - **A snap search** takes microseconds.
-- **A line profile** reads about 20 ns per value: 4.9 ms for 3001 samples along a band of 83 lines. A profile and its window are therefore computed again at every step of a drag; MATH.md 6.7 describes how the loop is tuned.
+- **A line profile** reads about 20 ns per value: 4.9 ms for 3001 samples along a band of 83 lines. A profile and its window are therefore computed again at every step of a drag; MATH.md 6.8 describes how the loop is tuned.
 - **Squaring a profile** takes microseconds: a search along its line and one structure tensor of a few hundred pixels.
 - **Calibration and rotation changes**, panning and zooming cost one GPU-drawn frame.
 - **Memory**: about 180 MB for that image with the overlay shown.
@@ -400,7 +414,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `js/gds.js` | the GDSII writer: records, units, eight-byte reals; derivations (S1)–(S2) in the header |
 | `js/vertices.js` | the vertex window's operations on a contour's vertex list |
 | `js/display.js` | the display: levels, brightness and contrast, the histogram's bins; derivations (D1)–(D4) in the header |
-| `js/profile.js` | line profiles: the band, the samples, the contour crossings, squaring to an edge; derivations (P1)–(P11) in the header |
+| `js/profile.js` | line profiles: the band, the samples, the contour crossings, squaring to an edge, markers; derivations (P1)–(P13) in the header |
 | `js/app.js` | the user interface, mouse, pen and touch input; zooming about a point, (G16), in its comments |
 | `vendor/` | UTIF.js and pako (inflate), unmodified, with their licences |
 | `types/vendor.d.ts` | types of UTIF.js for the type check |
@@ -487,6 +501,11 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
     - the turn, which keeps the length, the crossing's place and the sense;
     - the turn about the end not moved, which keeps that end, and the crossing's slide along a straight edge;
     - a contour segment's normal.
+  - Markers:
+    - a point off the line, in a tilted, turned frame, placed where it projects, and points beyond the ends held to them;
+    - the mean between samples;
+    - snapping, which finds an edge from either side, clean and noisy, rarely snaps in noise alone, and not where a value is missing;
+    - the markers in the session and in the profile file's header.
 
 The decoding checks need SEM images of your own, which the repository does not hold. Name them on the command line:
 

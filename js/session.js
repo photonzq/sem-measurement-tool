@@ -17,7 +17,8 @@
  * @property {number} median        0 (off), 3 or 5
  * @property {number} radiusPx
  * @property {number} minContrast
- * @property {boolean} squareProfiles   new profiles are squared to the edge they cross
+ * @property {boolean} squareProfiles   new and moved profiles are squared to the edge they cross
+ * @property {boolean} snapMarkers      a profile's markers snap to the steepest slope nearby
  */
 
 /**
@@ -61,9 +62,11 @@ function measurementEntry(m) {
   if (m.kind === "contour") {
     return { name, kind, color, closed: m.closed, gds_layer: m.layer ?? [1, 0], points_px: storedPoints(m.points) };
   }
-  return m.kind === "profile"
-    ? { name, kind, color, width_px: round4(m.width ?? 1), points_px: storedPoints(m.points) }
-    : { name, kind, color, points_px: storedPoints(m.points) };
+  if (m.kind !== "profile") {
+    return { name, kind, color, points_px: storedPoints(m.points) };
+  }
+  const markers = m.markers !== undefined && m.markers.length > 0 ? { markers_px: storedPoints(m.markers) } : {};
+  return { name, kind, color, width_px: round4(m.width ?? 1), points_px: storedPoints(m.points), ...markers };
 }
 
 /**
@@ -89,7 +92,7 @@ function formatSession(session, saved) {
     },
     snap: {
       on: snap.on, sigma_px: snap.sigmaPx, median: snap.median, radius_px: snap.radiusPx, min_contrast: snap.minContrast,
-      square_profiles: snap.squareProfiles,
+      square_profiles: snap.squareProfiles, snap_markers: snap.snapMarkers,
     },
     measurements: session.measurements.map(measurementEntry),
     selected: session.selected >= 0 ? session.selected : null,
@@ -236,7 +239,7 @@ function frameAt(value) {
  */
 function snapAt(value) {
   if (value === undefined) {
-    return { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3, squareProfiles: true };
+    return { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3, squareProfiles: true, snapMarkers: true };
   }
   const s = objectAt(value, "snap");
   return {
@@ -246,6 +249,7 @@ function snapAt(value) {
     radiusPx: numberAt(s.radius_px, "snap.radius_px", (v) => v > 0),
     minContrast: numberAt(s.min_contrast, "snap.min_contrast", (v) => v > 0),
     squareProfiles: s.square_profiles !== false,
+    snapMarkers: s.snap_markers !== false,
   };
 }
 
@@ -315,6 +319,12 @@ function measurementAt(value, index, names) {
   const ms = { name, kind, color, points };
   if (kind === "profile") {
     ms.width = numberAt(o.width_px ?? 1, `${what}.width_px`, (v) => v >= 0);
+    if (o.markers_px !== undefined) {
+      ms.markers = pointsAt(o.markers_px, `${what}.markers_px`);
+      if (ms.markers.length > 2) {
+        throw new Error(`${what}: a profile has at most 2 markers, not ${ms.markers.length}`);
+      }
+    }
   }
   return ms;
 }

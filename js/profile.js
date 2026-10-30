@@ -1,7 +1,7 @@
 "use strict";
 /* global matApply, matInverse, viewMatrix, measurementMatrix */
 /* exported profileBand, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle, widthFromPoint,
-   edgeNormal, segmentNormal, squaredProfile */
+   edgeNormal, segmentNormal, squaredProfile, markerPlace, profileValueAt, snapToSlope */
 /*
  * Line profiles: the grey values along a line, averaged across a band of adjustable width, and the
  * places where contours cross the line.  MATH.md, part 6, gives the same derivations with more
@@ -55,6 +55,16 @@
  * contour segment that the line crosses gives its normal exactly (P10).  The profile turns about the
  * crossing, its length in the view and the crossing's place along it kept (P11); after one end was
  * dragged, about the other end instead (t = 0 or 1), and the crossing slides along the edge.
+ *
+ * Markers (P12)-(P13), MATH.md 6.7.  Two markers, A and B, measure a distance along a profile.  A
+ * marker is a stored point; its place along the line is the fraction t of its projection on the
+ * line in the view frame, as in (P11), held to [0, 1] (P12), so that it stays on its image point when
+ * the line moves.  The distance between two markers is |t_B - t_A| |A d|.  Snapped, a marker settles
+ * where the mean's slope is steepest nearby (P13): the mean filtered by the derivative of a Gaussian,
+ * at the scale, from the edge map's sigma to 4 times it, where the steepest point stands out of the
+ * noise best without a neighbouring one in reach, and only where it stands min_contrast times the
+ * noise out of the median slope.  The samples being about a stored pixel apart (P2), sigma in
+ * samples is about sigma in stored pixels.
  */
 
 /**
@@ -358,6 +368,172 @@ function squaredProfile(points, pivot, normal, frame) {
     points: [[pivot[0] - t * bx, pivot[1] - t * by], [pivot[0] + (1 - t) * bx, pivot[1] + (1 - t) * by]],
     turnedDeg: (Math.acos(cos) * 180) / Math.PI,
   };
+}
+
+/**
+ * (P12): where a marker, a stored point, lies along the profile from u1 to u2: the fraction t of its
+ * projection on the line in the view frame, held to [0, 1].
+ * @param {Point[]} points
+ * @param {Point} marker
+ * @param {Frame} frame
+ * @returns {number}
+ */
+function markerPlace(points, marker, frame) {
+  const v = viewMatrix(frame);
+  const [u1, u2] = points;
+  const [dx, dy] = matApply(v, u2[0] - u1[0], u2[1] - u1[1]);
+  const [px, py] = matApply(v, marker[0] - u1[0], marker[1] - u1[1]);
+  const squared = dx * dx + dy * dy;
+  return squared > 0 ? Math.min(1, Math.max(0, (px * dx + py * dy) / squared)) : 0;
+}
+
+/**
+ * The profile's mean at the fraction t along the line, linear between the two samples about it;
+ * NaN when one of them has no value (and t is not on the other).
+ * @param {Profile} profile
+ * @param {number} t
+ * @returns {number}
+ */
+function profileValueAt(profile, t) {
+  const m = profile.mean;
+  if (m.length === 1) {
+    return m[0];
+  }
+  const x = Math.min(1, Math.max(0, t)) * (m.length - 1);
+  const i = Math.min(Math.floor(x), m.length - 2);
+  const f = x - i;
+  return f <= 0 ? m[i] : f >= 1 ? m[i + 1] : m[i] + f * (m[i + 1] - m[i]);
+}
+
+/**
+ * @param {Float64Array} values   finite, at least one
+ * @returns {number} the median
+ */
+function medianOf(values) {
+  const sorted = Float64Array.from(values).sort();
+  const h = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[h] : (sorted[h - 1] + sorted[h]) / 2;
+}
+
+/**
+ * (P13): the slope s_i of the mean at the scale ``sigma`` (samples): the mean filtered by the
+ * derivative of a Gaussian, weights j G_j / sum j^2 G_j (j = -K ... K, K = ceil 3 sigma), which
+ * gives a ramp's slope per sample exactly; NaN within K samples of an end or of a missing value.
+ * With its median, the trend, and its noise: the median absolute deviation from the trend, scaled
+ * by 1.4826 to a standard deviation.
+ * @param {Float64Array} mean
+ * @param {number} sigma
+ * @returns {{slope: Float64Array, k: number, trend: number, noise: number}}
+ */
+function slopeAtScale(mean, sigma) {
+  const n = mean.length;
+  const k = Math.max(1, Math.ceil(3 * sigma));
+  const weights = new Float64Array(2 * k + 1);
+  let norm = 0;
+  for (let j = -k; j <= k; j++) {
+    const g = Math.exp(-(j * j) / (2 * sigma * sigma));
+    weights[j + k] = j * g;
+    norm += j * j * g;
+  }
+  const slope = new Float64Array(n).fill(Number.NaN);
+  for (let i = k; i < n - k; i++) {
+    let s = 0;
+    for (let j = -k; j <= k; j++) {
+      s += weights[j + k] * mean[i + j];
+    }
+    slope[i] = s / norm;                             // NaN when a value is missing
+  }
+  const finite = slope.filter(Number.isFinite);
+  const trend = finite.length > 0 ? medianOf(finite) : Number.NaN;
+  const noise = finite.length > 0 ? 1.4826 * medianOf(finite.map((s) => Math.abs(s - trend))) : Number.NaN;
+  return { slope, k, trend, noise };
+}
+
+/**
+ * (P13): where a marker put at the fractional sample index ``at`` settles: the steepest point of
+ * the mean nearby, at the scale where it is most reliable.  At each scale sigma 2^(q/2), q = 0 ... 4,
+ * the slope's departure from the trend d_i = |s_i - m| has candidates within ``radius`` samples:
+ * peaks, the largest within 2 sigma, standing ``minContrast`` times the noise out and at least half
+ * as high as the window's highest.  The one nearest ``at`` is taken, so that a click by one flank of
+ * a bright line takes that flank.  Above the finest scale, a scale is passed over when another such
+ * peak lies within 3 sigma: there the two would pull each other.  Of the scales left, the one where
+ * the peak stands highest above the noise, d / noise, wins, and the peak is placed between samples
+ * by the vertex of the parabola through it and its two neighbours.  A gradual edge, too noisy to
+ * place at sigma, is placed at the scale of its own width: the noise of s falls as sigma^(-3/2),
+ * the edge's slope hardly at all (MATH.md 6.7).  null, the marker staying where it was put, when no
+ * scale has a candidate.
+ * @param {Float64Array} mean
+ * @param {number} at
+ * @param {number} radius
+ * @param {number} sigma
+ * @param {number} minContrast
+ * @returns {{at: number, sigma: number, snr: number}|null}
+ */
+function snapToSlope(mean, at, radius, sigma, minContrast) {
+  const n = mean.length;
+  /** @type {{at: number, sigma: number, snr: number}|null} */
+  let best = null;
+  for (let q = 0; q <= 4; q++) {
+    const scale = sigma * 2 ** (q / 2);
+    const { slope, k, trend, noise } = slopeAtScale(mean, scale);
+    if (2 * k + 1 > n || !(noise >= 0)) {
+      break;
+    }
+    const d = (/** @type {number} */ i) => Math.abs(slope[i] - trend);   // NaN where there is no slope
+    const reach = Math.max(1, Math.round(2 * scale));
+    /** @param {number} i @returns {boolean} the largest within 2 sigma (a missing slope is not larger) */
+    const peak = (i) => {
+      for (let j = Math.max(0, i - reach); j <= Math.min(n - 1, i + reach); j++) {
+        if (d(j) > d(i)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    const [lo, hi] = [Math.max(k, Math.floor(at - radius)), Math.min(n - k - 1, Math.ceil(at + radius))];
+    let highest = 0;
+    for (let i = lo; i <= hi; i++) {
+      highest = d(i) > highest ? d(i) : highest;
+    }
+    const strong = (/** @type {number} */ i) => d(i) > 0 && d(i) >= minContrast * noise && d(i) >= 0.5 * highest && peak(i);
+    let pick = -1;
+    for (let i = lo; i <= hi; i++) {
+      if (strong(i) && (pick < 0 || Math.abs(i - at) < Math.abs(pick - at))) {
+        pick = i;
+      }
+    }
+    if (pick < 0 || (q > 0 && crowded(pick, scale, reach, (j) => d(j) >= 0.5 * d(pick) && peak(j), n))) {
+      continue;
+    }
+    const snr = d(pick) / noise;
+    if (best === null || snr > best.snr) {
+      const [a, b, c] = [d(pick - 1), d(pick), d(pick + 1)];
+      const curvature = a - 2 * b + c;
+      const shift = Number.isFinite(a) && Number.isFinite(c) && curvature < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / curvature)) : 0;
+      best = { at: pick + shift, sigma: scale, snr };
+    }
+  }
+  return best;
+}
+
+/**
+ * Whether another peak of the kind ``rival`` tells lies within 3 sigma of ``pick``, beyond its own
+ * 2 sigma (``reach``): at that scale the two would pull each other's place (P13).
+ * @param {number} pick
+ * @param {number} scale
+ * @param {number} reach
+ * @param {(j: number) => boolean} rival
+ * @param {number} n
+ * @returns {boolean}
+ */
+function crowded(pick, scale, reach, rival, n) {
+  const span = Math.ceil(3 * scale);
+  for (let j = Math.max(0, pick - span); j <= Math.min(n - 1, pick + span); j++) {
+    if (Math.abs(j - pick) > reach && rival(j)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

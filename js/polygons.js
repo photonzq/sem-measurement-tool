@@ -1,6 +1,6 @@
 "use strict";
 /* global CORRECTIONS, correctionFactorOrNull, measurementMatrix, toMeasurement, measureContour, measureRuler,
-   measureAngle, measureLineAngle, profileGeometry */
+   measureAngle, measureLineAngle, profileGeometry, markerPlace, profileValueAt */
 /* exported formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatProfileFile */
 /*
  * The CSV files of FORMAT.md: the polygon file, the interface to a mode solver or any program that
@@ -381,8 +381,8 @@ function formatMeasurementFile(image, frame, measurements, meanGrey = () => null
 }
 
 /**
- * The profile file (FORMAT.md) of the profile ``ms``: its samples (profile.js) and where the
- * contours cross it.
+ * The profile file (FORMAT.md) of the profile ``ms``: its samples (profile.js), where the contours
+ * cross it, and its markers A and B (P12) with the distance between them.
  * @param {ImageInfo} image
  * @param {Frame} frame
  * @param {Measurement} ms
@@ -407,6 +407,14 @@ function formatProfileFile(image, frame, ms, profile, crossings) {
   lines.push(`# samples: ${g.samples}`, `# lines_across: ${g.offsets.length}`);
   for (const c of crossings) {
     lines.push(`# crossing: ${Number.isFinite(c.distance) ? formatNumber(c.distance, digits) : "?"} ${c.name.replace(/[\r\n]+/g, " ")}`);
+  }
+  const at = (ms.markers ?? []).map((m) => markerPlace(ms.points, m, frame));
+  const distance = (/** @type {number} */ t) => (Number.isFinite(g.length) ? formatNumber(t * g.length, digits) : "?");
+  at.forEach((t, k) => {
+    lines.push(`# marker: ${"AB"[k]} ${distance(t)} ${greyField(profileValueAt(profile, t)) || "?"}`);
+  });
+  if (at.length === 2) {
+    lines.push(`# marker_distance: ${distance(Math.abs(at[1] - at[0]))}`);
   }
   lines.push("# distance along the line in the unit above; mean, std and count of the grey values across the band",
     "distance,mean,std,count,x_px,y_px");
