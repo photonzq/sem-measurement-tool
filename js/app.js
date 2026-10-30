@@ -67,7 +67,8 @@ const TOOL_HINTS = {
   "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
   profile: "Click both ends of a line profile (never snapped); it turns square to the edge it crosses, by up to 15°, " +
     "while that option is on (Alt+click: as drawn; Ctrl+Z right after: back as drawn).  Drag the square on the band's " +
-    "side to widen it, an end to move it; E squares it whatever the turn, P shows the profile window.",
+    "side to widen it, an end to move it: it turns square again about the other end (Alt: as dragged); E squares it " +
+    "whatever the turn, P shows the profile window.",
 };
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = { contour: "contour", ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
@@ -79,7 +80,7 @@ const HOLD_MS = 500;                 // a finger held still this long on a point
 const DOUBLE_MS = 500;               // two clicks or taps on one list row within this time are a double click
 const FLASH_MS = 1600;               // how long the note beside the cursor stays after a profile is squared
 const MIN_COHERENCE = 0.5;           // (P9) below it, an image edge has no single direction to square a profile to
-const MAX_TURN_DEG = 15;             // (P11) a new profile turns by itself up to this far; E squares it whatever the turn
+const MAX_TURN_DEG = 15;             // (P11) a new or moved profile turns by itself up to this far; E: whatever the turn
 
 /** @returns {Frame} */
 function defaultFrame() {
@@ -1337,12 +1338,28 @@ function pushHistory() {
   app.dirty = true;
 }
 
+/** Undo: the last point of a measurement being placed, which is no edit yet; else the last edit. */
 function undo() {
+  if (app.pending !== null) {
+    dropPendingPoint();
+    return;
+  }
   const state = app.history.pop();
   if (state !== undefined) {
     app.future.push(snapshot());
     restore(state);
     app.dirty = true;
+  }
+}
+
+/** Take back the last point of the measurement being placed: the measurement goes with its first. */
+function dropPendingPoint() {
+  if (app.pending !== null) {
+    app.pending.points.pop();
+    if (app.pending.points.length === 0) {
+      app.pending = null;
+    }
+    render();
   }
 }
 
@@ -3274,8 +3291,9 @@ function exportProfilePng(ms = shownProfile()) {
 // crosses (the crossing nearest its middle), else of the image's strongest edge along it, whose
 // direction the structure tensor gives on the stored grid (P8), (P9), carried to the corrected view
 // (P7).  New profiles are squared while the option is on, unless placed with Alt or Exact or further
-// off square than MAX_TURN_DEG, as an edit of their own that Ctrl+Z undoes; E squares the profile
-// edited, whatever the turn.  Either way a note beside the cursor tells, for a moment, what was done.
+// off square than MAX_TURN_DEG, as an edit of their own that Ctrl+Z undoes; so is a profile whose
+// end is dragged, when let go, about its other end, which stays.  E squares the profile edited,
+// whatever the turn.  Either way a note beside the cursor tells, for a moment, what was done.
 
 /**
  * The strongest edge along a line: where the edge strength (E1), sampled about a stored pixel
@@ -3305,14 +3323,25 @@ function strongestEdgeAlong(points, edges) {
 /**
  * What squaring a profile from u1 to u2 to the edge it crosses gives: its new points, the angle it
  * turned through and the contour it was squared to (null: the image's edge); or why it stays.
- * ``pivot`` is where it crosses the edge, or its middle.
+ * ``pivot`` is where it crosses the edge, or its middle.  The profile turns about that crossing, or,
+ * with ``keep`` (0 or 1), about that end, which stays where it is (P11 with t = 0 or 1).
  * @param {Point[]} points
+ * @param {number|null} [keep]
  * @returns {{points: Point[], turnedDeg: number, to: string|null, pivot: Point}|{reason: string, pivot: Point}}
  */
-function squareProfile(points) {
+function squareProfile(points, keep = null) {
   const [u1, u2] = points;
   /** @param {number} t @returns {Point} */
   const along = (t) => [u1[0] + t * (u2[0] - u1[0]), u1[1] + t * (u2[1] - u1[1])];
+  /** @param {Point} pivot @param {Point} normal @returns {{points: Point[], turnedDeg: number}} */
+  const turn = (pivot, normal) => {
+    if (keep === null) {
+      return squaredProfile(points, pivot, normal, app.frame);
+    }
+    const turned = squaredProfile(points, points[keep], normal, app.frame);
+    turned.points[keep] = [points[keep][0], points[keep][1]];   // to the last bit, whatever the rounding of t
+    return turned;
+  };
   const contours = app.measurements.flatMap((m) => (m.kind === "contour" ? [m] : []));
   const crossings = profileCrossings(points, contours);
   if (crossings.length) {
@@ -3321,7 +3350,7 @@ function squareProfile(points) {
     const normal = segmentNormal(contour.points[c.segment], contour.points[(c.segment + 1) % contour.points.length], app.frame);
     if (normal !== null) {
       const pivot = along(c.t);
-      return { ...squaredProfile(points, pivot, normal, app.frame), to: contour.name, pivot };
+      return { ...turn(pivot, normal), to: contour.name, pivot };
     }
   }
   const edges = app.edges;
@@ -3337,37 +3366,41 @@ function squareProfile(points) {
     const c = found === null ? 0 : found.coherence;
     return { reason: `the edge where it crosses has no single direction (coherence ${c.toFixed(2)})`, pivot };
   }
-  return { ...squaredProfile(points, pivot, found.normal, app.frame), to: null, pivot };
+  return { ...turn(pivot, found.normal), to: null, pivot };
 }
 
 /**
  * Square a profile to the edge it crosses, as an edit of its own that Ctrl+Z undoes, and tell what
  * was done: in the status bar, and in a note beside ``at`` (canvas CSS pixels; null: beside the
- * place where it crosses the edge).  A profile further off square than ``maxTurnDeg`` stays as drawn.
+ * place where it crosses the edge).  A profile further off square than ``maxTurnDeg`` stays as it is.
+ * With ``keep`` (0 or 1), the profile turns about that end, which stays: the end not moved when
+ * another was dragged.
  * @param {FixedMeasurement} ms
  * @param {Point|null} at
- * @param {number} maxTurnDeg     MAX_TURN_DEG for a new profile, Infinity for E
+ * @param {number} maxTurnDeg     MAX_TURN_DEG for a new or moved profile, Infinity for E
+ * @param {number|null} [keep]
  */
-function squareMeasurement(ms, at, maxTurnDeg) {
-  const result = squareProfile(ms.points);
+function squareMeasurement(ms, at, maxTurnDeg, keep = null) {
+  const result = squareProfile(ms.points, keep);
   const near = at ?? storedToScreen(result.pivot[0], result.pivot[1]);
+  const as = keep === null ? "as drawn" : "as dragged";
   if ("reason" in result) {
-    setStatus(`${ms.name} stays as drawn: ${result.reason}.`);
+    setStatus(`${ms.name} stays ${as}: ${result.reason}.`);
     flashNote("not squared", near, false);
     return;
   }
   const turned = `${result.turnedDeg.toFixed(1)}°`;
   const to = result.to ?? "the image's edge";
   if (result.turnedDeg > maxTurnDeg) {
-    setStatus(`${ms.name} stays as drawn: it is ${turned} off square to ${to}, more than the ${maxTurnDeg}° a new ` +
+    setStatus(`${ms.name} stays ${as}: it is ${turned} off square to ${to}, more than the ${maxTurnDeg}° a ` +
       "profile turns by itself.  E squares it.");
     flashNote(`not squared: ${turned} off`, near, false);
     return;
   }
   pushHistory();
   ms.points = result.points;
-  setStatus(`${ms.name} squared to ${to}: turned ${turned}.  Ctrl+Z gives it back as drawn; Alt+click places a profile ` +
-    "as drawn.");
+  setStatus(`${ms.name} squared to ${to}${keep === null ? "" : ", about the end not moved"}: turned ${turned}.  ` +
+    `Ctrl+Z gives it back ${as}; ${keep === null ? "Alt+click places a profile" : "Alt when letting go keeps it"} ${as}.`);
   flashNote(`⊥ ${result.to ?? "edge"}, ${turned}`, near, true);
 }
 
@@ -3825,9 +3858,10 @@ function dragTo(x, y) {
 }
 
 /**
- * Release what is dragged at stored (x, y).  A point snaps unless ``exact`` (a profile's ends never
- * do); a vertex let go without moving is selected in the vertex window (added or removed with
- * ``toggle``).
+ * Release what is dragged at stored (x, y).  A point snaps unless ``exact``; a profile's end never
+ * does, but the profile is then squared about its other end while that option is on, unless
+ * ``exact``.  A vertex let go without moving is selected in the vertex window (added or removed
+ * with ``toggle``).
  * @param {number} x
  * @param {number} y
  * @param {boolean} exact
@@ -3851,8 +3885,13 @@ function endDrag(x, y, exact, toggle) {
     refreshMeasurements();
     return;
   }
-  const loose = takeExact() || exact || app.measurements[drag.index].kind === "profile";
-  points[drag.point] = (loose ? null : snapTarget(x, y)) ?? [x, y];
+  const ms = app.measurements[drag.index];
+  const asIs = takeExact() || exact;
+  points[drag.point] = (asIs || ms.kind === "profile" ? null : snapTarget(x, y)) ?? [x, y];
+  if (ms.kind === "profile" && settings.squareProfiles() && !asIs) {
+    // a step of its own after the drag's: Ctrl+Z gives it back as dragged
+    squareMeasurement(ms, storedToScreen(x, y), MAX_TURN_DEG, 1 - drag.point);
+  }
   refreshMeasurements();
   render();
 }
@@ -3897,7 +3936,7 @@ function draggedPoints() {
 // ------------------------------------------------------------------------- touch tools
 //
 // For a touch screen: a toolbar on the view for what a keyboard or a right button does otherwise
-// (undo, redo, fit, stepping back, snapping, one exact point), larger targets for a finger, and a
+// (undo, a point being placed included, redo, fit, snapping, one exact point), larger targets for a finger, and a
 // press and hold on a point for its menu.  The touch layout comes with a touch screen, or with the
 // first touch.
 
@@ -3922,27 +3961,6 @@ function notePointer(e) {
   }
 }
 
-/** @returns {boolean} whether Back has something to take back */
-function canStepBack() {
-  return app.pending !== null || app.originMode || (app.tool === "contour" && (currentContour()?.points.length ?? 0) > 0);
-}
-
-/** Back: the last point of the measurement being placed, else "Set origin", else the selected contour's last vertex. */
-function stepBack() {
-  if (app.pending !== null) {
-    app.pending.points.pop();
-    if (app.pending.points.length === 0) {
-      app.pending = null;
-    }
-  } else if (app.originMode) {
-    app.originMode = false;
-    refreshFrameNotes();
-  } else if (app.tool === "contour") {
-    deleteLastVertex();
-  }
-  render();
-}
-
 /**
  * Set a toolbar button's state, touching the page only when it changes.
  * @param {string} id
@@ -3959,15 +3977,14 @@ function setBarButton(id, disabled, pressed) {
   }
 }
 
-/** The toolbar's buttons, from the state: what can be undone, taken back, snapped. */
+/** The toolbar's buttons, from the state: what can be undone (a point being placed included), redone, snapped. */
 function refreshTouchBar() {
   if (el("touch-bar").hidden) {
     return;
   }
-  setBarButton("touch-undo", app.history.length === 0, null);
+  setBarButton("touch-undo", app.history.length === 0 && app.pending === null, null);
   setBarButton("touch-redo", app.future.length === 0, null);
   setBarButton("touch-fit", app.image === null, null);
-  setBarButton("touch-back", !canStepBack(), null);
   setBarButton("touch-snap", false, settings.snap());
   setBarButton("touch-exact", app.tool === "pan", app.exactOnce);
 }
@@ -4478,11 +4495,7 @@ function toggleCheckbox(id) {
  */
 function backspace() {
   if (app.pending !== null) {
-    app.pending.points.pop();
-    if (app.pending.points.length === 0) {
-      app.pending = null;
-    }
-    render();
+    dropPendingPoint();
   } else if (app.picked.length) {
     dropPicked();
   } else if (app.tool === "contour") {
@@ -4866,7 +4879,6 @@ resizableWindow(el("profile-window"));
 el("touch-undo").addEventListener("click", () => undo());
 el("touch-redo").addEventListener("click", () => redo());
 el("touch-fit").addEventListener("click", () => fit());
-el("touch-back").addEventListener("click", () => stepBack());
 el("touch-snap").addEventListener("click", () => {
   toggleCheckbox("snap");
   snapToggled();

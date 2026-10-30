@@ -194,10 +194,9 @@
       <div id="vertex-note" class="note"></div>
     </section>
     <div id="touch-bar" role="toolbar" aria-label="Touch tools" hidden>
-      <button type="button" id="touch-undo" title="Undo (Ctrl+Z)">&#x21B6;<span>Undo</span></button>
+      <button type="button" id="touch-undo" title="Undo (Ctrl+Z): the last point of a measurement being placed, else the last edit">&#x21B6;<span>Undo</span></button>
       <button type="button" id="touch-redo" title="Redo (Ctrl+Y)">&#x21B7;<span>Redo</span></button>
       <button type="button" id="touch-fit" title="Fit the image to the view (F)">&#x2922;<span>Fit</span></button>
-      <button type="button" id="touch-back" title="Take back the last point being placed, or the selected contour's last vertex">&#x232B;<span>Back</span></button>
       <button type="button" id="touch-snap" aria-pressed="false" title="Snap to the strongest nearby edge (S)">&#x2316;<span>Snap</span></button>
       <button type="button" id="touch-exact" aria-pressed="false" title="Place or release the next point exactly, without snapping">&#x22B9;<span>Exact</span></button>
     </div>
@@ -292,7 +291,7 @@
     <section>
       <h2>Snapping to edges</h2>
       <label><input type="checkbox" id="snap" checked> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
-      <label title="A new profile up to 15° off square turns, about the edge it crosses, to run square to it: to a traced contour it crosses, else to the image's edge (Alt+click: as drawn; Ctrl+Z right after: back as drawn; E squares it whatever the angle)"><input type="checkbox" id="square-profiles" checked> square new profiles to the edge they cross</label>
+      <label title="A profile up to 15° off square turns to run square to the edge it crosses, a traced contour it crosses or else the image's edge: a new one about the crossing, one whose end was dragged about its other end, which stays (Alt with the click or the release: as it is; Ctrl+Z right after: back as it was; E squares it whatever the angle)"><input type="checkbox" id="square-profiles" checked> square profiles to the edge they cross</label>
       <div class="grid">
         <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
         <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
@@ -386,7 +385,7 @@
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
           <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>
           <tr><td><kbd>Alt</kbd>+click</td><td>place the point exactly where clicked, without snapping</td></tr>
-          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not)</td></tr>
+          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not); a profile's end does not snap, but the profile turns square about its other end</td></tr>
           <tr><td>right click</td><td>contour: delete the vertex under the cursor; other tools: delete the measurement under the cursor, or cancel the one being placed</td></tr>
           <tr><td>wheel, touchpad pinch</td><td>zoom about the cursor</td></tr>
           <tr><td>middle drag, <kbd>Space</kbd>+drag; drag with no tool</td><td>pan</td></tr>
@@ -400,13 +399,13 @@
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window (the selected contour)</td></tr>
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
-          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; new profiles up to 15&deg; off square are squared while the option under Snapping to edges is on (<kbd>Alt</kbd>+click: as drawn; <kbd>Ctrl</kbd>+<kbd>Z</kbd> right after: back as drawn)</td></tr>
+          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; new and moved profiles up to 15&deg; off square are squared while the option under Snapping to edges is on (<kbd>Alt</kbd> with the click or the release: as it is; <kbd>Ctrl</kbd>+<kbd>Z</kbd> right after: back as it was)</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
           <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot or square to edge (a profile)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements</td></tr>
           <tr><td><kbd>Delete</kbd></td><td>delete the selected vertices, else the selected measurements, contours included</td></tr>
-          <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>undo / redo (edits, measurements, calibration)</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>undo / redo (edits, measurements, calibration); while a measurement is being placed, undo first takes back its last point</td></tr>
           <tr><td><kbd>F</kbd> <kbd>+</kbd> <kbd>-</kbd></td><td>fit to window; zoom</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>open image / save session</td></tr>
           <tr><td><kbd>Esc</kbd></td><td>cancel the measurement being placed, or "Set origin"; close a menu</td></tr>

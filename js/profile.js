@@ -53,7 +53,8 @@
  * straight edge (near 1) from a corner or noise (near 0) (P9).  J is solved on the stored grid, where
  * the noise adds the same to every direction, and only its eigenvector is carried to the view.  A
  * contour segment that the line crosses gives its normal exactly (P10).  The profile turns about the
- * crossing, its length in the view and the crossing's place along it kept (P11).
+ * crossing, its length in the view and the crossing's place along it kept (P11); after one end was
+ * dragged, about the other end instead (t = 0 or 1), and the crossing slides along the edge.
  */
 
 /**

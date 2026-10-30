@@ -828,15 +828,15 @@ $$t = \frac{w \times e}{d \times e}, \qquad q = \frac{w \times d}{d \times e}. \
 
 ### 6.6 Squaring a profile to an edge (P6)–(P11)
 
-A profile measures an edge best when it runs square to it, along the edge's normal as seen. A line drawn by hand is a few degrees off. While **square new profiles to the edge they cross** is on (under Snapping, on by default), a new profile therefore turns, about the point where it crosses an edge, to run along that edge's normal. **E** does the same to the profile edited. The edge is:
+A profile measures an edge best when it runs square to it, along the edge's normal as seen. A line drawn by hand is a few degrees off. While **square profiles to the edge they cross** is on (under Snapping, on by default), a new profile therefore turns, about the point where it crosses an edge, to run along that edge's normal. A profile whose end was dragged turns too, when the end is let go, but about its other end (*Turning about the end not moved*, below). **E** squares the profile edited about its crossing. The edge is:
 
 1. a traced contour the profile crosses, if there is one: of the crossings, the one nearest the profile's middle (P10);
 2. else the image's strongest edge along the profile, whose direction the structure tensor gives (P7)–(P9).
 
-The profile turns about the crossing and keeps its length and the crossing's place along it (P11). A new profile turns by itself only when it is at most 15° off square (*The largest turn*, below). The squaring is an edit of its own:
+The profile turns about the crossing and keeps its length and the crossing's place along it (P11). A new or moved profile turns by itself only when it is at most 15° off square (*The largest turn*, below). The squaring is an edit of its own:
 
-- Ctrl+Z gives the profile back as drawn;
-- Alt+click, or Exact, places a profile as drawn.
+- Ctrl+Z gives the profile back as drawn, or as dragged;
+- Alt+click, or Exact, places a profile as drawn; Alt held, or Exact, when a dragged end is let go keeps it as dragged.
 
 For 1.6 s a note beside the cursor tells what was done:
 
@@ -1133,7 +1133,31 @@ The profile turns through $\arccos(|\hat n\cdot Vd|/L)$, between 0 and 90°, whi
 - **The sense** keeps the plot from flipping: $u_1$ stays the end the plot starts from.
 - **The band's width** $w$, in view units, is kept.
 
-**The largest turn.** A new profile turns by itself only when it is at most $\delta_{\max} = 15°$ off square. Further off, it stays as drawn, and the note gives the angle. E, the profile window's *Square* button and the press-and-hold menu square it whatever the angle. The cap tells apart two kinds of profile:
+**Turning about the end not moved.** When an end of a profile is dragged and let go, the profile turns about its other end $a$, which stays, rather than about the crossing. This is (P11) with the pivot $p = a$: $t = 0$ when $a = u_1$, and $t = 1$ when $a = u_2$. The new ends are
+
+$$u_1' = u_1,\quad u_2' = u_1 + V^{-1}(\varsigma L\hat n) \qquad \text{or} \qquad u_1' = u_2 - V^{-1}(\varsigma L\hat n),\quad u_2' = u_2,$$
+
+with $L$ the view length the profile was dragged to. The normal $\hat n$ is still the edge's where the dragged line crosses it, at $c$ (P8)–(P10). The app keeps $a$ to the last bit; the rounding of $t$ near 1 would otherwise move it by about $10^{-16}L$.
+
+Why the other end: it was placed and then left alone, so it is where the user wants it. The drag only says where the moved end should go, and turning about the crossing would move both ends.
+
+What it costs: the crossing slides along the edge. Take the edge straight through $c$, with the unit tangent $\hat\tau \perp \hat n$. Let the profile run at the angle $\delta$ to $\hat n$, with $c$ at the view distance $s$ from $a$. In the view, with the signs of $\hat n$ and $\hat\tau$ chosen to suit,
+
+$$c - a = s\,(\cos\delta\,\hat n + \sin\delta\,\hat\tau).$$
+
+The turned centre line is $a + \lambda\hat n$. The edge is the set of points $x$ with $(x - c)\cdot\hat n = 0$, and the line meets it where $\lambda = (c - a)\cdot\hat n = s\cos\delta$. The new crossing is therefore
+
+$$c' = a + s\cos\delta\,\hat n, \qquad c' - c = -s\sin\delta\,\hat\tau.$$
+
+It slides along the edge by $s\sin\delta$, and comes nearer the end that stayed, from $s$ to $s\cos\delta$; the edge moves by $s\,(1 - \cos\delta)$ in the plot. For $\delta = 5°$ and $s = 100$ view units, that is 8.7 units along the edge and 0.38 units in the plot. At the cap, $\delta = 15°$, it is $0.26\,s$ and $0.034\,s$.
+
+On a straight edge nothing else changes: the normal is the same all along it, so the profile is square at $c'$ too. On an edge curving with the radius $R$, the normal turns between $c$ and $c'$ by the arc over the radius. The profile is then off square at $c'$ by about
+
+$$\delta' \approx \frac{s\sin\delta}{R},$$
+
+0.5° for $s = 100$, $\delta = 5°$ and $R = 1000$ view units. A contour behaves alike: the profile is square to the segment it crossed, and stays so unless the crossing slides past a vertex onto the next segment. E turns about the crossing and so squares the profile exactly where it now crosses, at the price of moving both ends a little.
+
+**The largest turn.** A new profile, or one whose end was dragged, turns by itself only when it is at most $\delta_{\max} = 15°$ off square. Further off, it stays as drawn, and the note gives the angle. E, the profile window's *Square* button and the press-and-hold menu square it whatever the angle. The cap tells apart two kinds of profile:
 
 - **Drawn square by eye.** Such a profile is off by the error of the eye and of the two clicks, typically a few degrees and well within the cap. Two clicks 100 screen pixels apart, each placed to about 2 px across the line, alone turn it by about $\sqrt2 \times 2/100$ rad, 1.6°.
 - **Drawn at an angle on purpose.** In a cross-section, a horizontal profile across a sloped sidewall at a set height is $90° - \alpha$ off square for a sidewall at $\alpha$ from the horizontal. That is 20–30° for sidewalls at 60–70°, which the cap leaves as drawn. A profile along an edge is 90° off.
@@ -1154,6 +1178,7 @@ A horizontal profile across a sidewall steeper than 75° is turned; Ctrl+Z gives
 - the normal and coherence of $\langle J\rangle$ in a frame that stretches 3 times;
 - the scatter of the direction over 100 noisy images, against one gradient and a sum of gradient vectors;
 - that (P11) keeps the length, the fraction, the sense and the angle turned;
+- that (P11) about an end keeps that end, and that on a straight edge the crossing then slides by $s\sin\delta$ and comes to $s\cos\delta$ from it;
 - that (P10) is square to its segment in the tests' frame;
 - that the crossings (P5) name the segment crossed.
 

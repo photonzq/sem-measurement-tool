@@ -46,7 +46,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
    Its last entries do the same for all the measurements.
 
-Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes points, measurements and calibration changes.
+Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes points, measurements and calibration changes. While a measurement is being placed, Ctrl+Z first takes back its last point.
 
 ## Tools
 
@@ -66,7 +66,7 @@ The **points of a measurement** handle as follows:
 
 - drag a point to move it; it snaps when released;
 - right-click a point to delete its measurement;
-- Esc, or a right click, cancels a measurement being placed, and Backspace removes its last point;
+- Esc, or a right click, cancels a measurement being placed, and Backspace or Ctrl+Z removes its last point;
 - Alt with any click or release places a point exactly, without snapping.
 
 ## Measurements
@@ -107,10 +107,12 @@ Every operation can be undone.
 
 The *Profile* tool (5) takes the grey values along a line, averaged across a band around it.
 
-- **Placing.** Click both ends. The ends are never snapped, since a profile runs across edges, not along them; the profile is squared instead (below). Drag an end to move it.
+- **Placing.** Click both ends. The ends are never snapped, since a profile runs across edges, not along them; the profile is squared instead (below). Drag an end to move it: when it is let go, the profile is squared again, about the other end.
 - **Squaring.** A new profile turns to run square to the edge it crosses, as seen on screen. It turns about the point where it crosses the edge, and keeps its length and that point's place along it. The edge is:
   - a traced contour the profile crosses, if there is one (of the crossings, the one nearest the profile's middle);
   - else the image's strongest edge along the profile. Its direction comes from the gradients around the crossing, through the structure tensor, which averages them without letting the two flanks of a bright line cancel (MATH.md 6.6).
+
+  A profile whose end was dragged turns instead about its other end, which stays where it is, and keeps the length it was dragged to. The crossing then slides a little along the edge: by $s\sin\delta$ for a crossing $s$ from that end and a profile $\delta$ off square (MATH.md 6.6).
 
   For a moment a note beside the cursor shows what was done and the angle turned: "⊥ edge, 4.2°", or the contour's name for a contour. The profile stays as drawn, with "not squared" and the reason in the status bar, in three cases:
   - no edge along it reaches the snapping threshold;
@@ -118,10 +120,10 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - it is more than 15° off square ("not squared: 34.1° off"). Such a profile was most likely drawn at its angle on purpose, for instance horizontally across a sloped sidewall. A profile drawn square by eye is a few degrees off.
 
   How to keep or redo it:
-  - Ctrl+Z right after gives the profile back as drawn; a second Ctrl+Z removes it.
-  - Alt+click places a profile as drawn.
-  - E squares the profile edited whatever the angle, for instance after its ends were dragged, or when it was more than 15° off.
-  - *square new profiles to the edge they cross*, under *Snapping*, is on from the start.
+  - Ctrl+Z right after gives the profile back as drawn, or as dragged; a second Ctrl+Z removes it, or undoes the drag.
+  - Alt+click places a profile as drawn, and Alt held when a dragged end is let go keeps it as dragged.
+  - E squares the profile edited whatever the angle, for instance when it was more than 15° off. It turns about the crossing, as for a new profile.
+  - *square profiles to the edge they cross*, under *Snapping*, is on from the start.
 - **The band.** It is a rectangle as seen on screen, whatever the tilt correction or rotation. Its width is in the measurement unit, or in pixels of the corrected view.
   - Widen or narrow it by dragging the white square on its side. The profile must be selected for the square to show.
   - Or type the width in the profile window.
@@ -209,7 +211,7 @@ With *Snap* on, as it is from the start (S switches it), a click lands on the st
 - **Candidates and choice.** Candidates are the crest pixels within the *search radius*, measured in pixels of the corrected view. The choice weighs strength against distance, and a parabola places the point between pixels, to within 0.05 px for a crest one pixel wide. The point may slide a pixel or two **along** the edge.
 - **Where the map is computed.** The edge map is computed on the stored image, without the info bar, once per σ and median setting. The noise is independent pixel to pixel there and the probe round, so this is also the matched filter.
 - **Bright lines.** Many SEM edges appear as bright lines, which have two flanks. A click snaps to the flank nearest to it, so trace one flank consistently, or use Alt to place points on the line's centre.
-- **Profiles** are not snapped but squared to the edge they cross, while *square new profiles to the edge they cross* is on (see *Line profiles*). The image's edge must reach the same threshold.
+- **Profiles** are not snapped but squared to the edge they cross, when placed and when an end is dragged, while *square profiles to the edge they cross* is on (see *Line profiles*). The image's edge must reach the same threshold.
 
 *Show the edge map* (G) overlays the edge strength in green, which shows what the snapping sees.
 
@@ -315,9 +317,8 @@ Touch has no hover, so the previews that follow the cursor (snap, insert with Ct
 **The touch layout.** On a device with a touch screen, or after the first touch, the app adds what a keyboard or a right button gives otherwise.
 
 - **The touch toolbar**, at the top left of the view:
-  - *Undo* and *Redo*;
+  - *Undo* and *Redo*. While a measurement is being placed, *Undo* first takes back its last point, which is not yet an edit to undo;
   - *Fit*, the image to the view;
-  - *Back*, which takes back the last point of the measurement being placed, else the selected contour's last vertex, or cancels *Set origin*;
   - *Snap*, the same switch as in the panel;
   - *Exact*, which places or releases the next point exactly where the finger is, without snapping, and then lets go.
 - **Press and hold** a point for half a second, while a ring fills, to open its menu beside the finger:
@@ -345,7 +346,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | hold Ctrl | contour: show the segment that will receive the vertex and where it will land |
 | click, Shift+click a vertex | contour: select it in the vertex window; add or remove it |
 | Alt+click | place the point exactly, without snapping |
-| drag a point | move a vertex or a measurement point; it snaps when released (Alt: not; a profile's ends never) |
+| drag a point | move a vertex or a measurement point; it snaps when released (Alt: not). A profile's end never snaps; the profile turns square about its other end instead (Alt: not) |
 | drag the white square | widen or narrow the band of the selected profile |
 | right click | contour: delete the vertex; other tools: delete the measurement, or cancel the one being placed |
 | wheel, touchpad pinch | zoom about the cursor |
@@ -361,11 +362,11 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | S, G | snapping on or off; edge map on or off |
 | T | show or hide the vertex window of the selected contour |
 | P | show or hide the profile window; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
-| E | square the selected profile to the edge it crosses, whatever the angle; new profiles up to 15° off square are squared while the option under *Snapping* is on (Alt+click: as drawn; Ctrl+Z right after: back as drawn) |
+| E | square the selected profile to the edge it crosses, whatever the angle; new and moved profiles up to 15° off square are squared while the option under *Snapping* is on (Alt with the click or the release: as it is; Ctrl+Z right after: back as it was) |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements |
 | Delete | delete the selected vertices, else the selected measurements, contours included |
-| Ctrl+Z, Ctrl+Y | undo, redo |
+| Ctrl+Z, Ctrl+Y | undo, redo; while a measurement is being placed, Ctrl+Z first takes back its last point |
 | F, +, − | fit to the window; zoom |
 | Ctrl+O, Ctrl+S | open an image; save the session |
 | Esc | cancel the measurement being placed, or *Set origin*; close a menu |
@@ -484,6 +485,7 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
     - the tensor of a noisy edge, on average, exact in a frame that stretches 3 times;
     - the direction's scatter over noisy images, against one gradient and a sum of gradient vectors;
     - the turn, which keeps the length, the crossing's place and the sense;
+    - the turn about the end not moved, which keeps that end, and the crossing's slide along a straight edge;
     - a contour segment's normal.
 
 The decoding checks need SEM images of your own, which the repository does not hold. Name them on the command line:

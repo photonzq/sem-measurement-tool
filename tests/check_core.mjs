@@ -37,7 +37,8 @@
 //    handle; the profile file.  Squaring (P7)-(P11): the edge's normal from the structure tensor
 //    in a tilted, turned frame, on a step, a bright line and a corner; the tensor of a noisy edge,
 //    on average, exact in a frame that stretches 3 times; the direction's scatter over noisy
-//    images, against one gradient and a sum of gradient vectors; the turn; a segment's normal.
+//    images, against one gradient and a sum of gradient vectors; the turn, also about the end not
+//    moved, with the crossing's slide along a straight edge; a segment's normal.
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -1412,6 +1413,40 @@ function checkSquaredProfile() {
     "crossed (a square's closing side at 0.25, its right side at 0.75)");
 }
 
+/**
+ * Turning about the end not moved: (P11) with the pivot at an end keeps that end, and on a straight edge the crossing
+ * slides along it by s sin(delta) and comes to s cos(delta) from the end kept, in a tilted, turned frame.
+ */
+function checkSquaredAboutEnd() {
+  const v = api.viewMatrix(SLANTED);
+  const view = (p, q) => api.matApply(v, q[0] - p[0], q[1] - p[1]);
+  const [c0, along] = [[40, 30], [7, 23]];                         // the edge: a straight line through c0, stored
+  const n = api.segmentNormal(c0, [c0[0] + along[0], c0[1] + along[1]], SLANTED);
+  const cross = (p, q) => {                                        // where the line from p to q meets the edge
+    const d = [q[0] - p[0], q[1] - p[1]];
+    const t = ((c0[0] - p[0]) * along[1] - (c0[1] - p[1]) * along[0]) / (d[0] * along[1] - d[1] * along[0]);
+    return [p[0] + t * d[0], p[1] + t * d[1]];
+  };
+  const [a, b] = [[10, 20], [70, 45]];
+  const c = cross(a, b);
+  const s = Math.hypot(...view(a, c));
+  const ab = view(a, b);
+  const delta = Math.acos(Math.abs(ab[0] * n[0] + ab[1] * n[1]) / Math.hypot(...ab));
+  const first = api.squaredProfile([a, b], a, n, SLANTED);        // b dragged, a its first end kept: t = 0
+  const second = api.squaredProfile([b, a], a, n, SLANTED);       // the same with a its second end: t = 1
+  const c1 = cross(first.points[0], first.points[1]);
+  const slide = Math.hypot(...view(c, c1));
+  const near = Math.hypot(...view(a, c1));
+  const kept = first.points[0][0] === a[0] && first.points[0][1] === a[1]
+    && Math.hypot(...view(second.points[1], a)) < 1e-12 * Math.hypot(...ab);
+  check(kept && Math.abs(slide - s * Math.sin(delta)) < 1e-9 * s && Math.abs(near - s * Math.cos(delta)) < 1e-9 * s
+    && Math.abs(first.turnedDeg - delta / DEG) < 1e-9,
+  "turned about the end not moved (P11 with t = 0 or 1): that end kept, and on a straight edge in a tilted, turned " +
+    `frame the crossing slides along it by s sin(delta) = ${(s * Math.sin(delta)).toFixed(4)} and comes to ` +
+    `s cos(delta) = ${(s * Math.cos(delta)).toFixed(4)} from that end (s = ${s.toFixed(4)}, delta = ` +
+    `${(delta / DEG).toFixed(2)} deg)`);
+}
+
 const images = testImages(process.argv.slice(2));
 checkFei(images.feiFolder);
 checkZeiss(images.zeiss);
@@ -1443,5 +1478,6 @@ checkEdgeNormal();
 checkEdgeNormalExpected();
 checkEdgeNormalNoise();
 checkSquaredProfile();
+checkSquaredAboutEnd();
 console.log(failures.length ? `FAIL: ${failures.length} check(s)` : "PASS");
 process.exit(failures.length ? 1 : 0);
