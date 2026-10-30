@@ -31,7 +31,8 @@
 //    arithmetic of ImageJ's ContrastAdjuster, transcribed here, and their round trips; the grey
 //    map (D1) and the auto levels (D2).
 // 9. Line profiles (profile.js): samples along a ramp exact, missing outside the image and below
-//    the info bar, distances in micrometres (P2), (P4); the band a rectangle as seen in any frame,
+//    the info bar, distances in micrometres (P2), (P4); the tuned sampling loop bit for bit that of
+//    bilinear() at every value; the band a rectangle as seen in any frame,
 //    its mean and spread, unchanged by a rotation (P1), (P3); contour crossings (P5); the width
 //    handle; the profile file.  Squaring (P7)-(P11): the edge's normal from the structure tensor
 //    in a tilted, turned frame, on a step, a bright line and a corner; the tensor of a noisy edge,
@@ -68,7 +69,7 @@ function loadApi() {
     axisFromLine, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatSession,
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
     reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness,
-    sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
+    sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle,
     widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, UTIF })`, context);
 }
 
@@ -1118,6 +1119,48 @@ function checkProfileSampling() {
     "give 0.04 and 0.06 um");
 }
 
+/**
+ * sampleProfile's tuned loop against the plain one, bilinear() at every value: bit for bit, on noise, for bands inside
+ * the image, across its left edge and the info bar, ending on the last column and just before it, along a column to
+ * the last row above the bar, and in a tilted, turned frame.
+ */
+function checkProfileFastPath() {
+  const [w, h, rows] = [64, 48, 40];
+  const noise = gaussian(41);
+  const image = { data: Float32Array.from({ length: w * h }, () => 1000 + 300 * noise()), width: w, imageRows: rows };
+  const plain = (g) => {
+    const n = g.samples;
+    const out = { mean: [], spread: [], count: [] };
+    for (let i = 0; i < n; i++) {
+      const f = n > 1 ? i / (n - 1) : 0;
+      const x = g.band.start[0] + f * g.band.d[0];
+      const y = g.band.start[1] + f * g.band.d[1];
+      const values = g.offsets.map(([ox, oy]) => api.bilinear(image.data, w, rows, x + ox, y + oy)).filter((v) => !Number.isNaN(v));
+      const k = values.length;
+      let sum = 0;
+      values.forEach((v) => { sum += v; });
+      const mean = k > 0 ? sum / k : NaN;
+      let squares = 0;
+      values.forEach((v) => { squares += (v - mean) ** 2; });
+      out.mean.push(mean);
+      out.spread.push(k > 0 ? Math.sqrt(squares / k) : NaN);
+      out.count.push(k);
+    }
+    return out;
+  };
+  const bands = [[[[5, 6], [55, 30]], 9, PLAIN], [[[-4, 20], [30, 44]], 7, PLAIN], [[[10, 12], [w - 1, 12]], 1, PLAIN],
+    [[[10, 12], [w - 1 - 1e-9, 12]], 1, PLAIN], [[[20, 2], [20, rows - 1]], 5, PLAIN], [[[8, 8], [50, 30]], 6, SLANTED]];
+  const same = bands.filter(([points, width, frame]) => {
+    const g = api.profileGeometry(points, width, frame);
+    const [a, b] = [plain(g), api.sampleProfile(image, g)];
+    return ["mean", "spread", "count"].every((key) => a[key].every((v, i) => Object.is(v, b[key][i])));
+  }).length;
+  check(same === bands.length,
+    `profile sampling (P4): the tuned loop gives, bit for bit, the values of bilinear() at every value in ${same} of ` +
+    `${bands.length} bands: inside, across the left edge and the info bar, ending on the last column and just before ` +
+    "it, along a column to the last row above the bar, and in a tilted, turned frame");
+}
+
 function checkProfileBand() {
   const rows = rampImage(40, 30, (x, y) => y);
   const band = (w, frame) => api.sampleProfile(rows, api.profileGeometry([[5, 10], [25, 10]], w, frame));
@@ -1380,6 +1423,7 @@ checkHistogram();
 checkSliders();
 checkLevels();
 checkProfileSampling();
+checkProfileFastPath();
 checkProfileBand();
 checkProfileCrossings();
 checkProfileFile();

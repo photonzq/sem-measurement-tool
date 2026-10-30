@@ -377,7 +377,7 @@ The costs, measured on the FEI test image of 3072 × 2188 pixels (6.29 Mpx above
 - **A change of levels** repaints the picture in 40–70 ms, one table look-up per pixel, so the sliders and the histogram handles follow the pointer.
 - **The edge map** takes 1.1 s with σ = 2 and no median, 2.1 s with the 3 × 3 median (the default), and 4.2 s with 5 × 5. It is computed only when snapping or the overlay needs it, and again only when σ or the median changes.
 - **A snap search** takes microseconds.
-- **A line profile** reads about 36 ns per value: 9 ms for 3001 samples along a band of 83 lines. A profile and its window are therefore computed again at every step of a drag.
+- **A line profile** reads about 20 ns per value: 4.9 ms for 3001 samples along a band of 83 lines. A profile and its window are therefore computed again at every step of a drag; MATH.md 6.7 describes how the loop is tuned.
 - **Squaring a profile** takes microseconds: a search along its line and one structure tensor of a few hundred pixels.
 - **Calibration and rotation changes**, panning and zooming cost one GPU-drawn frame.
 - **Memory**: about 180 MB for that image with the overlay shown.

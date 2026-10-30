@@ -417,8 +417,8 @@ The FEI test image is 3072 × 2188 pixels at 16 bits (13.5 MB), with 3072 × 204
 | edge map, $\sigma = 2$, 5 × 5 median | 4.22 s |
 | edge map, $\sigma = 4$, 3 × 3 median | 3.15 s |
 | one snap search, radius 12, cross-section view rotated by 30° | 6.5 µs |
-| a line profile of 3001 samples along a band of 83 lines (249 000 values) | 9 ms |
-| the profile window refreshed for a profile of 476 samples × 30 lines, plot included | 1.2 ms |
+| a line profile of 3001 samples along a band of 83 lines (249 000 values) | 4.9 ms (6.7) |
+| the profile window refreshed for a profile of 476 samples × 30 lines, plot included | 0.5 ms |
 
 ### 3.3 Memory
 
@@ -1171,10 +1171,23 @@ A horizontal profile across a sidewall steeper than 75° is turned; Ctrl+Z gives
 
 ### 6.7 Cost
 
-Each value takes four pixel reads and a dozen arithmetic operations. In Chromium a value took about 36 ns: a profile of 3001 samples along a band of 83 lines, 249 000 values, took 9 ms. The window therefore computes the profile again at every step of a drag:
+Each value takes four pixel reads and a dozen arithmetic operations. The window computes the profile again at every step of a drag:
 
 - of the band's width handle;
 - of a profile's end;
 - of a contour vertex, whose crossings move with it.
+
+**The tuned loop.** Most lines of a band lie wholly inside the image, away from its last column and from the last row above the info bar. Such a line is straight, so its two ends tell where all its samples lie. The positions $x_0 + t\,(x_1 - x_0)$ are monotonic in $t$ in floating point too, the ends being computed as in the loop. For these lines the loop skips the test for missing values and the clamps at the edges, and interpolates with the same operations in the same order. The offsets across the band are kept as flat arrays. The results are those of the plain loop, bit for bit, and the tests compare the two on bands inside the image, across its edges and the info bar, and in a tilted frame.
+
+| Band (FEI test image, Chromium) | Values | Plain loop | Tuned loop |
+|:--|:--|:--|:--|
+| 3001 samples × 83 lines | 249 000 | 7.2 ms, 29 ns per value | 4.9 ms, 20 ns per value |
+| 476 samples × 30 lines | 14 300 | 0.4 ms, 28 ns per value | 0.2 ms, 14 ns per value |
+
+A profile of one line gains little. Along a slanted line, each sample reads rows of the image that no cache holds, so the time goes into memory.
+
+**What does not pay.** Going along each line in turn, with the spread computed in one pass from values shifted by the line's first, was at most 8 % faster, and its results differ in the last bits. Flooring with `x | 0` gained 7 % on the interpolation alone, which is lost in the whole. Resizing the plot's canvas at every redraw costs nothing measurable when its size is unchanged. Pointer moves arrive at most once per displayed frame, so a refresh per move is a refresh per frame.
+
+**The whole refresh.** With a plot of 598 × 298 CSS pixels at a device pixel ratio of 2, the window's refresh takes 0.5 ms for the band of 476 × 30 values, of which the plot is 0.08 ms. For the band of 3001 × 83 it takes 5.2 ms, of which the plot is 0.4 ms. Both are well within the 16.7 ms of a frame at 60 Hz. A band of about 450 000 values, for instance 3000 × 150, would fill a frame. Beyond that a drag would lag, and the next steps would be to sample coarsely during the drag and fully on release, or to compute in a Worker.
 
 Squaring costs one search along the line, $N + 1$ bilinear values, and one tensor over at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$. In Node, the tensor and its normal took about 10 µs, and a search along 300 samples about 6 µs.

@@ -1,7 +1,7 @@
 "use strict";
 /* global matApply, matInverse, viewMatrix, measurementMatrix */
-/* exported profileBand, profileGeometry, sampleProfile, profileCrossings, widthHandle, widthFromPoint, edgeNormal,
-   segmentNormal, squaredProfile */
+/* exported profileBand, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle, widthFromPoint,
+   edgeNormal, segmentNormal, squaredProfile */
 /*
  * Line profiles: the grey values along a line, averaged across a band of adjustable width, and the
  * places where contours cross the line.  MATH.md, part 6, gives the same derivations with more
@@ -157,27 +157,79 @@ function bilinear(data, width, rows, x, y) {
 }
 
 /**
+ * (P4) at a stored (x, y) in [0, width - 1) x [0, rows - 1), where bilinear() would neither clamp
+ * nor find a value missing: the same operations in the same order, without the tests.
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+function bilinearInside(data, width, x, y) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const at = y0 * width + x0;
+  const top = data[at] * (1 - fx) + data[at + 1] * fx;
+  const bottom = data[at + width] * (1 - fx) + data[at + width + 1] * fx;
+  return top * (1 - fy) + bottom * fy;
+}
+
+/**
  * (P2)-(P4): the profile of the image along a geometry.
+ *
+ * Speed.  The profile is computed again at every step of a drag, so this loop is tuned.  Its
+ * results are bit for bit those of the plain loop, bilinear() at every value (a test compares
+ * them):
+ *   - The offsets across the band are two flat arrays: indexing them is cheaper than taking
+ *     [ox, oy] pairs apart, which cost an iterator per sample.
+ *   - A line of the band whose two ends lie in [0, width - 1) x [0, rows - 1) has every sample
+ *     there.  The line is straight, and x0 + t (x1 - x0) is monotonic in t in floating point too,
+ *     the ends being computed as in the loop.  Its values need neither bilinear()'s test for
+ *     missing values nor its clamps at the edges, so they take bilinearInside(), the same
+ *     operations in the same order without the tests.  Other lines take bilinear().
+ * In Chromium, on the FEI test image, this takes 20 ns per value for a band of 3001 x 83 values
+ * (4.9 ms, against 29 ns and 7.2 ms for the plain loop) and 14 ns for one of 476 x 30 (28 ns).  A
+ * profile of one line gains little: along a slanted line each sample reads new rows of the image,
+ * which no cache holds.
+ * Tried and not taken: going along each line in turn, with the spread in one pass from a value
+ * shifted by the line's first (at most 8 % faster, and the last bits differ); x | 0 for the floor
+ * (7 % on the interpolation alone, lost in the whole).
  * @param {{data: Float32Array, width: number, imageRows: number}} image
  * @param {ProfileGeometry} g
  * @returns {Profile}
  */
 function sampleProfile(image, g) {
   const n = g.samples;
+  const m = g.offsets.length;
   const { start, d } = g.band;
+  const { data, width, imageRows: rows } = image;
   const out = {
     distance: new Float64Array(n), mean: new Float64Array(n), spread: new Float64Array(n), count: new Uint32Array(n),
     x: new Float64Array(n), y: new Float64Array(n),
   };
-  const values = new Float64Array(g.offsets.length);
+  const ox = Float64Array.from(g.offsets, (o) => o[0]);
+  const oy = Float64Array.from(g.offsets, (o) => o[1]);
+  const inside = new Uint8Array(m);           // 1: the whole line lies in the interior
+  for (let j = 0; j < m; j++) {
+    const xa = start[0] + ox[j];              // the ends exactly as the loop computes them (f = 0, 1)
+    const ya = start[1] + oy[j];
+    const xb = start[0] + d[0] + ox[j];
+    const yb = start[1] + d[1] + oy[j];
+    inside[j] = xa >= 0 && xb >= 0 && xa < width - 1 && xb < width - 1 && ya >= 0 && yb >= 0 && ya < rows - 1
+      && yb < rows - 1 ? 1 : 0;
+  }
+  const values = new Float64Array(m);
   for (let i = 0; i < n; i++) {
     const f = n > 1 ? i / (n - 1) : 0;
     const x = start[0] + f * d[0];
     const y = start[1] + f * d[1];
     let k = 0;
     let sum = 0;
-    for (const [ox, oy] of g.offsets) {
-      const v = bilinear(image.data, image.width, image.imageRows, x + ox, y + oy);
+    for (let j = 0; j < m; j++) {
+      const v = inside[j] === 1 ? bilinearInside(data, width, x + ox[j], y + oy[j])
+        : bilinear(data, width, rows, x + ox[j], y + oy[j]);
       if (!Number.isNaN(v)) {
         values[k++] = v;
         sum += v;
