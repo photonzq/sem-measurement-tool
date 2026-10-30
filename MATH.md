@@ -243,7 +243,7 @@ With $\Delta u$ the stored difference of two points:
 
     with $t_1$ on line 1 and $t_2$ on line 2. The denominator never vanishes: each $\hat u$ is within 45° of the mean direction, so $|\hat n\times\hat u| \ge \cos 45°$.
   - **The gap** is $|t_2 - t_1|$, the length of the common normal between the lines at $m$. Its components from line 1 to line 2 are $(t_2 - t_1)\,\hat n$. The feet $m + t_i\hat n$, mapped back by $A^{-1}$, are where the drawing puts the arrow heads.
-  - **Parallel or not.** For parallel lines, $t_2 - t_1 = (c_2 - c_1)\cdot\hat n$, their distance, wherever the points were clicked. Lines at an angle $\delta$ to each other draw apart by about $\delta$ per unit of length along them, so the gap is the one at $m$, where the measurement sits. The readout gives $\delta$, the angle between $\hat u_1$ and $\hat u_2$, in $[0°, 90°]$.
+  - **Parallel or not.** For parallel lines, $t_2 - t_1 = (c_2 - c_1)\cdot\hat n$, their distance, wherever the points were clicked. Lines at an angle $\delta$ to each other draw apart by about $\delta$ per unit of length along them, so the gap is the one at $m$, where the measurement sits.
   - **Checks.** In the tests' tilted, turned frame with 2 × 3 nm pixels, lines parallel in micrometres and 0.7 µm apart measure 0.7 to $10^{-12}$. They measure the same when the frame turns by 33°. Lines 2° apart match the gap solved apart by Cramer's rule to $10^{-9}$.
 - **Contours.** The perimeter is $\sum_i |A\Delta u_i|$, with the closing segment when the contour is closed. The area is (G9). The bounding box is that of the mapped points, so it turns with $\varphi$.
 

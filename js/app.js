@@ -68,7 +68,7 @@ const TOOL_HINTS = {
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
   gap: "Click two points on one edge, then two on the other: the gap between the lines, along their common normal " +
-    "midway between their middles, and how far they are from parallel.",
+    "midway between their middles.",
   profile: "Click both ends of a line profile (never snapped); it turns square to the edge it crosses, by up to 15°, " +
     "while that option is on (Alt+click: as drawn; Ctrl+Z right after: back as drawn).  Drag the square on the band's " +
     "side to widen it, an end to move it: it turns square again about the other end (Alt: as dragged); E squares it " +
@@ -1922,15 +1922,18 @@ function axisFromSelected() {
 function showImageInfo() {
   const image = app.image;
   buttonEl("save-session").disabled = image === null;
+  const info = el("image-info");
   if (image === null) {
-    el("image-info").textContent = "No image.";
+    info.textContent = "No image.";
+    info.title = "";
     return;
   }
-  const bar = image.imageRows < image.height
-    ? `\ninfo bar: the bottom ${image.height - image.imageRows} rows, below the dashed line, left out of the histogram, ` +
-      "the auto contrast and the edge detection"
-    : "";
-  fillParts(el("image-info"), [{ file: image.name }, `\n${image.width} x ${image.height} pixels (${image.sampleType})${bar}`]);
+  const rows = image.height - image.imageRows;
+  fillParts(info, [{ file: image.name }, `\n${image.width} x ${image.height} pixels (${image.sampleType})` +
+    `${rows > 0 ? `, info bar ${rows} pixels` : ""}`]);
+  // what the bar means, on hovering: the line itself gives only its height
+  info.title = rows > 0 ? `The info bar, the bottom ${rows} rows below the dashed line, is left out of the histogram, ` +
+    "the auto contrast and the edge detection." : "";
 }
 
 function showMetadata() {
@@ -2047,9 +2050,7 @@ function describeMeasurement(ms) {
     const markers = at.length === 2 ? `markers A, B ${show(Math.abs(at[1] - at[0]) * g.length)} ${u} apart\n` : "";
     return {
       brief: `${show(r.length)} ${u}, band ${show(g.width)} ${u}`,
-      details: `${line.details}\nband ${show(g.width)} ${u} wide (${show(ms.width ?? 1)} px of the corrected view): ` +
-        `${g.offsets.length} line${g.offsets.length === 1 ? "" : "s"} across, ${g.samples} samples along\n${markers}` +
-        "P shows the profile window",
+      details: `${line.details}\nband ${show(g.width)} ${u} wide\n${markers}P shows the profile window`,
     };
   }
   if (ms.kind === "gap") {
@@ -2057,30 +2058,21 @@ function describeMeasurement(ms) {
     if (g === null) {
       return { brief: "?", details: "no measures: the correction factor is undefined, or a line is a point" };
     }
-    const u = unitText(g.unit);
-    return {
-      brief: `${show(g.gap)} ${u}`,
-      details: `gap ${show(g.gap)} ${u} from line 1 to line 2, along their common normal midway between their ` +
-        `middles\nΔX ${show(g.dx)} ${u}, ΔY ${show(g.dy)} ${u}, direction ${g.directionDeg.toFixed(2)}°\n` +
-        `the lines are ${g.angleDeg.toFixed(3)}° from parallel`,
-    };
+    const text = `${show(g.gap)} ${unitText(g.unit)}`;
+    return { brief: text, details: `gap ${text}` };
   }
   if (ms.kind === "angle") {
     const a = measureAngle(ms.points, app.frame);
-    const [vx, vy] = ms.points[1];
-    return a === null ? undefinedFactor
-      : { brief: `${a.toFixed(2)}°`, details: `angle ${a.toFixed(3)}° at the vertex (${vx.toFixed(1)}, ${vy.toFixed(1)}) px` };
+    return a === null ? undefinedFactor : { brief: `${a.toFixed(2)}°`, details: `angle ${a.toFixed(3)}°` };
   }
   const la = measureLineAngle(ms.points, app.frame);
   if (la === null) {
     return undefinedFactor;
   }
-  const where = la.crossing === null ? "the lines are parallel"
-    : `they cross at (${la.crossing[0].toFixed(1)}, ${la.crossing[1].toFixed(1)}) px`;
   return {
     brief: `${la.angleDeg.toFixed(2)}°`,
     details: `angle ${la.angleDeg.toFixed(3)}° from line 1 to line 2, as clicked (supplement ` +
-      `${(180 - la.angleDeg).toFixed(3)}°)\n${where}`,
+      `${(180 - la.angleDeg).toFixed(3)}°)`,
   };
 }
 

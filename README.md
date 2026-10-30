@@ -65,7 +65,7 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 - **Profile.** Two clicks give a line profile: the grey values along the line, averaged across a band around it. See *Line profiles* below.
 - **Gap.** Four clicks, two on each of two edges, give the gap between the lines: a waveguide's width, a layer's thickness.
   - It is measured in micrometres, where right angles are true, along the normal of the lines' mean direction, midway between their middles. For parallel lines that is their distance, wherever the points are (MATH.md 1.10, (G17)).
-  - The readout also gives how far the lines are from parallel, and the gap's components from line 1 to line 2.
+  - The readout gives the gap alone; the measurements file adds its components from line 1 to line 2.
   - The normal is drawn between the lines with arrow heads. A line is dashed out to it when it lies beyond the points.
   - The points snap as a ruler's do.
 
