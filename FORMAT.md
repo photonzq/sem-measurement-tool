@@ -159,13 +159,14 @@ def read_polygons(path):
 # origin_px: 1536 1024
 # px_to_um: 0.001348947159 0.000007469759442 0.000005885929693 -0.001711931896
 # unit: um
-# lengths in the unit above, areas in its square, angles in degrees; points in pixels of the image as stored; width and mean_grey: the band of a line profile; closed to bbox_height: a contour, whose value is its perimeter (closed) or length (open) and whose vertices are in the polygon file
+# lengths in the unit above, areas in its square, angles in degrees; points in pixels of the image as stored; dx, dy and direction_deg of a gap: from line 1 to line 2; width and mean_grey: the band of a line profile; closed to bbox_height: a contour, whose value is its perimeter (closed) or length (open) and whose vertices are in the polygon file
 name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey,closed,vertices,area,bbox_width,bbox_height
 rib,contour,4.207638,um,,,,,,,,,,,,,,1,4,0.348614,2.028043,0.199279
 slab top,contour,3.874213,um,,,,,,,,,,,,,,0,2,,3.874176,0.016904
 rib width,ruler,1.622226,um,1.622208,0.007633,0.270,933.796,853.611,2136.371,853.287,,,,,,,,,,,
 "foot, left",angle,136.833,deg,,,,100.000,965.000,783.010,965.040,933.796,853.611,,,,,,,,,
 sidewall,line-angle,43.163,deg,,,,100.000,965.000,700.000,965.000,783.010,965.040,933.796,853.611,,,,,,,
+rib height,gap,0.191006,um,0.000869,-0.191004,-89.739,933.796,853.611,2136.371,853.287,783.010,965.040,2286.437,965.003,,,,,,,
 profile 1,profile,0.599182,um,0.002614,-0.599176,-89.750,1500.000,750.000,1500.000,1100.000,,,,,0.006745,27367.601,,,,,
 ```
 
@@ -177,6 +178,7 @@ One row per measurement, in the order of the list. The `kind` column decides whi
 | `ruler` | 1 → 2 | length | `um`, or `px` without a pixel size | the components of point 2 − point 1 in the measurement frame, and its direction, counter-clockwise from +x in (−180°, 180°] |
 | `angle` | arm end, vertex, arm end | the angle at the vertex, in [0°, 180°] | `deg` | empty |
 | `line-angle` | line 1 from, to; line 2 from, to | the angle between the two lines as clicked, in [0°, 180°]; the supplement is the angle with one line reversed | `deg` | empty |
+| `gap` | line 1 from, to; line 2 from, to | the gap between the lines, along the normal of their mean direction, midway between their middles (MATH.md 1.10, (G17)) | `um`, or `px` without a pixel size | the components of the gap from line 1 to line 2 in the measurement frame, and its direction, counter-clockwise from +x in (−180°, 180°] |
 | `profile` | 1 → 2 | the profile's length | as a ruler | as a ruler |
 
 `width` and `mean_grey` are filled for profiles only:
@@ -312,7 +314,7 @@ JSON, as the app writes it. Each $[x, y]$ pair stays on one line:
 | `image` | the image the work belongs to: `name`, `sha256` (or null), `size_px`, `databar_rows` (the info bar, as in the CSV header), `microscope` (or null). The pixels themselves are not in the file. |
 | `frame` | the measurement frame, the keys of the CSV header: `pixel_size_nm` (null when unknown), `tilt_deg`, `correction`, `custom_factor`, `tilt_axis_deg`, `rotation_deg`, `origin_px` |
 | `snap` | `on`, `sigma_px`, `median` (0, 3 or 5), `radius_px`, `min_contrast`, `square_profiles`: whether new and moved profiles are squared to the edge they cross (MATH.md 6.6), and `snap_markers`: whether a profile's markers snap to the steepest slope (MATH.md 6.7); both true when absent. Optional; without it the defaults apply: snapping on, 2, 3, 12, 3, squaring on, markers snapping. |
-| `measurements` | the list of measurements, in its order. Each has `name` (unique among all of them, on one line), `kind`, `color` and `points_px` (pixel coordinates, rounded to 1e-4 px). `color` is the measurement's place in the colour order of the overlay, an integer 0 or more, taken modulo the order's length (its place in the list when absent); the colours themselves are a preference of the browser, not of the session. The `kind` is `contour` (any number of points), `ruler` (2), `angle` (3), `line-angle` (4) or `profile` (2), the points in the order of the measurements file. A contour adds `closed` (true when absent) and `gds_layer`: its GDSII layer and datatype, integers in 0–32767, [1, 0] when absent. A profile adds `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent); and `markers_px` when it has markers: A, then B, at most two points of the image (pixel coordinates), each read where it projects onto the line (MATH.md, (P12)). |
+| `measurements` | the list of measurements, in its order. Each has `name` (unique among all of them, on one line), `kind`, `color` and `points_px` (pixel coordinates, rounded to 1e-4 px). `color` is the measurement's place in the colour order of the overlay, an integer 0 or more, taken modulo the order's length (its place in the list when absent); the colours themselves are a preference of the browser, not of the session. The `kind` is `contour` (any number of points), `ruler` (2), `angle` (3), `line-angle` (4), `gap` (4) or `profile` (2), the points in the order of the measurements file. A contour adds `closed` (true when absent) and `gds_layer`: its GDSII layer and datatype, integers in 0–32767, [1, 0] when absent. A profile adds `width_px`: its band width in pixel widths of the corrected view, 0 or more (1 when absent); and `markers_px` when it has markers: A, then B, at most two points of the image (pixel coordinates), each read where it projects onto the line (MATH.md, (P12)). |
 | `selected` | the index of the measurement selected, the one the contour tool extends when it is a contour; null when none |
 | `display` | the display levels when the session was saved: `black_level` and `white_level`, grey values of the stored image, the black level below the white (MATH.md, 5.2). Optional; without it the image opens with the auto levels. The levels change no measure. |
 

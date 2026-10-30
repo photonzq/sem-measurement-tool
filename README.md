@@ -36,7 +36,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
    Set the origin if the micrometres should start somewhere particular.
 3. **Snapping** to edges is on from the start; S switches it. The edge map (G) shows what clicks snap to. It is computed as the image opens, in a few seconds for a large image.
-4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4) and *Profile* (5). *Pan* (0), or a click on the active tool, puts the tool down again.
+4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4), *Profile* (5) and *Gap* (6). *Pan* (0), or a click on the active tool, puts the tool down again.
 5. **Level the image** if you like. Draw a ruler along something that should be horizontal, such as the substrate, and select it. Then press *Level: horizontal* (H) or *Level: vertical* (V); these buttons, and *Tilt axis along ruler*, appear under *Measurements* while a ruler is selected. Lengths and angles do not change; directions and the exported coordinates turn with the image.
 6. **Keep the work**: *Save session* (Ctrl+S). To continue later, open the image, then *Open session…*. *Download*, under *Measurements*, saves what is selected:
    - a contour: its vertices for a mode solver, or a GDSII layout;
@@ -63,6 +63,11 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 - **Angle.** Three clicks: the end of one arm, the vertex, the end of the other arm. It gives the angle at the vertex, 0–180°.
 - **2 lines.** Four clicks, two on each line, give the angle between the two lines as clicked, 0–180°, and its supplement. The lines are extended, dashed, to where they cross. This suits corners that are rounded, such as a sidewall meeting a substrate.
 - **Profile.** Two clicks give a line profile: the grey values along the line, averaged across a band around it. See *Line profiles* below.
+- **Gap.** Four clicks, two on each of two edges, give the gap between the lines: a waveguide's width, a layer's thickness.
+  - It is measured in micrometres, where right angles are true, along the normal of the lines' mean direction, midway between their middles. For parallel lines that is their distance, wherever the points are (MATH.md 1.10, (G17)).
+  - The readout also gives how far the lines are from parallel, and the gap's components from line 1 to line 2.
+  - The normal is drawn between the lines with arrow heads. A line is dashed out to it when it lies beyond the points.
+  - The points snap as a ruler's do.
 
 The **points of a measurement** handle as follows:
 
@@ -73,7 +78,7 @@ The **points of a measurement** handle as follows:
 
 ## Measurements
 
-One list under *Measurements* holds them all: contours, rulers, angles and profiles, in the order made, each with its colour and its brief measures. Selected measurements keep their colour and are drawn thicker, with a light halo and white points (see *Overlay colours*).
+One list under *Measurements* holds them all: contours, rulers, angles, gaps and profiles, in the order made, each with its colour and its brief measures. Selected measurements keep their colour and are drawn thicker, with a light halo and white points (see *Overlay colours*).
 
 - **Selecting.** A click or a tap on a row selects that measurement alone. Its box, or Ctrl+click, adds it to the selection or takes it out. Shift+click selects from the row clicked last, and Ctrl+A selects all.
 - **The one edited.** A measurement selected alone is the one edited, marked by a bar at the left of its row. It is the contour the contour tool extends, the profile the profile window shows, and the ruler that *Level* and *Tilt axis along ruler* take. Touching a measurement's point with its tool makes it the one edited.
@@ -85,7 +90,7 @@ One list under *Measurements* holds them all: contours, rulers, angles and profi
   |:--|:--|
   | a contour | its vertices, a polygon file (CSV); a GDSII file |
   | a profile | its samples, a profile file (CSV); its plot (PNG) |
-  | a ruler, an angle, an angle between lines | its row of the measurements file (CSV) |
+  | a ruler, an angle, an angle between lines, a gap | its row of the measurements file (CSV) |
   | several | one row each in a measurements file (CSV); the vertices of the contours among them in one polygon file (CSV); a GDSII file of those contours |
 
   The menu's last entries save all the measurements in the same three ways, without selecting them.
@@ -210,7 +215,10 @@ Every quantity goes through one affine map, $P = A\,(u - u_0)$ with $A = R(\varp
   - *Tilt axis along ruler* takes α from the selected ruler. Draw that ruler on a line known to be parallel to the axis, such as the surface line of a FIB face milled parallel to the tilt axis.
   - The app does not take α from the scan rotation in the metadata. The FEI test image records 1.32°, yet its interfaces lie within ±0.4° of the image rows.
   - An α off by δ skews right angles by $(k - 1/k)\,\delta$ and changes lengths at 45° by $(k - 1/k)\,\delta/2$. At a 52° cross-section that is 0.48° and 0.42 % per degree (MATH.md, 1.5).
-- **Rotation φ** turns the corrected image ($R(\varphi)$). It is rigid, so lengths, angles and areas never depend on it. Set it with the *Level* buttons, by typing it, or with *Rotation 0°*.
+- **Rotation φ** turns the corrected image ($R(\varphi)$). It is rigid, so lengths, angles and areas never depend on it. Set it with the *Level* buttons, by typing it, with the slider under it, or with *Rotation 0°*.
+  - The slider spans ±180°. While it is dragged, only the view turns, about its centre, once per displayed frame. The measurement list and the windows follow when it is let go, and the whole drag is one step for Ctrl+Z.
+  - Under it, the buttons −1°, −0.1°, +0.1° and +1° turn by those steps, for a finger as for a mouse. A tap turns once; a press held keeps turning, 20 steps a second after a short pause; either is one step for Ctrl+Z.
+  - The arrow keys on the slider turn by 0.1°, and by 1° with Shift.
 - **Origin** $u_0$: *Set origin* takes the next click; *Reset origin* returns it to the centre of the top-left pixel.
 
 The view draws the stored image through the same map, so a change of calibration costs no computation: no pixel is resampled in script.
@@ -353,7 +361,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | Input | Action |
 |:--|:--|
 | 0 | no tool: drag to pan, wheel to zoom (also a click on the active tool's button) |
-| 1 2 3 4 5 | tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile |
+| 1 2 3 4 5 6 | tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile, gap between 2 parallel lines (4 clicks) |
 | click | contour: add a vertex to the selected contour, or start a new one; other tools: place the next point (snapped with Snap on, except a profile's ends) |
 | Ctrl+click | contour: insert a vertex into the nearest segment |
 | hold Ctrl | contour: show the segment that will receive the vertex and where it will land |
@@ -397,6 +405,7 @@ The costs, measured on the FEI test image of 3072 × 2188 pixels (6.29 Mpx above
 - **A line profile** reads about 20 ns per value: 4.9 ms for 3001 samples along a band of 83 lines. A profile and its window are therefore computed again at every step of a drag; MATH.md 6.8 describes how the loop is tuned.
 - **Squaring a profile** takes microseconds: a search along its line and one structure tensor of a few hundred pixels.
 - **Calibration and rotation changes**, panning and zooming cost one GPU-drawn frame.
+- **Dragging the rotation slider** costs about 0.5 ms a frame on an Intel Iris Xe, the GPU's work included, with the FEI image fitted to the view. Zoomed out, the picture is drawn through mipmaps, so its pixels' noise neither aliases nor shimmers as it turns. With the default filtering, the step between neighbouring screen pixels was twice as large as with the mipmaps.
 - **Memory**: about 180 MB for that image with the overlay shown.
 
 The page does not respond while an edge map is computed. A Web Worker would remove the wait; MATH.md 3.4 lists this and the other limits.
@@ -409,7 +418,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `js/metadata.js` | FEI, Zeiss, Hitachi, JEOL, TESCAN and Thermo Fisher XML metadata: pixel size, data bar, tilt, beam, detector |
 | `js/tiff.js` | TIFF decoding with UTIF.js into grey values and calibration; metadata in tags and in files beside the image; the Zeiss info zone and the Hitachi data bar, (Z1) and (H1) in the header |
 | `js/edges.js` | edge strength, crests, snapping and the structure tensor; derivations (E1)–(E9) in the header |
-| `js/transform.js` | the affine map, measures, levelling, the arrow-key step; derivations (G1)–(G15) in the header |
+| `js/transform.js` | the affine map, measures, levelling, the arrow-key step, the gap between two lines; derivations (G1)–(G15) and (G17) in the header |
 | `js/polygons.js` | the polygon, measurements and profile files (CSV) |
 | `js/session.js` | the session file (JSON) |
 | `js/gds.js` | the GDSII writer: records, units, eight-byte reals; derivations (S1)–(S2) in the header |
@@ -473,6 +482,7 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - the tilt axis;
   - rigid rotation;
   - angles and line crossings;
+  - the gap between two lines, parallel and 2° apart, whatever the rotation;
   - levelling and the tilt axis along a line;
   - contour measures.
 - **Files.** Round trips of the polygon, measurements and session files (GDS layers, display levels and profile band widths included), the profile file, and the refusal of bad ones.

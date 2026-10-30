@@ -9,7 +9,7 @@ This document derives what the app computes from an image:
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
 - **Part 6:** line profiles: the band, the samples, the contours that cross the line, squaring a profile to the edge it crosses, and markers for a distance along it.
 
-Equation numbers match the comments in the code: (G1)–(G15) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
+Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
 
 ## Part 1. Geometry
 
@@ -234,6 +234,17 @@ With $\Delta u$ the stored difference of two points:
   $$s = \frac{(p_3 - p_1)\times e_2}{e_1\times e_2}.$$
 
   Affine maps send lines to lines and keep where they cross, so this is solved in stored coordinates and mapped for display. $e_1\times e_2 = 0$ means the lines are parallel.
+- **The gap between two lines (G17).** It is solved in the measurement frame, not in stored coordinates. Parallel lines stay parallel under the affine map, but a right angle in the image is not one in micrometres when the correction stretches one way. The normal that measures a gap must therefore be taken where lengths and angles are true.
+  - **Directions.** Map the four points, $q_i = A(p_i - p_1)$. The lines have the unit directions $\hat u_1$ and $\hat u_2$, the second reversed if need be so that $\hat u_1\cdot\hat u_2 \ge 0$, and the middles $c_1$ and $c_2$.
+  - **The common normal.** It is the normal of the mean direction, $\hat n = J(\hat u_1 + \hat u_2)/|\hat u_1 + \hat u_2|$, where $J$ is a quarter turn. The point $m = (c_1 + c_2)/2$ lies midway between the middles.
+  - **Where it meets each line.** The line $m + t\,\hat n$ meets the line $c + s\,\hat u$ where $m + t\hat n = c + s\hat u$. The cross product of both sides with $\hat u$ removes $s$:
+
+    $$t = \frac{(c - m)\times\hat u}{\hat n\times\hat u},$$
+
+    with $t_1$ on line 1 and $t_2$ on line 2. The denominator never vanishes: each $\hat u$ is within 45° of the mean direction, so $|\hat n\times\hat u| \ge \cos 45°$.
+  - **The gap** is $|t_2 - t_1|$, the length of the common normal between the lines at $m$. Its components from line 1 to line 2 are $(t_2 - t_1)\,\hat n$. The feet $m + t_i\hat n$, mapped back by $A^{-1}$, are where the drawing puts the arrow heads.
+  - **Parallel or not.** For parallel lines, $t_2 - t_1 = (c_2 - c_1)\cdot\hat n$, their distance, wherever the points were clicked. Lines at an angle $\delta$ to each other draw apart by about $\delta$ per unit of length along them, so the gap is the one at $m$, where the measurement sits. The readout gives $\delta$, the angle between $\hat u_1$ and $\hat u_2$, in $[0°, 90°]$.
+  - **Checks.** In the tests' tilted, turned frame with 2 × 3 nm pixels, lines parallel in micrometres and 0.7 µm apart measure 0.7 to $10^{-12}$. They measure the same when the frame turns by 33°. Lines 2° apart match the gap solved apart by Cramer's rule to $10^{-9}$.
 - **Contours.** The perimeter is $\sum_i |A\Delta u_i|$, with the closing segment when the contour is closed. The area is (G9). The bounding box is that of the mapped points, so it turns with $\varphi$.
 
 ### 1.11 Levelling (G13) and the tilt axis along a line (G14)
@@ -407,7 +418,8 @@ A ridge detector that finds line centres would be a natural addition.
 | Snap or edge map switched on, $\sigma$ or median changed | the edge map (2.1–2.3), on the rows above any info bar | $\approx 4(2R+1)$ multiply-adds per pixel, $R = \lfloor 4\sigma + 0.5\rfloor$, plus the median |
 | Edge map shown | the overlay picture | linear in the pixels, once |
 | Change of pixel size, tilt, correction, tilt axis, rotation, origin | new matrices; a redraw | constant |
-| Each redraw | one `drawImage` of the picture (and the overlay) through the affine transform; the vertices and labels | resampling on the GPU; linear in the vertices |
+| The rotation slider dragged | $\varphi$ and the pan that keeps the view's centre; a redraw per displayed frame. On release, the measurement list, the notes and the windows | constant: 0.5 ms a frame on an Intel Iris Xe, with the FEI image fitted to the view and the GPU's work included |
+| Each redraw | one `drawImage` of the picture (and the overlay) through the affine transform; the vertices and labels | resampling on the GPU, through mipmaps when zoomed out (`imageSmoothingQuality` "high"), so that the pixels' noise neither aliases nor shimmers as the view turns; linear in the vertices |
 | Each pointer move with Snap on | one snap search (2.5, E8) | crest tests on the $\pi r^2/\lvert\det V\rvert$ stored pixels of the search ellipse: 356 for $r = 12$, $k = 1.27$ |
 | A profile shown, or dragged, or a contour crossing it edited | its samples (6.2–6.4) and crossings (6.5); the plot | $(N + 1)\,M$ bilinear values, about one per stored pixel of the band; the crossings linear in the contour vertices |
 | A profile squared (6.6) | the strongest edge along its line, and the structure tensor there; or the normal of a contour's segment | $N + 1$ bilinear values; at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$ |

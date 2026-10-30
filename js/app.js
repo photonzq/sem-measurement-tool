@@ -1,7 +1,8 @@
 "use strict";
 /* global decodeSEMImage, emptyCalibration, describeCalibration, EdgeMap, correctionFactor,
    matApply, matInverse, matDet, viewMatrix, toMeasurement, fromMeasurement, normalizeDegrees, measureContour,
-   measureRuler, measureAngle, measureLineAngle, levelRotation, axisFromLine, lineIntersection, measurementMatrix,
+   measureRuler, measureAngle, measureLineAngle, measureGap, levelRotation, axisFromLine, lineIntersection,
+   measurementMatrix,
    viewStepToStored, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, MEASURE_POINTS,
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
    selectionRange, valueRange, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
@@ -55,10 +56,10 @@ const LABEL_HEIGHT = 18;             // of the dark chip a label sits on, CSS pi
 
 /** "pan" is no tool: the mouse, one finger or two only move and zoom the view. @typedef {"pan"|MeasureKind} Tool */
 /** @type {Tool[]} */
-const TOOLS = ["pan", "contour", "ruler", "angle", "line-angle", "profile"];
+const TOOLS = ["pan", "contour", "ruler", "angle", "line-angle", "profile", "gap"];
 /** @type {Record<Tool, string>} */
 const TOOL_HINTS = {
-  pan: "No tool: drag to pan, wheel to zoom; on a touch screen one finger pans and two pinch.  Choose a tool (1-5) " +
+  pan: "No tool: drag to pan, wheel to zoom; on a touch screen one finger pans and two pinch.  Choose a tool (1-6) " +
     "to trace or measure; click it again, or press 0, to come back here.",
   contour: "Click: add a vertex to the selected contour; with no contour selected, the first click starts a new one " +
     "(N: done with this one).  Ctrl+click inserts (hold Ctrl to see where), drag moves, right click deletes; click a " +
@@ -66,13 +67,17 @@ const TOOL_HINTS = {
   ruler: "Click both ends of a distance.  Drag an end to move it; right click deletes the ruler.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
+  gap: "Click two points on one edge, then two on the other: the gap between the lines, along their common normal " +
+    "midway between their middles, and how far they are from parallel.",
   profile: "Click both ends of a line profile (never snapped); it turns square to the edge it crosses, by up to 15°, " +
     "while that option is on (Alt+click: as drawn; Ctrl+Z right after: back as drawn).  Drag the square on the band's " +
     "side to widen it, an end to move it: it turns square again about the other end (Alt: as dragged); E squares it " +
     "whatever the turn, P shows the profile window.",
 };
 /** @type {Record<MeasureKind, string>} */
-const MEASURE_NAMES = { contour: "contour", ruler: "ruler", angle: "angle", "line-angle": "line angle", profile: "profile" };
+const MEASURE_NAMES = {
+  contour: "contour", ruler: "ruler", angle: "angle", "line-angle": "line angle", gap: "gap", profile: "profile",
+};
 const PLOT_COLOR = "#385c9e";        // the profile's mean in its window
 const MARKER_COLOR = "#272727";      // the markers A and B on the profile plot
 const TAP_PX = 10;                   // a touch that moves less than this is a tap
@@ -171,6 +176,11 @@ const app = {
   picked: [],
   pickAnchor: -1,
   raf: 0,
+  /**
+   * @type {{deg0: number, before: string, rect: DOMRect}|null} a rotation in progress, by the slider or a step
+   *   button held: the rotation and the state before it, recorded for undo when it ends, and the view's size
+   */
+  rotating: null,
 };
 
 // ------------------------------------------------------------------------- elements
@@ -716,6 +726,8 @@ function draw() {
   // canvas transforms take (a, b, c, d, e, f) for x' = a x + c y + e, y' = b x + d y + f
   ctx.setTransform(dpr * m[0], dpr * m[2], dpr * m[1], dpr * m[3], dpr * tx, dpr * ty);
   ctx.imageSmoothingEnabled = Math.sqrt(Math.abs(matDet(m))) < 1.5;
+  // mipmapped when zoomed out: the pixels' noise neither aliases nor shimmers as the view turns
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(app.picture.canvas, 0, 0);
   if (settings.edgesShown() && app.overlay !== null) {
     ctx.drawImage(app.overlay, 0, 0);
@@ -1060,6 +1072,10 @@ function measurementLabel(ms) {
     const r = measureRuler(ms.points, app.frame);
     return r === null ? "?" : `${show(r.length)} ${unitText(r.unit)}`;
   }
+  if (ms.kind === "gap") {
+    const g = measureGap(ms.points, app.frame);
+    return g === null ? "?" : `${show(g.gap)} ${unitText(g.unit)}`;
+  }
   const angle = ms.kind === "angle" ? measureAngle(ms.points, app.frame)
     : (measureLineAngle(ms.points, app.frame)?.angleDeg ?? null);
   return angle === null ? "?" : `${angle.toFixed(2)}°`;
@@ -1110,6 +1126,61 @@ function addLineAngle(solid, dashed, pts, crossing, toScreen) {
     return bisector === null ? null : [c[0] + (ARC_PX + 16) * bisector[0], c[1] + (ARC_PX + 16) * bisector[1]];
   }
   return /** @type {Point} */ (pts.reduce((acc, p) => [acc[0] + p[0] / 4, acc[1] + p[1] / 4], [0, 0]));
+}
+
+/**
+ * The gap between two lines (G17), added to the paths: the lines as clicked (``solid``), the common
+ * normal between them with arrow heads, and dashed out from each line's nearer end to where the
+ * normal meets it when that is beyond the points.  Returns where the label goes: beside the middle
+ * of the normal; null when the gap has no measures (the correction undefined, or a line a point).
+ * @param {Path2D} solid
+ * @param {Path2D} dashed
+ * @param {Point[]} stored    4 points
+ * @param {Point[]} pts       the same on screen
+ * @param {(p: Point) => Point} toScreen
+ * @returns {Point|null}
+ */
+function addGap(solid, dashed, stored, pts, toScreen) {
+  addSegment(solid, pts[0], pts[1]);
+  addSegment(solid, pts[2], pts[3]);
+  const g = measureGap(stored, app.frame);
+  if (g === null) {
+    return null;
+  }
+  const [f1, f2] = g.feet.map(toScreen);
+  for (const [foot, a, b] of [[f1, pts[0], pts[1]], [f2, pts[2], pts[3]]]) {
+    const along = (b[0] - a[0]) * (foot[0] - a[0]) + (b[1] - a[1]) * (foot[1] - a[1]);
+    const length2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+    if (along < 0 || along > length2) {                 // beyond the points: dashed out to the foot
+      addSegment(dashed, along < 0 ? a : b, foot);
+    }
+  }
+  const len = Math.hypot(f2[0] - f1[0], f2[1] - f1[1]);
+  if (len < 1) {
+    return f1;
+  }
+  const [ex, ey] = [(f2[0] - f1[0]) / len, (f2[1] - f1[1]) / len];
+  addSegment(solid, f1, f2);
+  if (len > 14) {                                       // the heads, pointing out to the lines
+    /** @type {Array<[Point, number]>} */
+    const heads = [[f1, 1], [f2, -1]];
+    for (const [tip, sign] of heads) {
+      addSegment(solid, tip, [tip[0] + sign * (7 * ex - 4 * ey), tip[1] + sign * (7 * ey + 4 * ex)]);
+      addSegment(solid, tip, [tip[0] + sign * (7 * ex + 4 * ey), tip[1] + sign * (7 * ey - 4 * ex)]);
+    }
+  }
+  /** @type {Point} */
+  let side = [-ey, ex];                                 // beside the normal, the upper side
+  if (side[1] > 0 || (side[1] === 0 && side[0] < 0)) {
+    side = [-side[0], -side[1]];
+  }
+  // as far out as the label's box reaches that way, half its width or height, and a margin: clear of the arrow
+  ctx.save();
+  ctx.font = LABEL_FONT;
+  const half = (ctx.measureText(`${show(g.gap)} ${unitText(g.unit)}`).width + 10) / 2;
+  ctx.restore();
+  const reach = half * Math.abs(side[0]) + (LABEL_HEIGHT / 2) * Math.abs(side[1]) + 6;
+  return [(f1[0] + f2[0]) / 2 + reach * side[0], (f1[1] + f2[1]) / 2 + reach * side[1]];
 }
 
 /**
@@ -1260,26 +1331,7 @@ function drawMeasurement(ms, color, toScreen, how) {
   const selected = how.selected === true;
   const solid = new Path2D();
   const dashed = new Path2D();
-  /** @type {Point|null} */
-  let labelAt = null;
-  if (ms.kind === "ruler" && pts.length >= 2) {
-    labelAt = addRuler(solid, pts);
-  } else if (ms.kind === "profile" && pts.length >= 2) {
-    labelAt = drawProfileBand(ms, pts, toScreen, color, label);
-    addRuler(solid, pts);
-  } else if (ms.kind === "angle" && pts.length >= 2) {
-    addSegment(solid, pts[1], pts[0]);
-    if (pts.length >= 3) {
-      const v = pts[1];
-      addSegment(solid, v, pts[2]);
-      const bisector = addArc(solid, v, [pts[0][0] - v[0], pts[0][1] - v[1]], [pts[2][0] - v[0], pts[2][1] - v[1]]);
-      labelAt = bisector === null ? null : [v[0] + (ARC_PX + 16) * bisector[0], v[1] + (ARC_PX + 16) * bisector[1]];
-    }
-  } else if (ms.kind === "line-angle" && pts.length === 4) {
-    labelAt = addLineAngle(solid, dashed, pts, lineIntersection(ms.points[0], ms.points[1], ms.points[2], ms.points[3]), toScreen);
-  } else if (ms.kind === "line-angle" && pts.length >= 2) {
-    addSegment(solid, pts[0], pts[1]);
-  }
+  const labelAt = addShape(ms, { solid, dashed }, pts, toScreen, () => drawProfileBand(ms, pts, toScreen, color, label));
   strokeOverlay(solid, color, { selected, dash: how.pending ? [5, 4] : [] });
   strokeOverlay(dashed, color, { dash: [3, 4], width: 1.2 });
   if (ms.kind === "profile" && !how.pending && pts.length >= 2) {
@@ -1292,6 +1344,47 @@ function drawMeasurement(ms, color, toScreen, how) {
     drawLabel(label, labelAt, color, selected);
   }
   drawPoints(pts, color, selected);
+}
+
+/**
+ * A measurement's shape as far as its points go, added to the paths; returns where its label goes,
+ * or null.  ``band`` draws a profile's band and tells where a profile's label goes.
+ * @param {FixedMeasurement} ms
+ * @param {{solid: Path2D, dashed: Path2D}} paths
+ * @param {Point[]} pts      screen
+ * @param {(p: Point) => Point} toScreen
+ * @param {() => Point|null} band
+ * @returns {Point|null}
+ */
+function addShape(ms, paths, pts, toScreen, band) {
+  const { solid, dashed } = paths;
+  if (pts.length < 2) {
+    return null;
+  }
+  if (ms.kind === "ruler") {
+    return addRuler(solid, pts);
+  }
+  if (ms.kind === "profile") {
+    const at = band();
+    addRuler(solid, pts);
+    return at;
+  }
+  if (ms.kind === "angle") {
+    addSegment(solid, pts[1], pts[0]);
+    if (pts.length < 3) {
+      return null;
+    }
+    const v = pts[1];
+    addSegment(solid, v, pts[2]);
+    const bisector = addArc(solid, v, [pts[0][0] - v[0], pts[0][1] - v[1]], [pts[2][0] - v[0], pts[2][1] - v[1]]);
+    return bisector === null ? null : [v[0] + (ARC_PX + 16) * bisector[0], v[1] + (ARC_PX + 16) * bisector[1]];
+  }
+  if (pts.length < 4) {                              // two lines, the first so far
+    addSegment(solid, pts[0], pts[1]);
+    return null;
+  }
+  return ms.kind === "gap" ? addGap(solid, dashed, ms.points, pts, toScreen)
+    : addLineAngle(solid, dashed, pts, lineIntersection(ms.points[0], ms.points[1], ms.points[2], ms.points[3]), toScreen);
 }
 
 /**
@@ -1959,6 +2052,19 @@ function describeMeasurement(ms) {
         "P shows the profile window",
     };
   }
+  if (ms.kind === "gap") {
+    const g = measureGap(ms.points, app.frame);
+    if (g === null) {
+      return { brief: "?", details: "no measures: the correction factor is undefined, or a line is a point" };
+    }
+    const u = unitText(g.unit);
+    return {
+      brief: `${show(g.gap)} ${u}`,
+      details: `gap ${show(g.gap)} ${u} from line 1 to line 2, along their common normal midway between their ` +
+        `middles\nΔX ${show(g.dx)} ${u}, ΔY ${show(g.dy)} ${u}, direction ${g.directionDeg.toFixed(2)}°\n` +
+        `the lines are ${g.angleDeg.toFixed(3)}° from parallel`,
+    };
+  }
   if (ms.kind === "angle") {
     const a = measureAngle(ms.points, app.frame);
     const [vx, vy] = ms.points[1];
@@ -2036,6 +2142,7 @@ function refreshFrameInputs() {
   inputEl("custom-factor").value = String(f.customFactor);
   inputEl("tilt-axis").value = String(Number(f.axisDeg.toFixed(4)));
   inputEl("rotation").value = String(Number(f.rotationDeg.toFixed(4)));
+  inputEl("rotation-slider").value = String(f.rotationDeg);
   refreshFrameNotes();
 }
 
@@ -2100,6 +2207,43 @@ function frameInputsChanged() {
   changeFrame(() => {
     app.frame = frame;
   });
+}
+
+/**
+ * Turn the view to the rotation ``deg``, as the slider is dragged or a step button held: only the view
+ * turns, about its centre, and the rotation field and the slider follow.  render() draws at most once
+ * per displayed frame, the picture through a transform (draw), so this costs one transformed image a
+ * frame.  The measurement list, the notes and the windows, which cost more and which a rotation
+ * changes little, follow when the rotation ends (rotationDone).
+ * @param {number} deg
+ */
+function rotateView(deg) {
+  if (app.rotating === null) {
+    app.rotating = { deg0: app.frame.rotationDeg, before: snapshot(), rect: canvas.getBoundingClientRect() };
+  }
+  const { rect } = app.rotating;
+  const centre = app.image === null ? null : screenToStored(rect.width / 2, rect.height / 2);
+  app.frame.rotationDeg = normalizeDegrees(deg, 360);
+  if (centre !== null) {
+    const [sx, sy] = storedToScreen(centre[0], centre[1]);
+    app.view.tx += rect.width / 2 - sx;
+    app.view.ty += rect.height / 2 - sy;
+  }
+  inputEl("rotation").value = String(Number(app.frame.rotationDeg.toFixed(4)));
+  inputEl("rotation-slider").value = String(app.frame.rotationDeg);
+  render();
+}
+
+/** A rotation ended: the slider let go, a key or a step button: one undoable edit, and all that the rotation changes follows. */
+function rotationDone() {
+  const r = app.rotating;
+  app.rotating = null;
+  if (r !== null && r.deg0 !== app.frame.rotationDeg) {
+    pushHistory(r.before);
+  }
+  refreshFrameInputs();
+  refreshMeasurements();
+  render();
 }
 
 // ------------------------------------------------------------------------- display
@@ -4878,6 +5022,7 @@ const KEY_ACTIONS = {
   3: () => setTool("angle"),
   4: () => setTool("line-angle"),
   5: () => setTool("profile"),
+  6: () => setTool("gap"),
   p: () => toggleProfileWindow(),
   e: () => squareSelected(),
   n: () => finishContour(),
@@ -5367,6 +5512,63 @@ for (const id of ["sigma", "median"]) {
 }
 for (const id of ["pixel-x", "pixel-y", "tilt", "correction", "custom-factor", "tilt-axis", "rotation"]) {
   el(id).addEventListener("change", () => frameInputsChanged());
+}
+const rotationSlider = inputEl("rotation-slider");
+rotationSlider.addEventListener("input", () => rotateView(Number(rotationSlider.value)));
+rotationSlider.addEventListener("change", () => rotationDone());
+rotationSlider.addEventListener("keydown", (e) => {
+  /** @type {Record<string, number>} */
+  const steps = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
+  if (e.shiftKey && e.key in steps) {                // 1 degree a step; the arrow keys alone step 0.1
+    e.preventDefault();
+    rotateView(Math.min(180, Math.max(-180, Number(rotationSlider.value) + steps[e.key])));
+    rotationDone();
+  }
+});
+// The step buttons: a press turns by the step at once, and held, after 450 ms, 20 steps a second;
+// either ends as one undoable edit.  Enter or Space on a focused button turns once.
+for (const [id, step] of /** @type {Array<[string, number]>} */ ([["turn-cw-1", -1], ["turn-cw-01", -0.1],
+  ["turn-ccw-01", 0.1], ["turn-ccw-1", 1]])) {
+  const button = buttonEl(id);
+  let repeat = 0;
+  const turn = () => rotateView(app.frame.rotationDeg + step);
+  const stop = () => {
+    if (repeat !== 0) {
+      clearTimeout(repeat);
+      repeat = 0;
+      rotationDone();
+    }
+  };
+  button.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) {
+      return;
+    }
+    e.preventDefault();                              // no focus change and no selection: a finger's press stays a press
+    try {
+      button.setPointerCapture(e.pointerId);
+    } catch {
+      // a scripted pointer cannot be captured
+    }
+    turn();
+    /** @param {number} delay */
+    const again = (delay) => {
+      repeat = window.setTimeout(() => {
+        turn();
+        again(50);
+      }, delay);
+    };
+    again(450);
+  });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    button.addEventListener(type, stop);
+  }
+  button.addEventListener("contextmenu", (e) => e.preventDefault());   // a long press keeps turning, no menu
+  button.addEventListener("click", (e) => {
+    if (e.detail === 0) {                            // from the keyboard; a pointer's click has turned already
+      turn();
+      rotationDone();
+    }
+  });
 }
 el("reset-rotation").addEventListener("click", () => {
   if (app.frame.rotationDeg !== 0) {

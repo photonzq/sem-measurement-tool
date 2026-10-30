@@ -1,8 +1,8 @@
 "use strict";
 /* exported CORRECTIONS, correctionFactor, correctionFactorOrNull, matMul, matInverse, matDet, matApply,
    rotationMatrix, tiltMatrix, measurementMatrix, viewMatrix, toMeasurement, fromMeasurement, normalizeDegrees,
-   lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, levelRotation, axisFromLine,
-   viewStepToStored */
+   lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, measureGap, levelRotation,
+   axisFromLine, viewStepToStored */
 /*
  * Geometry: one affine map from the pixels of the image as stored to the measurement frame, the
  * view drawn through the same map, and the measures taken in that frame.  MATH.md, part 1,
@@ -76,6 +76,21 @@
  * (cross both sides of s e1 - t e2 = p3 - p1 with e2); an affine map keeps lines and their
  * crossings, so this is solved in stored coordinates.
  *
+ * The gap between two lines (G17).  In the measurement frame, where lengths and right angles are
+ * true, the lines have the unit directions u1 and u2, the second turned to the sense of the first
+ * (u1 . u2 >= 0), and the middles c1 and c2.  Their common normal is that of the mean direction,
+ * n = J (u1 + u2) / |u1 + u2| (J: a quarter turn), and m = (c1 + c2) / 2 lies midway between the
+ * middles.  The line m + t n meets the line c + s u where, crossing both sides with u,
+ *
+ *     t = ((c - m) x u) / (n x u),
+ *
+ * t1 on line 1 and t2 on line 2; the gap is |t2 - t1|, the length of the common normal between the
+ * lines at m.  n x u never vanishes: u is within 45 deg of the mean direction.  For parallel lines
+ * the gap is the distance between them, wherever m is.  Lines at the angle delta move apart by
+ * delta per unit of length along them, so the gap is that at m, the place of the measurement.  The
+ * map is affine: parallel lines stay parallel, but a right angle in the image is not one in the
+ * frame when the correction stretches one way, so the normal is taken in the frame.
+ *
  * Levelling (G13).  Before the rotation the line p1 -> p2 has the direction beta of
  * K D F (p2 - p1).  It turns horizontal for phi = -beta + 180 n and vertical for
  * phi = 90 - beta + 180 n (degrees); the n nearest the present rotation turns the image by at most
@@ -93,11 +108,12 @@
  * @typedef {{name: string, kind: "contour", closed: boolean, points: Point[], layer?: [number, number], color?: number,
  *   width?: undefined, markers?: undefined}} Contour
  */
-/** The kinds of measurement with a set number of points (MEASURE_POINTS). @typedef {"ruler"|"angle"|"line-angle"|"profile"} FixedKind */
+/** The kinds of measurement with a set number of points (MEASURE_POINTS). @typedef {"ruler"|"angle"|"line-angle"|"gap"|"profile"} FixedKind */
 /**
  * A ruler (2 points), an angle (3 points: arm end, vertex, arm end), the angle between two lines
- * (4 points: line 1 from, to, line 2 from, to) or a line profile (2 points, ``width``: the band width
- * in pixel widths of the corrected view, and ``markers``: up to two stored points, A and B, profile.js).
+ * or the gap between them (4 points: line 1 from, to, line 2 from, to) or a line profile (2 points,
+ * ``width``: the band width in pixel widths of the corrected view, and ``markers``: up to two stored
+ * points, A and B, profile.js).
  * @typedef {{name: string, kind: FixedKind, points: Point[], width?: number, markers?: Point[], color?: number,
  *   closed?: undefined, layer?: undefined}} FixedMeasurement
  */
@@ -139,6 +155,17 @@
  * @typedef {Object} LineAngleMeasures
  * @property {number} angleDeg        between the directed lines 1 -> 2 and 3 -> 4, in [0, 180]
  * @property {Point|null} crossing    where the lines cross, stored coordinates; null when parallel
+ */
+
+/**
+ * @typedef {Object} GapMeasures
+ * @property {number} gap              between the lines, along their common normal at m (G17)
+ * @property {number} dx               the gap from line 1 to line 2 in the measurement frame
+ * @property {number} dy
+ * @property {number} directionDeg     its direction, counter-clockwise from the X axis, in (-180, 180]
+ * @property {number} angleDeg         between the lines, in [0, 90]: 0 when they are parallel
+ * @property {[Point, Point]} feet     where the common normal meets line 1 and line 2, stored coordinates
+ * @property {"um"|"px"} unit
  */
 
 const CORRECTIONS = ["none", "cross-section", "tilted-surface", "custom"];
@@ -466,6 +493,58 @@ function measureLineAngle(points, frame) {
   const d1 = matApply(m.matrix, p2[0] - p1[0], p2[1] - p1[1]);
   const d2 = matApply(m.matrix, p4[0] - p3[0], p4[1] - p3[1]);
   return { angleDeg: angleBetween(d1, d2), crossing: lineIntersection(p1, p2, p3, p4) };
+}
+
+/**
+ * (G17): the gap between the line through points[0], points[1] and the line through points[2],
+ * points[3], along their common normal midway between their middles; null when k is not defined or
+ * a line is a point.
+ * @param {Point[]} points
+ * @param {Frame} frame
+ * @returns {GapMeasures|null}
+ */
+function measureGap(points, frame) {
+  const m = measurementMatrix(frame);
+  if (m === null) {
+    return null;
+  }
+  const p0 = points[0];
+  const q = points.map((p) => matApply(m.matrix, p[0] - p0[0], p[1] - p0[1]));     // frame, from point 1
+  const d1 = [q[1][0] - q[0][0], q[1][1] - q[0][1]];
+  const d2 = [q[3][0] - q[2][0], q[3][1] - q[2][1]];
+  const [l1, l2] = [Math.hypot(d1[0], d1[1]), Math.hypot(d2[0], d2[1])];
+  if (!(l1 > 0 && l2 > 0)) {
+    return null;
+  }
+  /** @type {Point} */
+  const u1 = [d1[0] / l1, d1[1] / l1];
+  const sense = d1[0] * d2[0] + d1[1] * d2[1] < 0 ? -1 : 1;
+  /** @type {Point} */
+  const u2 = [(sense * d2[0]) / l2, (sense * d2[1]) / l2];
+  const ls = Math.hypot(u1[0] + u2[0], u1[1] + u2[1]);                               // at least sqrt 2
+  /** @type {Point} */
+  const n = [-(u1[1] + u2[1]) / ls, (u1[0] + u2[0]) / ls];
+  /** @type {Point} */
+  const c1 = [(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2];
+  /** @type {Point} */
+  const c2 = [(q[2][0] + q[3][0]) / 2, (q[2][1] + q[3][1]) / 2];
+  const mid = [(c1[0] + c2[0]) / 2, (c1[1] + c2[1]) / 2];
+  /** @param {Point} a @param {Point} b @returns {number} */
+  const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
+  const t1 = cross([c1[0] - mid[0], c1[1] - mid[1]], u1) / cross(n, u1);
+  const t2 = cross([c2[0] - mid[0], c2[1] - mid[1]], u2) / cross(n, u2);
+  /** @type {Point} */
+  const g = [(t2 - t1) * n[0], (t2 - t1) * n[1]];
+  const back = matInverse(m.matrix);
+  /** @param {number} t @returns {Point} */
+  const foot = (t) => {
+    const [x, y] = matApply(back, mid[0] + t * n[0], mid[1] + t * n[1]);
+    return [p0[0] + x, p0[1] + y];
+  };
+  return {
+    gap: Math.abs(t2 - t1), dx: g[0], dy: g[1], directionDeg: directionOf(g), angleDeg: angleBetween(u1, u2),
+    feet: [foot(t1), foot(t2)], unit: m.unit,
+  };
 }
 
 /**

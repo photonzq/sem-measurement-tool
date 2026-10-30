@@ -34,7 +34,7 @@
 const SESSION_FORMAT = "sem-measurement-tool session";
 const SESSION_VERSION = 1;
 /** Points of the measurements with a set number of them; a contour has any number. @type {Record<FixedKind, number>} */
-const MEASURE_POINTS = { ruler: 2, angle: 3, "line-angle": 4, profile: 2 };
+const MEASURE_POINTS = { ruler: 2, angle: 3, "line-angle": 4, gap: 4, profile: 2 };
 
 /**
  * @param {number} v

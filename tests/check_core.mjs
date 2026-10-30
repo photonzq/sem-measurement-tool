@@ -72,7 +72,8 @@ function loadApi() {
   }
   return vm.runInContext(`({ decodeSEMImage, describeCalibration, EdgeMap, gaussianKernels, correctionFactor, matMul,
     matInverse, matDet, matApply, tiltMatrix, measurementMatrix, viewMatrix, toMeasurement, fromMeasurement,
-    normalizeDegrees, lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, levelRotation,
+    normalizeDegrees, lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, measureGap,
+    levelRotation,
     axisFromLine, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatSession,
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
     reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness,
@@ -1479,6 +1480,114 @@ function erf(x) {
   return x < 0 ? -y : y;
 }
 
+/**
+ * The geometry of the gap between two lines (G17), in the tests' tilted, turned frame of 2 x 3 nm pixels: two lines
+ * parallel in the measurement frame, 0.7 um apart and clicked at places well apart along them, and lines 2 deg apart.
+ * @returns {object} the measures, and what is expected of the second pair, solved apart
+ */
+function gapCases() {
+  const at = (X, Y) => api.fromMeasurement(SLANTED, X, Y);
+  const th = 25 * DEG;
+  const u = [Math.cos(th), Math.sin(th)];
+  const n = [-u[1], u[0]];
+  const along = (base, s, off = 0) => at(base[0] + s * u[0] + off * n[0], base[1] + s * u[1] + off * n[1]);
+  const base = [0.4, -0.2];
+  const parallel = [along(base, -0.3), along(base, 0.5), along(base, 0.9, 0.7), along(base, 1.6, 0.7)];
+  // line 2 of the second pair through q, 2 deg from line 1
+  const delta = 2 * DEG;
+  const u2 = [Math.cos(th + delta), Math.sin(th + delta)];
+  const q = [base[0] + u[0] + 0.7 * n[0], base[1] + u[1] + 0.7 * n[1]];
+  const tilted = [parallel[0], parallel[1], at(q[0] - 0.4 * u2[0], q[1] - 0.4 * u2[1]), at(q[0] + 0.6 * u2[0], q[1] + 0.6 * u2[1])];
+  // apart: m + t nb = c + s d by Cramer's rule, nb the normal of the bisector, m between the middles c1 and c2
+  const nb = [-Math.sin(th + delta / 2), Math.cos(th + delta / 2)];
+  const c1 = [base[0] + 0.1 * u[0], base[1] + 0.1 * u[1]];
+  const c2 = [q[0] + 0.1 * u2[0], q[1] + 0.1 * u2[1]];
+  const m = [(c1[0] + c2[0]) / 2, (c1[1] + c2[1]) / 2];
+  const meet = (c, d) => ((c[0] - m[0]) * -d[1] + d[0] * (c[1] - m[1])) / (-nb[0] * d[1] + d[0] * nb[1]);
+  // a point's distance from the line a b, in the measurement frame
+  const off = (p, a, b) => {
+    const [P, A, B] = [p, a, b].map((w) => api.toMeasurement(SLANTED, w[0], w[1]));
+    const d = [B[0] - A[0], B[1] - A[1]];
+    return Math.abs((P[0] - A[0]) * d[1] - (P[1] - A[1]) * d[0]) / Math.hypot(d[0], d[1]);
+  };
+  const g = api.measureGap(parallel, SLANTED);
+  return {
+    n, g, feetOff: g === null ? Infinity : Math.max(off(g.feet[0], parallel[0], parallel[1]), off(g.feet[1], parallel[2], parallel[3])),
+    turned: api.measureGap(parallel, { ...SLANTED, rotationDeg: SLANTED.rotationDeg + 33 }),
+    t: api.measureGap(tilted, SLANTED), expected: Math.abs(meet(c2, u2) - meet(c1, u)),
+    swapped: api.measureGap([tilted[2], tilted[3], tilted[0], tilted[1]], SLANTED),
+    reversed: api.measureGap([tilted[1], tilted[0], tilted[3], tilted[2]], SLANTED),
+    point: api.measureGap([parallel[0], parallel[1], parallel[2], parallel[2]], SLANTED),
+  };
+}
+
+/**
+ * A gap in the files: its row of the measurements file, for two rows of a 52 deg cross-section 100 rows apart with
+ * 2 nm pixels, stretched by k; and a session that keeps a gap of four points and refuses one of three.
+ * @returns {{rowRight: boolean, kept: boolean, refused: boolean}}
+ */
+function gapFiles() {
+  const frame = { pixelNm: [2, 2], tiltDeg: 52, correction: "cross-section", customFactor: 1, axisDeg: 0, rotationDeg: 0,
+    originPx: [0, 0] };
+  const k = api.correctionFactor(frame);
+  const ms = { name: "gap 1", kind: "gap", color: 2, points: [[100, 50], [400, 50], [150, 150], [350, 150]] };
+  const row = api.formatMeasurementFile(IMAGE, frame, [ms]).split("\n").filter((line) => line !== "" && !line.startsWith("#"))[1];
+  const session = { image: IMAGE, frame, snap: { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3,
+    squareProfiles: true, snapMarkers: true }, measurements: [ms], selected: 0, display: null };
+  const text = api.formatSession(session, "2026-10-30T12:00:00.000Z");
+  const back = api.parseSession(text).measurements[0];
+  let refused = false;
+  try {
+    const bad = JSON.parse(text);
+    bad.measurements[0].points_px.pop();
+    api.parseSession(JSON.stringify(bad));
+  } catch {
+    refused = true;
+  }
+  return {
+    rowRight: row === `gap 1,gap,${(0.2 * k).toFixed(6)},um,0.000000,${(-0.2 * k).toFixed(6)},-90.000,100.000,50.000,` +
+      "400.000,50.000,150.000,150.000,350.000,150.000,,,,,,,",
+    kept: back.kind === "gap" && JSON.stringify(back.points) === JSON.stringify(ms.points), refused,
+  };
+}
+
+/**
+ * The gap between two lines (G17): parallel lines 0.7 um apart give 0.7 whatever the rotation, with the gap's
+ * components along their normal and the feet of the common normal on the lines; lines 2 deg from parallel give the
+ * gap where the normal of their mean direction, through the point midway between their middles, meets them, as
+ * solved apart; the order of the lines changes only the gap's sense, that of a line's points nothing; a line that is
+ * a point has no gap; the files keep a gap (gapFiles).
+ */
+/**
+ * Whether the gaps of gapCases are right: the parallel lines' exactly, turned or not; the lines 2 deg apart as solved
+ * apart, and the same when swapped (the sense reversed) or reversed one by one; none for a line that is a point.
+ * @param {object} c   gapCases()
+ * @returns {boolean}
+ */
+function gapRight(c) {
+  const { n, g, feetOff, turned, t, expected, swapped, reversed, point } = c;
+  const exact = g !== null && Math.abs(g.gap - 0.7) < 1e-9 && g.angleDeg < 1e-6 && Math.abs(g.dx - 0.7 * n[0]) < 1e-9
+    && Math.abs(g.dy - 0.7 * n[1]) < 1e-9 && Math.abs(g.directionDeg - 115) < 1e-6 && feetOff < 1e-9;
+  const rotated = turned !== null && Math.abs(turned.gap - 0.7) < 1e-9 && Math.abs(turned.directionDeg - 148) < 1e-6;
+  const apart = t !== null && Math.abs(t.gap - expected) < 1e-9 && Math.abs(t.angleDeg - 2) < 1e-9;
+  const symmetric = apart && swapped !== null && reversed !== null && Math.abs(swapped.gap - t.gap) < 1e-12
+    && Math.abs(swapped.dx + t.dx) < 1e-12 && Math.abs(swapped.dy + t.dy) < 1e-12 && Math.abs(reversed.gap - t.gap) < 1e-12
+    && Math.abs(reversed.dx - t.dx) < 1e-12;
+  return exact && rotated && symmetric && point === null;
+}
+
+function checkGap() {
+  const cases = gapCases();
+  const { g, turned, t, expected } = cases;
+  const files = gapFiles();
+  check(gapRight(cases) && files.rowRight && files.kept && files.refused,
+    `gap between two lines (G17) in a tilted, turned frame: parallel lines 0.7 um apart give ${g?.gap.toFixed(12)}, ` +
+    `direction ${g?.directionDeg.toFixed(6)} deg, feet on the lines; turned 33 deg, ${turned?.gap.toFixed(12)} and ` +
+    `${turned?.directionDeg.toFixed(6)} deg; lines 2 deg apart, ${t?.gap.toFixed(9)} um where ${expected.toFixed(9)} ` +
+    `is expected, ${t?.angleDeg.toFixed(9)} deg from parallel; the lines swapped, the gap reversed; a line that is a ` +
+    "point, none; the measurements file's row, the session's four points kept and three refused");
+}
+
 /** The angle between two lines, whatever their sense: 0 to 90 degrees, by atan2 to keep small angles exact (1.10). */
 function lineAngle(a, b) {
   return Math.atan2(Math.abs(a[0] * b[1] - a[1] * b[0]), Math.abs(a[0] * b[0] + a[1] * b[1])) / DEG;
@@ -1681,6 +1790,7 @@ checkSnapThreshold();
 checkGeometry();
 checkPolygonFile();
 checkMeasurementFile();
+checkGap();
 checkSession();
 checkGdsReals();
 checkGdsFile();

@@ -45,7 +45,8 @@
   #panel section:first-child h2 { margin-top: 4px; }
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
   .row button { flex: 1 1 auto; }
-  .row.tools button { flex: 1 1 0; padding: 4px 4px; white-space: nowrap; }   /* each name on one line, in any font */
+  .row.tools { display: grid; grid-template-columns: repeat(4, 1fr); }      /* seven tools in two even rows */
+  .row.tools button { padding: 4px 4px; white-space: nowrap; }   /* each name on one line, in any font */
   .row.tools button kbd { display: block; width: max-content; margin: 2px auto 0; }   /* the key under the name, however wide the panel */
   button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--text); cursor: pointer; }
   button:hover:enabled { border-color: var(--accent); }
@@ -53,6 +54,9 @@
   button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   button.active kbd { color: var(--text); }
   .grid { display: grid; grid-template-columns: 1fr 120px; gap: 4px 8px; align-items: center; margin: 6px 0; }
+  .grid .wide { grid-column: 1 / -1; }
+  .grid .steps { display: flex; gap: 4px; }
+  .grid .steps button { flex: 1; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   input[type=number], select { font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--text); width: 100%; }
   /* the measurement list: a row selects one; its box adds it to the selection or takes it out */
   .list { height: 112px; overflow-y: auto; border: 1px solid var(--line); border-radius: 3px; background: #fff; }
@@ -269,6 +273,7 @@
         <button type="button" id="tool-angle" aria-pressed="false" title="Angle at a vertex: three clicks">Angle <kbd>3</kbd></button>
         <button type="button" id="tool-line-angle" aria-pressed="false" title="Angle between two lines: four clicks">2 lines <kbd>4</kbd></button>
         <button type="button" id="tool-profile" aria-pressed="false" title="Line profile, averaged across a band of adjustable width: two clicks">Profile <kbd>5</kbd></button>
+        <button type="button" id="tool-gap" aria-pressed="false" title="Gap between two parallel lines: two clicks on each">Gap <kbd>6</kbd></button>
       </div>
       <div id="tool-hint" class="note"></div>
     </section>
@@ -348,6 +353,13 @@
         <input type="number" inputmode="decimal" id="tilt-axis" min="-90" max="90" step="any" value="0">
         <label for="rotation" title="Turns the corrected image counter-clockwise.  Lengths and angles do not change; exported coordinates are in the turned frame.">rotation &phi; (&deg;)</label>
         <input type="number" inputmode="decimal" id="rotation" min="-180" max="180" step="any" value="0">
+        <input type="range" id="rotation-slider" class="wide" min="-180" max="180" step="0.1" value="0" aria-label="rotation &phi;, slider" title="Drag to turn the image: the view turns as you drag, the measurements follow when you let go.  Arrow keys: 0.1&deg;; with Shift: 1&deg;">
+        <div class="wide steps" role="group" aria-label="turn by small steps">
+          <button type="button" id="turn-cw-1" title="&phi; &minus; 1&deg;: turns the image clockwise.  Hold to keep turning">&minus;1&deg;</button>
+          <button type="button" id="turn-cw-01" title="&phi; &minus; 0.1&deg;: turns the image clockwise.  Hold to keep turning">&minus;0.1&deg;</button>
+          <button type="button" id="turn-ccw-01" title="&phi; + 0.1&deg;: turns the image counter-clockwise.  Hold to keep turning">+0.1&deg;</button>
+          <button type="button" id="turn-ccw-1" title="&phi; + 1&deg;: turns the image counter-clockwise.  Hold to keep turning">+1&deg;</button>
+        </div>
       </div>
       <div id="factor-note" class="note"></div>
       <div class="row">
@@ -401,7 +413,7 @@
         <table class="keys">
           <tbody>
           <tr><td><kbd>0</kbd></td><td>no tool: drag to pan, wheel to zoom (or click the active tool's button again)</td></tr>
-          <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile</td></tr>
+          <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd> <kbd>6</kbd></td><td>tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile, gap between 2 parallel lines (4 clicks)</td></tr>
           <tr><td>click</td><td>contour: add a vertex to the selected contour, or start a new one when no contour is selected; other tools: place the next point (snapped when Snap is on)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
           <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>

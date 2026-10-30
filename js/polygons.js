@@ -1,6 +1,6 @@
 "use strict";
 /* global CORRECTIONS, correctionFactorOrNull, measurementMatrix, toMeasurement, measureContour, measureRuler,
-   measureAngle, measureLineAngle, profileGeometry, markerPlace, profileValueAt */
+   measureAngle, measureLineAngle, measureGap, profileGeometry, markerPlace, profileValueAt */
 /* exported formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatProfileFile */
 /*
  * The CSV files of FORMAT.md: the polygon file, the interface to a mode solver or any program that
@@ -312,6 +312,12 @@ function measurementValues(m, frame, digits) {
       : [formatNumber(r.length, digits), r.unit, formatNumber(r.dx, digits), formatNumber(r.dy, digits),
         formatNumber(r.directionDeg, 3)];
   }
+  if (m.kind === "gap") {
+    const g = measureGap(m.points, frame);
+    return g === null ? ["", "", "", "", ""]
+      : [formatNumber(g.gap, digits), g.unit, formatNumber(g.dx, digits), formatNumber(g.dy, digits),
+        formatNumber(g.directionDeg, 3)];
+  }
   const angle = m.kind === "angle" ? measureAngle(m.points, frame) : measureLineAngle(m.points, frame)?.angleDeg ?? null;
   return angle === null ? ["", "deg", "", "", ""] : [formatNumber(angle, 3), "deg", "", "", ""];
 }
@@ -361,8 +367,9 @@ function formatMeasurementFile(image, frame, measurements, meanGrey = () => null
     lines.push(`# unit: ${unit}`);
   }
   lines.push("# lengths in the unit above, areas in its square, angles in degrees; points in pixels of the image as " +
-    "stored; width and mean_grey: the band of a line profile; closed to bbox_height: a contour, whose value is its " +
-    "perimeter (closed) or length (open) and whose vertices are in the polygon file",
+    "stored; dx, dy and direction_deg of a gap: from line 1 to line 2; width and mean_grey: the band of a line " +
+    "profile; closed to bbox_height: a contour, whose value is its perimeter (closed) or length (open) and whose " +
+    "vertices are in the polygon file",
   "name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey," +
     "closed,vertices,area,bbox_width,bbox_height");
   const digits = unit === "um" ? 6 : 3;
