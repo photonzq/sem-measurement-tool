@@ -8,7 +8,7 @@
    selectionRange, valueRange, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
    widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace, profileValueAt,
-   snapToSlope, metadataVendor, withMetadataText, fileStem */
+   snapToSlope, metadataVendor, withMetadataText, fileStem, traceStroke, freehandStroke, stretchNearness, joinStroke, newTraceMemo */
 /*
  * The SEM measurement tool: open an image, take measurements (contours, rulers, angles, profiles) with
  * optional snapping to edges, correct a tilted specimen, turn the image, and keep the work in a
@@ -26,7 +26,8 @@
  * depends on the smoothing settings alone.  The picture holds the grey values at 8 bits through
  * the black and white levels (display.js); a change of levels repaints it and touches nothing else.
  * Line profiles (profile.js) sample the grey values as stored, across a band of adjustable width;
- * a floating window plots the selected one, with the contours that cross it.
+ * a floating window plots the selected one, with the contours that cross it.  A stroke of the contour
+ * tool along an edge places points on it (trace.js).
  */
 
 /**
@@ -62,8 +63,9 @@ const TOOL_HINTS = {
   pan: "No tool: drag to pan, wheel to zoom; on a touch screen one finger pans and two pinch.  Choose a tool (1-6) " +
     "to trace or measure; click it again, or press 0, to come back here.",
   contour: "Click: add a vertex to the selected contour; with no contour selected, the first click starts a new one " +
-    "(N: done with this one).  Ctrl+click inserts (hold Ctrl to see where), drag moves, right click deletes; click a " +
-    "vertex to select it in the vertex window (T).",
+    "(N: done with this one).  Drag along an edge: points on it, after the last vertex (Ctrl: in place of the " +
+    "vertices along it, also from a vertex; Alt: as drawn; Esc: not).  Ctrl+click inserts (hold Ctrl to see where), drag " +
+    "a vertex to move it, right click deletes; click a vertex to select it in the vertex window (T).",
   ruler: "Click both ends of a distance.  Drag an end to move it; right click deletes the ruler.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
@@ -81,6 +83,9 @@ const MEASURE_NAMES = {
 const PLOT_COLOR = "#385c9e";        // the profile's mean in its window
 const MARKER_COLOR = "#272727";      // the markers A and B on the profile plot
 const TAP_PX = 10;                   // a touch that moves less than this is a tap
+const STROKE_PX = 6;                 // a mouse or pen press of the contour tool that moves farther may paint along an edge
+const STROKE_STEP_PX = 2;            // a stroke takes the pointer's moves of at least this: a still hand's tremor adds nothing
+const BAND_FILL = "rgba(255, 62, 200, 0.18)";   // the band a stroke paints: PREVIEW_COLOR, faint
 const TOUCH_HIT_PX = 22;             // HIT_PX for a finger, which covers far more than a cursor tip
 const TOUCH_SNAP = 2.5;              // a finger searches this many times the snap radius for an edge
 const HOLD_MS = 500;                 // a finger held still this long on a point opens its menu
@@ -95,6 +100,12 @@ const MAGNET_MARK_PX = 9;            // the legs of the ⊥ mark where a profile
 function defaultFrame() {
   return { pixelNm: null, tiltDeg: 0, correction: "none", customFactor: 1, axisDeg: 0, rotationDeg: 0, originPx: [0, 0] };
 }
+
+/**
+ * A contour with a stroke's points joined (trace.js, (T8)): its points, where the stroke's lie in them, and the
+ * vertices of the contour they take the place of.
+ * @typedef {{points: Point[], start: number, count: number, removed: number[]}} Joined
+ */
 
 /**
  * The magnet holding a profile square while one of its ends moves (MATH.md 6.6): the profile as pulled, the end that
@@ -141,11 +152,11 @@ const app = {
   /** @type {Tool} */
   tool: "pan",
   /**
-   * A touch gesture on the view: a finger that may still be a tap, one that pans or drags a point,
-   * one held for a menu (its lift does nothing), or two that pinch (G16).
+   * A touch gesture on the view: a finger that may still be a tap, one that pans, drags a point or
+   * paints along an edge, one held for a menu (its lift does nothing), or two that pinch (G16).
    * @type {{kind: "tap", id: number, start: Point}|{kind: "pan", id: number, last: Point}|{kind: "drag", id: number}
-   *   |{kind: "held", id: number}|{kind: "pinch", ids: [number, number], d0: number, c0: Point, s0: number, t0: Point}
-   *   |null}
+   *   |{kind: "paint", id: number}|{kind: "held", id: number}
+   *   |{kind: "pinch", ids: [number, number], d0: number, c0: Point, s0: number, t0: Point}|null}
    */
   gesture: null,
   /** @type {"mouse"|"pen"|"touch"} what last pressed on the view: it sets how near a point must be to be hit */
@@ -166,13 +177,25 @@ const app = {
   dirty: false,
   /**
    * @type {{kind: "point"|"width"|"marker", index: number, point: number, moved: boolean, before: string,
-   *   magnet: Magnet|null}|null} a measurement's point (``point``), a profile's band width, or a profile's marker
-   *   (``point`` 0 for A, 1 for B) by its tick on the image; ``before``, the state before it, is recorded for undo at
-   *   its first move; ``magnet``, while it holds the profile whose end is dragged square
+   *   magnet: Magnet|null, press: Point}|null} a measurement's point (``point``), a profile's band width, or a
+   *   profile's marker (``point`` 0 for A, 1 for B) by its tick on the image; ``before``, the state before it, is
+   *   recorded for undo at its first move; ``magnet``, while it holds the profile whose end is dragged square;
+   *   ``press``, where it was pressed (screen)
    */
   drag: null,
   /** @type {{index: number, marker: number}|null} the profile's marker whose tick on the image is under the pointer */
   markerHover: null,
+  /**
+   * @type {{points: Point[], start: Point, last: Point, exact: boolean, insert: boolean, vertex: number, id: number,
+   *   radius: number, moved: boolean, join: Joined|null, memo: TraceMemo}|null} a stroke of the contour tool
+   *   (trace.js): the pointer's stored points, where it was pressed and where it was last taken (screen), with which
+   *   keys it was pressed (Alt: exact, Ctrl: insert, for a click), the vertex of the selected contour it began on
+   *   (-1: none), the pointer that paints it, its band's half width (view units, set as it begins), whether it moved
+   *   farther than a click, the contour with the points it places as the pointer and the keys have it now, and the
+   *   work kept for its next placing
+   */
+  stroke: null,
+  paintTouch: false,                 // touch: with the contour tool, a finger drawn on the view paints along an edge
   profileWidth: 1,                   // band width of new profiles, pixel widths of the corrected view
   /** @type {number|null} where the cursor is on the profile plot: 0 at the start of the line, 1 at its end */
   profileCursor: null,
@@ -260,6 +283,9 @@ const settings = {
   median: () => Number(selectEl("median").value),
   radius: () => numberFrom("radius", 12),
   minContrast: () => numberFrom("min-contrast", 3),
+  edgeCriterion: () => selectEl("edge-criterion").value,
+  edgeLevel: () => Math.min(99, Math.max(1, numberFrom("edge-level", 50))),
+  pointSpacing: () => Math.min(500, Math.max(0.5, numberFrom("point-spacing", 5))),
 };
 
 // ------------------------------------------------------------------------- coordinates
@@ -585,10 +611,14 @@ async function openImageBuffer(name, buffer, metadata = null) {
   return true;
 }
 
-/** Compute the edge map when Snap, the squaring of profiles or the edge map needs it and it is missing or outdated. */
+/**
+ * Compute the edge map when Snap, the squaring of profiles, the contour tool's strokes or the edge map needs it and it
+ * is missing or outdated.
+ */
 async function refreshEdges() {
   const image = app.image;
-  if (image === null || app.edgesBusy || !(settings.snap() || settings.squareProfiles() || settings.edgesShown())) {
+  const needed = settings.snap() || settings.squareProfiles() || settings.edgesShown() || app.tool === "contour";
+  if (image === null || app.edgesBusy || !needed) {
     render();
     return;
   }
@@ -773,6 +803,7 @@ function draw() {
   });
   drawProfileCursor(toScreen);
   drawPending(toScreen);
+  drawStroke(toScreen);
   drawMagnet(toScreen);
   drawInsertPreview(toScreen);
   drawMarks(toScreen);
@@ -821,7 +852,7 @@ function insertTarget() {
   const cursor = app.cursor;
   const screen = app.cursorScreen;
   if (app.tool !== "contour" || !app.insertHeld || cursor === null || screen === null || n < 2 || app.drag !== null
-      || app.pan !== null || app.originMode || !insideImage(cursor[0], cursor[1])) {
+      || app.pan !== null || app.stroke !== null || app.originMode || !insideImage(cursor[0], cursor[1])) {
     return null;
   }
   if (hitPoint(screen[0], screen[1], true) !== null) {
@@ -863,8 +894,8 @@ function drawInsertPreview(toScreen) {
 }
 
 /**
- * Note Ctrl (or Cmd) and Alt from any event, and redraw when the insert preview, the snap preview or
- * the magnet may change.
+ * Note Ctrl (or Cmd) and Alt from any event, and redraw when the insert preview, the snap preview,
+ * the magnet or what a stroke places may change.
  * @param {KeyboardEvent|PointerEvent} e
  */
 function trackModifiers(e) {
@@ -872,6 +903,7 @@ function trackModifiers(e) {
   if (insert !== app.insertHeld || e.altKey !== app.altHeld) {
     app.insertHeld = insert;
     app.altHeld = e.altKey;
+    previewStroke();
     const c = app.cursor;
     if (c !== null && app.lastPointer !== "touch") {   // they follow Alt at once, not at the next move
       app.preview = insideImage(c[0], c[1]) && !app.altHeld && snapsNow() ? snapTarget(c[0], c[1]) : null;
@@ -1560,6 +1592,7 @@ function snapshot() {
 function restore(state) {
   const s = JSON.parse(state);
   app.pending = null;
+  app.stroke = null;
   clearPicked();
   app.measurements = s.measurements;
   app.selected = s.selected;
@@ -1892,6 +1925,7 @@ function setTool(tool) {
   app.tool = tool;
   app.pending = null;
   app.preview = null;
+  app.stroke = null;
   for (const t of TOOLS) {
     const b = buttonEl(`tool-${t}`);
     b.classList.toggle("active", t === tool);
@@ -1899,6 +1933,9 @@ function setTool(tool) {
   }
   canvas.classList.toggle("navigate", tool === "pan");
   el("tool-hint").textContent = TOOL_HINTS[tool];
+  if (tool === "contour") {
+    refreshEdges();                  // its strokes need the edge map, whether or not Snap is on
+  }
   render();
 }
 
@@ -2630,6 +2667,7 @@ function snapSettings() {
   return {
     on: settings.snap(), sigmaPx: settings.sigma(), median: settings.median(), radiusPx: settings.radius(),
     minContrast: settings.minContrast(), squareProfiles: settings.squareProfiles(), snapMarkers: settings.snapMarkers(),
+    edgeCriterion: settings.edgeCriterion(), edgeLevelPct: settings.edgeLevel(), pointSpacingPx: settings.pointSpacing(),
   };
 }
 
@@ -2839,6 +2877,10 @@ function loadSessionText(text, name) {
   selectEl("median").value = String(s.median);
   inputEl("radius").value = String(s.radiusPx);
   inputEl("min-contrast").value = String(s.minContrast);
+  selectEl("edge-criterion").value = s.edgeCriterion;
+  inputEl("edge-level").value = String(s.edgeLevelPct);
+  inputEl("point-spacing").value = String(s.pointSpacingPx);
+  showEdgeLevel();
   changeFrame(() => {
     app.frame = session.frame;
   });
@@ -4538,15 +4580,18 @@ function startDragAt(sx, sy) {
   }
   const contour = app.tool === "contour";
   if (!contour && hitWidthHandle(sx, sy)) {
-    app.drag = { kind: "width", index: app.selected, point: 0, moved: false, before: snapshot(), magnet: null };
+    app.drag = { kind: "width", index: app.selected, point: 0, moved: false, before: snapshot(), magnet: null,
+      press: [sx, sy] };
     return true;
   }
   const hit = hitPoint(sx, sy, contour);
   const marker = hit === null && !contour ? hitMarker(sx, sy) : null;
   if (hit !== null) {
-    app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false, before: snapshot(), magnet: null };
+    app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false, before: snapshot(), magnet: null,
+      press: [sx, sy] };
   } else if (marker !== null) {
-    app.drag = { kind: "marker", index: marker.index, point: marker.marker, moved: false, before: snapshot(), magnet: null };
+    app.drag = { kind: "marker", index: marker.index, point: marker.marker, moved: false, before: snapshot(), magnet: null,
+      press: [sx, sy] };
   } else {
     return false;
   }
@@ -4708,7 +4753,7 @@ function cancelDrag() {
  */
 function snapsNow() {
   const d = app.drag;
-  if (app.exactOnce) {
+  if (app.exactOnce || app.stroke !== null) {
     return false;
   }
   if (d === null) {
@@ -4724,6 +4769,268 @@ function snapsNow() {
 function draggedPoints() {
   const d = app.drag;
   return d === null || d.kind !== "point" ? null : app.measurements[d.index].points;
+}
+
+// ------------------------------------------------------------------------- painting along an edge
+//
+// With the contour tool, a press where no vertex lies is a click when it ends without moving, and
+// otherwise paints along an edge (trace.js, MATH.md part 7): the points the stroke places show as it
+// goes, with the band it searches, and join the contour when it ends, as one edit.  Ctrl puts them in
+// place of the vertices along the stretch they cover, Alt (or the Exact latch) places them as drawn.
+
+/** @returns {number} R: half the width of a stroke's band, view units: the snap radius, more for a finger */
+function strokeRadius() {
+  return settings.radius() * (app.lastPointer === "touch" ? TOUCH_SNAP : 1);
+}
+
+/**
+ * Begin a stroke by pointer ``id`` where it was pressed, a screen point, when that lies on the image
+ * and no other pointer paints.  ``exact`` (Alt) and ``insert`` (Ctrl), the keys of the press, make it
+ * an exact or an inserted vertex should it turn out a click, as a click places its vertex with the
+ * keys it was pressed with; a stroke begun on ``vertex`` of the selected contour selects that vertex
+ * instead.  Its band is as wide as the pointer's snap reach when it begins.
+ * @param {number} sx
+ * @param {number} sy
+ * @param {boolean} exact
+ * @param {boolean} insert
+ * @param {number} vertex
+ * @param {number} id
+ * @returns {boolean}
+ */
+function beginStroke(sx, sy, exact, insert, vertex, id) {
+  const [x, y] = screenToStored(sx, sy);
+  if (!insideImage(x, y) || (app.stroke !== null && app.stroke.id !== id)) {
+    return false;
+  }
+  app.stroke = { points: [[x, y]], start: [sx, sy], last: [sx, sy], exact, insert, vertex, id, radius: strokeRadius(),
+    moved: false, join: null, memo: newTraceMemo() };
+  return true;
+}
+
+/**
+ * Whether a pointer event belongs to another pointer than the one that paints the stroke in progress:
+ * a mouse moving while a finger paints, say, which must leave the stroke alone.
+ * @param {PointerEvent} e
+ * @returns {boolean}
+ */
+function otherPointer(e) {
+  return app.stroke !== null && app.stroke.id !== e.pointerId;
+}
+
+/**
+ * A press on a vertex of a contour, dragged with Ctrl (or, by a finger, with Edge on), paints in place
+ * from there rather than moving the vertex: redoing a contour starts on it, among its vertices.  The
+ * vertex stays put until pointer ``id`` is farther than ``still`` screen pixels from the press; then the
+ * drag, which moved nothing, becomes a stroke that redoes the vertices along it.  Returns whether the
+ * move is taken care of: held, or painting.
+ * @param {boolean} paints
+ * @param {number} sx
+ * @param {number} sy
+ * @param {number} still
+ * @param {number} id
+ * @returns {boolean}
+ */
+function dragBecomesStroke(paints, sx, sy, still, id) {
+  const d = app.drag;
+  if (!paints || d === null || d.kind !== "point" || d.moved || app.tool !== "contour"
+      || app.measurements[d.index].kind !== "contour") {
+    return false;
+  }
+  if (Math.hypot(sx - d.press[0], sy - d.press[1]) <= still) {
+    return true;                     // still a click on the vertex
+  }
+  app.drag = null;                   // it moved nothing: nothing to undo
+  beginStroke(d.press[0], d.press[1], false, true, d.point, id);
+  moveStroke(sx, sy, still);
+  return true;
+}
+
+/**
+ * Whether a stroke paints: it moved farther than a click, and along at least one point spacing in the
+ * view.  A shorter one is a click, which places one vertex whatever lies under it.
+ * @param {{points: Point[], moved: boolean}} s
+ * @returns {boolean}
+ */
+function strokePaints(s) {
+  if (!s.moved) {
+    return false;
+  }
+  const v = viewMatrix(app.frame);
+  let length = 0;
+  for (let i = 1; i < s.points.length && length < settings.pointSpacing(); i++) {
+    length += Math.hypot(...matApply(v, s.points[i][0] - s.points[i - 1][0], s.points[i][1] - s.points[i - 1][1]));
+  }
+  return length >= settings.pointSpacing();
+}
+
+/**
+ * The stroke's pointer at a screen point: once farther than ``still`` screen pixels from where it was
+ * pressed it paints, and what it places follows.
+ * @param {number} sx
+ * @param {number} sy
+ * @param {number} still
+ */
+function moveStroke(sx, sy, still) {
+  const s = app.stroke;
+  if (s === null || (!s.moved && Math.hypot(sx - s.start[0], sy - s.start[1]) <= still)
+      || (s.moved && Math.hypot(sx - s.last[0], sy - s.last[1]) < STROKE_STEP_PX)) {
+    return;
+  }
+  s.moved = true;
+  s.last = [sx, sy];
+  s.points.push(screenToStored(sx, sy));
+  previewStroke();
+}
+
+/**
+ * The points a stroke places: on the edge it paints over (trace.js), or as drawn, those on the image.
+ * @param {{points: Point[], radius: number, memo: TraceMemo}} s
+ * @param {boolean} exact
+ * @returns {Point[]}
+ */
+function strokePlaces(s, exact) {
+  if (exact) {
+    return freehandStroke(s.points, settings.pointSpacing(), app.frame).filter(([x, y]) => insideImage(x, y));
+  }
+  if (app.image === null || app.edges === null) {
+    return [];
+  }
+  return traceStroke(app.image, app.edges, s.points, {
+    criterion: settings.edgeCriterion(), level: settings.edgeLevel() / 100, spacing: settings.pointSpacing(),
+    radius: s.radius, reach: settings.radius(), minContrast: settings.minContrast(),
+  }, app.frame, s.memo);
+}
+
+/**
+ * The contour with a stroke's points joined: after its last vertex, or ``inPlace`` of the vertices
+ * along the stretch they cover (T8).  With no contour selected, a new one: its points alone.
+ * @param {Point[]} placed
+ * @param {boolean} inPlace
+ * @returns {Joined}
+ */
+function strokeJoined(placed, inPlace) {
+  const c = currentContour();
+  return joinStroke(c?.points ?? [], c?.closed ?? true, placed, inPlace,
+    stretchNearness(placed, settings.radius(), settings.pointSpacing(), app.frame), app.frame);
+}
+
+/**
+ * What the stroke places as the keys are now (Alt or the Exact latch: as drawn; Ctrl: in place).  A
+ * stroke begun on a vertex works in place, whatever the keys.
+ */
+function previewStroke() {
+  const s = app.stroke;
+  if (s !== null) {
+    s.join = strokePaints(s) ? strokeJoined(strokePlaces(s, app.altHeld || app.exactOnce), app.insertHeld || s.vertex >= 0)
+      : null;
+  }
+}
+
+/**
+ * The stroke ends.  When it painted, its points join the contour, as one edit: as drawn with ``exact``
+ * (Alt, or the Exact latch), ``inPlace`` (Ctrl, or begun on a vertex) of the vertices along their stretch.
+ * A press that did not paint is a click with the keys it was pressed with: a vertex, exactly with Alt,
+ * inserted with Ctrl; on the vertex it began on, that vertex selected.
+ * @param {boolean} exact
+ * @param {boolean} inPlace
+ */
+function endStroke(exact, inPlace) {
+  const s = app.stroke;
+  app.stroke = null;
+  if (s === null) {
+    return;
+  }
+  if (!strokePaints(s)) {
+    if (s.vertex >= 0) {
+      pickVertex(s.vertex, "only");  // a click on the vertex it began on
+    } else {
+      clickAt(s.start[0], s.start[1], s.exact, s.insert);
+    }
+    return;
+  }
+  const placed = strokePlaces(s, takeExact() || exact);
+  if (placed.length === 0) {
+    const asDrawn = app.lastPointer === "touch" ? "with Exact, a stroke places its points as drawn"
+      : "Alt+drag places points as drawn";
+    setStatus(app.edges === null ? "The edge map is not ready yet: paint again in a moment."
+      : `No edge stands out under the stroke; ${asDrawn}.`);
+    render();
+    return;
+  }
+  const joined = strokeJoined(placed, inPlace || s.vertex >= 0);
+  pushHistory();
+  const c = contourForVertex();
+  const before = c.points.length;
+  c.points = joined.points;
+  if (joined.start < before) {
+    clearPicked();                   // the vertices after them moved on
+  }
+  refreshMeasurements();
+  const how = joined.removed.length > 0 ? `in place of ${joined.removed.length}` : joined.start < before ? "inserted"
+    : "added";
+  setStatus(`${c.name}: ${joined.count} point${joined.count === 1 ? "" : "s"} ${how}`);
+  render();
+}
+
+/** Give up the stroke in progress: nothing changes. */
+function cancelStroke() {
+  if (app.stroke !== null) {
+    app.stroke = null;
+    render();
+  }
+}
+
+/** @returns {boolean} whether a finger drawn on the view paints along an edge rather than panning */
+function paintsByTouch() {
+  return app.paintTouch && app.tool === "contour" && !app.originMode;
+}
+
+/**
+ * A stroke being painted: its band, the points it places with the contour's segments that join them,
+ * and a cross on each vertex they take the place of.
+ * @param {(p: Point) => Point} toScreen
+ */
+function drawStroke(toScreen) {
+  const s = app.stroke;
+  if (s === null || !strokePaints(s)) {
+    return;
+  }
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const band = new Path2D();
+  s.points.map(toScreen).forEach(([x, y], i) => (i === 0 ? band.moveTo(x, y) : band.lineTo(x, y)));
+  ctx.strokeStyle = BAND_FILL;
+  ctx.lineWidth = 2 * s.radius * app.view.s;
+  ctx.stroke(band);
+  const join = s.join;
+  const c = currentContour();
+  if (join !== null && join.count > 0) {
+    const pts = join.points.map(toScreen);
+    const n = pts.length;
+    const closed = c?.closed ?? true;           // a new contour is closed
+    const first = join.start > 0 ? join.start - 1 : closed ? n - 1 : 0;
+    const end = join.start + join.count;
+    const last = end < n ? end : closed ? 0 : n - 1;
+    const path = new Path2D();
+    path.moveTo(pts[first][0], pts[first][1]);
+    for (let i = join.start; i < end; i++) {
+      path.lineTo(pts[i][0], pts[i][1]);
+    }
+    path.lineTo(pts[last][0], pts[last][1]);
+    strokeOverlay(path, PREVIEW_COLOR, { dash: [5, 3], width: 1.4 });
+    drawPoints(pts.slice(join.start, end), PREVIEW_COLOR, false);
+  }
+  if (join !== null && c !== null) {
+    ctx.strokeStyle = PREVIEW_COLOR;
+    ctx.lineWidth = 2;
+    for (const v of join.removed.map((i) => c.points[i]).filter((q) => q !== undefined)) {
+      const [x, y] = toScreen(v);
+      strokeSegment([x - 5, y - 5], [x + 5, y + 5]);
+      strokeSegment([x - 5, y + 5], [x + 5, y - 5]);
+    }
+  }
+  ctx.restore();
 }
 
 // ------------------------------------------------------------------------- touch tools
@@ -4780,6 +5087,7 @@ function refreshTouchBar() {
   setBarButton("touch-fit", app.image === null, null);
   setBarButton("touch-snap", false, settings.snap());
   setBarButton("touch-exact", app.tool === "pan", app.exactOnce);
+  setBarButton("touch-paint", app.tool !== "contour", app.paintTouch);
 }
 
 /**
@@ -5025,12 +5333,13 @@ function touchDown(e) {
     } else {
       app.gesture = edits ? { kind: "tap", id: e.pointerId, start: p } : { kind: "pan", id: e.pointerId, last: p };
     }
-    if (app.tool !== "pan" && !app.originMode) {
+    if (app.tool !== "pan" && !app.originMode && !(app.gesture.kind === "tap" && paintsByTouch())) {
       startHold(e.pointerId, p);     // held still, it opens the menu of the point under it
     }
   } else if (touches.size === 2) {
     cancelHold();
     cancelDrag();                    // a second finger: what the first began gives way to a pinch
+    cancelStroke();
     app.preview = null;
     startPinch();
   }
@@ -5056,13 +5365,21 @@ function touchMove(e) {
     return;
   }
   if (g.kind === "tap" && Math.hypot(p[0] - g.start[0], p[1] - g.start[1]) > TAP_PX) {
-    g = { kind: "pan", id: g.id, last: g.start };    // moved too far for a tap: it pans
+    // moved too far for a tap: it paints along an edge (Edge on, contour tool), or pans
+    g = paintsByTouch() && beginStroke(g.start[0], g.start[1], false, false, -1, g.id) ? { kind: "paint", id: g.id }
+      : { kind: "pan", id: g.id, last: g.start };
     app.gesture = g;
   }
   if (g.kind === "pan") {
     app.view.tx += p[0] - g.last[0];
     app.view.ty += p[1] - g.last[1];
     g.last = p;
+    render();
+  } else if (g.kind === "paint") {
+    moveStroke(p[0], p[1], 0);
+    render();
+  } else if (g.kind === "drag" && dragBecomesStroke(paintsByTouch(), p[0], p[1], TAP_PX, g.id)) {
+    app.gesture = app.stroke === null ? g : { kind: "paint", id: g.id };
     render();
   } else if (g.kind === "drag") {
     const [x, y] = screenToStored(p[0], p[1]);
@@ -5103,7 +5420,13 @@ function touchUp(e, cancelled) {
   }
   app.gesture = null;
   app.preview = null;
-  if (g.kind === "drag") {
+  if (g.kind === "paint") {
+    if (cancelled) {
+      cancelStroke();
+    } else {
+      endStroke(app.altHeld, app.insertHeld);          // as the preview had them, a keyboard beside the screen
+    }
+  } else if (g.kind === "drag") {
     if (cancelled) {
       cancelDrag();
     } else {
@@ -5124,8 +5447,8 @@ function touchUp(e, cancelled) {
 // ------------------------------------------------------------------------- mouse and pen
 
 canvas.addEventListener("pointerdown", (e) => {
-  if (app.image === null) {
-    return;
+  if (app.image === null || (e.pointerType !== "touch" && otherPointer(e))) {
+    return;                          // a finger paints: the mouse waits
   }
   notePointer(e);
   if (e.pointerType === "touch") {
@@ -5152,8 +5475,9 @@ canvas.addEventListener("pointerdown", (e) => {
     rightClick(sx, sy);
     return;
   }
-  if (e.button === 0 && !startDragAt(sx, sy)) {
-    clickAt(sx, sy, e.altKey, e.ctrlKey || e.metaKey);
+  if (e.button === 0 && !startDragAt(sx, sy)
+      && !(app.tool === "contour" && beginStroke(sx, sy, e.altKey, e.ctrlKey || e.metaKey, -1, e.pointerId))) {
+    clickAt(sx, sy, e.altKey, e.ctrlKey || e.metaKey);     // with the contour tool, the stroke's end decides
   }
 });
 
@@ -5161,6 +5485,9 @@ canvas.addEventListener("pointermove", (e) => {
   if (e.pointerType === "touch") {
     touchMove(e);
     return;
+  }
+  if (otherPointer(e)) {
+    return;                          // a finger paints: the mouse waits
   }
   notePointer(e);                    // a mouse or pen hovering after touch takes its own, finer hit radius
   const [sx, sy] = eventPoint(e);
@@ -5178,6 +5505,21 @@ canvas.addEventListener("pointermove", (e) => {
   app.cursor = [x, y];
   app.cursorScreen = [sx, sy];
   trackModifiers(e);
+  if (app.stroke !== null && e.buttons === 0) {
+    cancelStroke();                  // released where the page did not see it: given up
+  }
+  if (app.stroke === null && dragBecomesStroke(e.ctrlKey || e.metaKey, sx, sy, STROKE_PX, e.pointerId)) {
+    showCursor(x, y);
+    render();
+    return;
+  }
+  if (app.stroke !== null) {
+    moveStroke(sx, sy, STROKE_PX);
+    app.preview = strokePaints(app.stroke) ? null : app.preview;    // until it paints, the press is a click
+    showCursor(x, y);
+    render();
+    return;
+  }
   dragTo(x, y);
   pullPending([x, y]);
   hoverMarker(app.drag === null ? markerAt(sx, sy) : null);
@@ -5191,9 +5533,16 @@ canvas.addEventListener("pointerup", (e) => {
     touchUp(e, false);
     return;
   }
+  if (otherPointer(e)) {
+    return;
+  }
   if (app.pan !== null) {
     app.pan = null;
     canvas.classList.remove("panning");
+    return;
+  }
+  if (app.stroke !== null) {
+    endStroke(e.altKey, e.ctrlKey || e.metaKey);
     return;
   }
   const [sx, sy] = eventPoint(e);
@@ -5209,6 +5558,9 @@ canvas.addEventListener("pointercancel", (e) => {
   app.pan = null;
   canvas.classList.remove("panning");
   cancelDrag();
+  if (!otherPointer(e)) {
+    cancelStroke();
+  }
   render();
 });
 
@@ -5342,6 +5694,7 @@ const KEY_ACTIONS = {
   },
   Escape: () => {
     app.pending = null;
+    app.stroke = null;
     app.originMode = false;
     closeHoldMenu();
     closeDownloadMenu();
@@ -5381,6 +5734,11 @@ window.addEventListener("keydown", (e) => {
   if (/** @type {HTMLDialogElement} */ (el("gds-dialog")).open) {
     return;                          // the dialog has the keys; Esc closes it
   }
+  if (e.key === "Escape" && app.stroke !== null) {
+    e.preventDefault();
+    cancelStroke();                  // with Ctrl or Alt held too, as a stroke may be painted with them
+    return;
+  }
   const target = e.target;
   const typing = (target instanceof HTMLInputElement && target.type !== "checkbox") || target instanceof HTMLSelectElement;
   if (ctrlShortcut(e, typing) || typing || e.altKey) {
@@ -5412,6 +5770,7 @@ window.addEventListener("blur", () => {            // a key released elsewhere i
   app.insertHeld = false;
   app.altHeld = false;
   app.space = false;
+  app.stroke = null;
   render();
 });
 
@@ -5420,6 +5779,13 @@ window.addEventListener("beforeunload", (e) => {
     e.preventDefault();
   }
 });
+
+/** Show the threshold's level only with the threshold criterion. */
+function showEdgeLevel() {
+  const shown = settings.edgeCriterion() === "threshold";
+  el("edge-level").hidden = !shown;
+  el("edge-level-label").hidden = !shown;
+}
 
 function snapToggled() {
   if (!settings.snap()) {
@@ -5689,6 +6055,10 @@ el("touch-exact").addEventListener("click", () => {
   app.preview = null;
   render();
 });
+el("touch-paint").addEventListener("click", () => {
+  app.paintTouch = !app.paintTouch;
+  render();
+});
 window.addEventListener("pointerdown", (e) => {
   if (e.pointerType === "touch") {
     enterTouchLayout();              // the first touch brings the touch layout
@@ -5806,6 +6176,8 @@ inputEl("show-edges").addEventListener("change", () => refreshEdges());
 for (const id of ["sigma", "median"]) {
   el(id).addEventListener("change", () => refreshEdges());
 }
+selectEl("edge-criterion").addEventListener("change", () => showEdgeLevel());
+showEdgeLevel();                     // as the browser may have kept the choice over a reload
 for (const id of ["pixel-x", "pixel-y", "tilt", "correction", "custom-factor", "tilt-axis", "rotation"]) {
   el(id).addEventListener("change", () => frameInputsChanged());
 }

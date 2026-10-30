@@ -1,5 +1,5 @@
 "use strict";
-/* global CORRECTIONS */
+/* global CORRECTIONS, TRACE_CRITERIA */
 /* exported SESSION_FORMAT, MEASURE_POINTS, formatSession, parseSession */
 /*
  * The session file (FORMAT.md): what it takes to resume the work on an image, as JSON.  The
@@ -19,6 +19,9 @@
  * @property {number} minContrast
  * @property {boolean} squareProfiles   new and moved profiles are squared to the edge they cross
  * @property {boolean} snapMarkers      a profile's markers snap to the steepest slope nearby
+ * @property {string} edgeCriterion     what places the points of a stroke along an edge: one of TRACE_CRITERIA
+ * @property {number} edgeLevelPct      the threshold criterion's level, percent of the way from dark to bright, 1-99
+ * @property {number} pointSpacingPx    between the points of a stroke, pixel widths of the corrected view, 0.5-500
  */
 
 /**
@@ -92,7 +95,8 @@ function formatSession(session, saved) {
     },
     snap: {
       on: snap.on, sigma_px: snap.sigmaPx, median: snap.median, radius_px: snap.radiusPx, min_contrast: snap.minContrast,
-      square_profiles: snap.squareProfiles, snap_markers: snap.snapMarkers,
+      square_profiles: snap.squareProfiles, snap_markers: snap.snapMarkers, edge_criterion: snap.edgeCriterion,
+      edge_level_pct: snap.edgeLevelPct, point_spacing_px: snap.pointSpacingPx,
     },
     measurements: session.measurements.map(measurementEntry),
     selected: session.selected >= 0 ? session.selected : null,
@@ -239,9 +243,14 @@ function frameAt(value) {
  */
 function snapAt(value) {
   if (value === undefined) {
-    return { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3, squareProfiles: true, snapMarkers: true };
+    return { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3, squareProfiles: true, snapMarkers: true,
+      edgeCriterion: "slope", edgeLevelPct: 50, pointSpacingPx: 5 };
   }
   const s = objectAt(value, "snap");
+  const criterion = s.edge_criterion ?? "slope";
+  if (typeof criterion !== "string" || !TRACE_CRITERIA.includes(criterion)) {
+    throw new Error(`snap.edge_criterion must be one of ${TRACE_CRITERIA.join(", ")}`);
+  }
   return {
     on: s.on === true,
     sigmaPx: numberAt(s.sigma_px, "snap.sigma_px", (v) => v > 0),
@@ -250,6 +259,9 @@ function snapAt(value) {
     minContrast: numberAt(s.min_contrast, "snap.min_contrast", (v) => v > 0),
     squareProfiles: s.square_profiles !== false,
     snapMarkers: s.snap_markers !== false,
+    edgeCriterion: criterion,
+    edgeLevelPct: numberAt(s.edge_level_pct ?? 50, "snap.edge_level_pct", (v) => v >= 1 && v <= 99),
+    pointSpacingPx: numberAt(s.point_spacing_px ?? 5, "snap.point_spacing_px", (v) => v >= 0.5 && v <= 500),
   };
 }
 

@@ -46,6 +46,12 @@
 //    a bright line's flanks, a ridge; the edge clicked, not merged with a step beside it nor taken by a
 //    stronger one farther off; nothing at the end of the data or on a clipped or quieter stretch; a
 //    ramp without a steepest point left as clicked; rarely a snap in noise alone.
+// 10. Painted edges (trace.js): stations every spacing along a stroke in the view, and up to where it
+//    turns back (T1); a stroke along a noisy step, a bright line and a step with a bloom, by each
+//    criterion (T3)-(T7), also in a tilted, turned frame; one of two neighbouring steps kept all along;
+//    lone stations; nothing across an edge, on flat noise, in a break of the edge or on an info bar; a
+//    disc's circle; the work kept between moves the same as a fresh placing; the joining of the points to
+//    a contour, and a redone side of a narrow rectangle (T8).
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -53,7 +59,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPTS = ["vendor/pako_inflate.min.js", "vendor/UTIF.js", "js/metadata.js", "js/tiff.js", "js/edges.js",
-  "js/transform.js", "js/polygons.js", "js/session.js", "js/gds.js", "js/vertices.js", "js/display.js", "js/profile.js"];
+  "js/transform.js", "js/polygons.js", "js/session.js", "js/gds.js", "js/vertices.js", "js/display.js", "js/profile.js",
+  "js/trace.js"];
 const LOCAL_DATA = path.join(ROOT, "tests", "local_data.json");
 const failures = [];
 
@@ -80,7 +87,8 @@ function loadApi() {
     reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness,
     sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle,
     widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace,
-    profileValueAt, snapToSlope, UTIF })`, context);
+    profileValueAt, snapToSlope, strokeStations, firstLeg, newTraceMemo, traceStroke, freehandStroke, stretchNearness,
+    joinStroke, placingStations, UTIF })`, context);
 }
 
 const api = loadApi();
@@ -813,12 +821,19 @@ function checkMeasurementFile() {
     "and an open one (its length, no area)");
 }
 
+/** A stroke's settings in the session file, and the defaults when it has none (an older file). */
+function strokesKept(text, olderSnap) {
+  return text.includes('"edge_criterion": "threshold"') && text.includes('"point_spacing_px": 3.5')
+    && `${olderSnap.edgeCriterion} ${olderSnap.edgeLevelPct} ${olderSnap.pointSpacingPx}` === "slope 50 5";
+}
+
 function checkSession() {
   const session = {
     image: IMAGE,
     frame: { pixelNm: [1.34896, 1.34896], tiltDeg: 51.996, correction: "cross-section", customFactor: 1, axisDeg: 0.5,
       rotationDeg: -1.25, originPx: [1536.5, 1024.25] },
-    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4, squareProfiles: false, snapMarkers: false },
+    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4, squareProfiles: false, snapMarkers: false,
+      edgeCriterion: "threshold", edgeLevelPct: 35, pointSpacingPx: 3.5 },
     measurements: [
       { name: "rib", kind: "contour", color: 0, closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
       { name: "ruler 1", kind: "ruler", color: 1, points: [[1, 2], [3, 4]] },
@@ -835,6 +850,9 @@ function checkSession() {
   const older = JSON.parse(text);
   delete older.snap.square_profiles;
   delete older.snap.snap_markers;
+  delete older.snap.edge_criterion;
+  delete older.snap.edge_level_pct;
+  delete older.snap.point_spacing_px;
   const olderSnap = api.parseSession(JSON.stringify(older)).snap;
   const squaredByDefault = olderSnap.squareProfiles === true;
   checkSessionMarkers(text, ms, olderSnap);
@@ -848,8 +866,9 @@ function checkSession() {
     && api.parseSession(api.formatSession({ ...session, display: null, selected: -1 }, "x")).display === null
     && api.parseSession(api.formatSession({ ...session, selected: -1 }, "x")).selected === -1
     && ms.map((m) => m.color).join() === "0,1,9,3,4,5"
-    && text.includes('"square_profiles": false') && squaredByDefault,
-  "session round trip: frame, snap settings (squaring profiles: absent, on), the measurements in " +
+    && text.includes('"square_profiles": false') && squaredByDefault && strokesKept(text, olderSnap),
+  "session round trip: frame, snap settings (squaring profiles: absent, on; strokes' points: absent, the steepest " +
+    "slope, 50 %, 5 px), the measurements in " +
     "their order with contours among them (points to 1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band " +
     "width, colours (absent: the place in the list), the selected one (none: -1), display levels (absent: Auto)");
   const good = JSON.parse(text);
@@ -869,6 +888,10 @@ function checkSession() {
     { ...good, measurements: [{ name: "r", kind: "ruler", color: 1.5, points_px: [[0, 0], [1, 1]] }] },
     { ...good, measurements: [{ name: "p", kind: "profile", points_px: [[0, 0], [9, 0]], markers_px: [[1, 0], [2, 0], [3, 0]] }] },
     { ...good, measurements: [{ name: "p", kind: "profile", points_px: [[0, 0], [9, 0]], markers_px: [[1, "x"]] }] },
+    { ...good, snap: { ...good.snap, edge_criterion: "middle" } },
+    { ...good, snap: { ...good.snap, edge_level_pct: 99.5 } },
+    { ...good, snap: { ...good.snap, edge_level_pct: 0.5 } },
+    { ...good, snap: { ...good.snap, point_spacing_px: 0.1 } },
   ];
   let refused = 0;
   for (const b of bad) {
@@ -880,7 +903,8 @@ function checkSession() {
   }
   check(refused === bad.length, `bad session files are refused (${refused} of ${bad.length}: not JSON, format, version, ` +
     "no list, point count, kind, a name used twice across kinds, correction, number, GDS layer, display levels, band width, " +
-    "colour, three markers, a marker not a pair of numbers)");
+    "colour, three markers, a marker not a pair of numbers, a stroke's criterion, its level above 99 % or below 1 %, " +
+    "its spacing below 0.5 px)");
 }
 
 /**
@@ -1820,6 +1844,397 @@ function checkMagnet() {
     "tilted, turned frame, the end kept to the last bit and the length dragged to");
 }
 
+// ------------------------------------------------------------------------- painted edges (trace.js)
+
+/** How a test stroke places its points: (T3)-(T7) at the panel's defaults, with ``more`` changed. */
+function strokeOptions(criterion, more = {}) {
+  return { criterion, level: 0.5, spacing: 5, radius: 12, reach: 12, minContrast: 3, ...more };
+}
+
+/** A stroke of stored points along y = 10 ... 150 at x = f(y): a hand that wavers either side of a path. */
+function strokeAlong(f, from = 10, to = 150, step = 2) {
+  const points = [];
+  for (let y = from; y <= to; y += step) {
+    points.push([f(y), y]);
+  }
+  return points;
+}
+
+/** The mean and the root mean square of a list, and its largest magnitude. */
+function spreadOf(values) {
+  const n = Math.max(1, values.length);
+  const mean = values.reduce((a, b) => a + b, 0) / n;
+  return { mean, rms: Math.sqrt(values.reduce((a, b) => a + b * b, 0) / n), worst: Math.max(0, ...values.map(Math.abs)) };
+}
+
+function checkStrokeStations() {
+  // (T1): stations every h along the stroke in the view, the first at its start; the normal square to the
+  // stroke there and V^-1 of it the step across; those painted already stay as the stroke grows
+  const line = [[10, 10], [100, 60]];
+  const zigzag = [[10, 10], [40, 10], [40, 50], [70, 90]];
+  let worstSpacing = 0;
+  let worstNormal = 0;
+  let worstAcross = 0;
+  const counts = [];
+  for (const frame of [PLAIN, SLANTED]) {
+    const v = api.viewMatrix(frame);
+    const s = api.strokeStations(line, 4, 12, frame);
+    const [tx, ty] = api.matApply(v, 90, 50);
+    const length = Math.hypot(tx, ty);
+    counts.push(s.length === Math.floor(length / 4) + 1);
+    for (let j = 1; j < s.length; j++) {
+      const [ax, ay] = api.matApply(v, s[j - 1].at[0], s[j - 1].at[1]);
+      const [bx, by] = api.matApply(v, s[j].at[0], s[j].at[1]);
+      worstSpacing = Math.max(worstSpacing, Math.abs(Math.hypot(bx - ax, by - ay) - 4));
+    }
+    for (const st of s) {
+      const [nx, ny] = api.matApply(v, st.across[0], st.across[1]);
+      worstAcross = Math.max(worstAcross, Math.hypot(nx - st.normal[0], ny - st.normal[1]));
+      worstNormal = Math.max(worstNormal, Math.abs((st.normal[0] * tx + st.normal[1] * ty) / length),
+        Math.abs(Math.hypot(...st.normal) - 1));
+    }
+  }
+  const first = api.strokeStations(zigzag.slice(0, 3), 4, 12, SLANTED);
+  const grown = api.strokeStations(zigzag, 4, 12, SLANTED);
+  const kept = first.every((st, j) => Math.hypot(st.at[0] - grown[j].at[0], st.at[1] - grown[j].at[1]) < 1e-9);
+  check(worstSpacing < 1e-9 && worstNormal < 1e-12 && worstAcross < 1e-12 && counts.every(Boolean) && kept
+    && grown.length > first.length && api.strokeStations([[5, 5]], 4, 12, PLAIN).length === 1
+    && api.strokeStations([], 4, 12, PLAIN).length === 0,
+  `stations of a stroke (T1), in a plain and a tilted, turned frame: every h along it in the view (to ` +
+    `${worstSpacing.toExponential(1)}), as many as fit; the normal square to the stroke, V^-1 of it the step across; ` +
+    "those painted kept as the stroke grows; a press alone has one, nothing none");
+}
+
+/** A noisy step edge from 100 to 200 along x = edgeX(y), blurred by an error function of width 1.5 px. */
+function stepImage(edgeX, noise, seed, w = 160, h = 160) {
+  const u = gaussian(seed);
+  return rampImage(w, h, (x, y) => 100 + 50 * (1 + erf((x - edgeX(y)) / (Math.SQRT2 * 1.5))) + noise * u());
+}
+
+function checkTraceStep() {
+  // (T3)-(T6): a noisy straight step, the hand wavering 1 to 5 px off it; each criterion on it
+  const edgeX = (y) => 60.3 + 0.25 * y;
+  const across = 1 / Math.hypot(1, 0.25);           // x error to the distance across the edge
+  const image = stepImage(edgeX, 12, 3);
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  const stroke = strokeAlong((y) => edgeX(y) + 3 + 2 * Math.sin(y / 9));
+  const stations = api.strokeStations(stroke, 5, 12, PLAIN).length;
+  const found = {};
+  for (const criterion of ["slope", "threshold", "peak"]) {
+    const points = api.traceStroke(image, edges, stroke, strokeOptions(criterion), PLAIN);
+    found[criterion] = { n: points.length, ...spreadOf(points.map(([x, y]) => (x - edgeX(y)) * across)) };
+  }
+  // in order along the stroke, spaced about h apart
+  const points = api.traceStroke(image, edges, stroke, strokeOptions("slope"), PLAIN);
+  const ordered = points.every((p, i) => i === 0 || p[1] > points[i - 1][1]);
+  const gaps = points.slice(1).map((p, i) => Math.hypot(p[0] - points[i][0], p[1] - points[i][1]));
+  // a level of 80 % moves the points to where the step is 80 % of the way up: erf^-1(0.6) sqrt 2 1.5 = 1.262 px along
+  // x, 1.225 px across the edge; interpolating the pixels and between the samples widens the edge a little, about
+  // 0.1 px at 80 % without noise
+  const high = api.traceStroke(image, edges, stroke, strokeOptions("threshold", { level: 0.8 }), PLAIN);
+  const shift = spreadOf(high.map(([x, y]) => (x - edgeX(y)) * across)).mean;
+  const eighty = 0.5951 * Math.SQRT2 * 1.5 * across;
+  const { slope: sl, threshold: th, peak } = found;
+  check(sl.n === stations && th.n === stations && peak.n === 0 && Math.abs(sl.mean) < 0.1 && sl.rms < 0.3
+    && Math.abs(th.mean) < 0.1 && th.rms < 0.3 && ordered && Math.min(...gaps) > 4 && Math.max(...gaps) < 6.5
+    && Math.abs(shift - eighty) < 0.25,
+  `a stroke along a noisy step (T3)-(T6), the hand 1 to 5 px off: steepest slope ${sl.n} of ${stations} points, ` +
+    `${sl.mean.toFixed(3)} +- ${sl.rms.toFixed(3)} px; threshold 50 %: ${th.n}, ${th.mean.toFixed(3)} +- ${th.rms.toFixed(3)} px, ` +
+    `80 %: ${shift.toFixed(3)} px toward the bright side (${eighty.toFixed(3)} for the erf); bright line: ${peak.n}; ` +
+    "in order, " +
+    `${Math.min(...gaps).toFixed(2)} to ${Math.max(...gaps).toFixed(2)} px apart`);
+  // the same in the tilted, turned frame, where the view stretches the stored grid: a straight edge in stored
+  // pixels, the stroke and its spacing in the view
+  const v = api.viewMatrix(SLANTED);
+  const slanted = stepImage(edgeX, 8, 5);
+  const slantedEdges = new api.EdgeMap(slanted.data, 160, 160, 2, 3);
+  const slantedPoints = api.traceStroke(slanted, slantedEdges, stroke, strokeOptions("slope"), SLANTED);
+  const off = spreadOf(slantedPoints.map(([x, y]) => (x - edgeX(y)) * across));
+  const viewGaps = slantedPoints.slice(1).map((p, i) => Math.hypot(...api.matApply(v, p[0] - slantedPoints[i][0],
+    p[1] - slantedPoints[i][1])));
+  const slantedStations = api.strokeStations(stroke, 5, 12, SLANTED).length;
+  check(slantedPoints.length >= slantedStations - 1 && Math.abs(off.mean) < 0.1 && off.rms < 0.25
+    && Math.min(...viewGaps) > 4 && Math.max(...viewGaps) < 6.5,
+  `in a tilted, turned frame: ${slantedPoints.length} of ${slantedStations} points on the edge, ` +
+    `${off.mean.toFixed(3)} +- ${off.rms.toFixed(3)} stored px, ${Math.min(...viewGaps).toFixed(2)} to ` +
+    `${Math.max(...viewGaps).toFixed(2)} view units apart`);
+}
+
+function checkTraceLine() {
+  // (T3), (T7): a bright line (a Gaussian of width 2 px) and the hand wavering over it: the crest; the steepest slope
+  // stays on one flank (the two have opposite signs); no threshold, there being no step
+  const lineX = (y) => 80.2 + 0.1 * y;
+  const across = 1 / Math.hypot(1, 0.1);
+  const u = gaussian(11);
+  const image = rampImage(160, 160, (x, y) => 100 + 80 * Math.exp(-((x - lineX(y)) ** 2) / 8) + 8 * u());
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  const stroke = strokeAlong((y) => lineX(y) - 1 + 1.5 * Math.sin(y / 7));
+  const stations = api.strokeStations(stroke, 5, 12, PLAIN).length;
+  const offsets = (criterion) => api.traceStroke(image, edges, stroke, strokeOptions(criterion), PLAIN)
+    .map(([x, y]) => (x - lineX(y)) * across);
+  const crest = offsets("peak");
+  const flank = offsets("slope");
+  const sameSide = flank.every((d) => Math.sign(d) === Math.sign(flank[0]));
+  const c = spreadOf(crest);
+  const f = spreadOf(flank.map(Math.abs));
+  check(crest.length === stations && Math.abs(c.mean) < 0.1 && c.rms < 0.2 && flank.length === stations && sameSide
+    && Math.abs(f.mean - 2.83) < 0.25 && offsets("threshold").length === 0,
+  `a stroke over a bright line (T7): its crest at ${crest.length} of ${stations} points, ${c.mean.toFixed(3)} +- ` +
+    `${c.rms.toFixed(3)} px; the steepest slope on one flank all along, ${f.mean.toFixed(2)} px off (sqrt(2^2 + 2^2) = ` +
+    "2.83 for a line and a smoothing of width 2), never the other; the threshold none");
+}
+
+function checkTraceBloom() {
+  // (T6), (T7): a step from 100 to 150 with a bloom of 40 just inside its top, as secondary electrons give at an edge:
+  // the threshold at 50 % where the profile itself is 125, the bright line at the bloom's crest, both solved here
+  const edgeX = (y) => 70.2 + 0.15 * y;
+  const across = 1 / Math.hypot(1, 0.15);
+  const profile = (d) => 100 + 25 * (1 + erf(d / (Math.SQRT2 * 1.5))) + 40 * Math.exp(-((d - 2) ** 2) / 4.5);
+  const u = gaussian(61);
+  const image = rampImage(160, 160, (x, y) => profile((x - edgeX(y)) * across) + 6 * u());
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  const stroke = strokeAlong((y) => edgeX(y) + 1 + 2 * Math.sin(y / 10));
+  const stations = api.strokeStations(stroke, 5, 12, PLAIN).length;
+  let [a, b] = [-3, 1];
+  for (let i = 0; i < 60; i++) {
+    [a, b] = (profile(a) - 125) * (profile((a + b) / 2) - 125) <= 0 ? [a, (a + b) / 2] : [(a + b) / 2, b];
+  }
+  const half = (a + b) / 2;
+  let crest = 0;
+  for (let d = 0; d <= 5; d += 1e-3) {
+    crest = profile(d) > profile(crest) ? d : crest;
+  }
+  const at = (criterion) => api.traceStroke(image, edges, stroke, strokeOptions(criterion), PLAIN)
+    .map(([x, y]) => (x - edgeX(y)) * across);
+  const th = at("threshold");
+  const pk = at("peak");
+  const t = spreadOf(th);
+  const p = spreadOf(pk);
+  check(th.length >= stations - 1 && Math.abs(t.mean - half) < 0.2 && pk.length >= stations - 1
+    && Math.abs(p.mean - crest) < 0.2,
+  `a step with a bloom just inside its top (T6), (T7): the threshold at 50 % ${t.mean.toFixed(3)} px from the step ` +
+    `(${th.length} of ${stations} points), where the profile crosses 125 at ${half.toFixed(3)}; the bright line at ` +
+    `${p.mean.toFixed(3)} (${pk.length} points), the bloom's crest at ${crest.toFixed(3)}`);
+}
+
+function checkTraceNeighbours() {
+  // (T3): two steps of one sign 9 px apart, 100 to 150 to 200: a stroke along the first keeps to it, the other being
+  // farther from the middle of the band; one between them follows one of them all along, never both
+  const u = gaussian(21);
+  const image = rampImage(160, 160, (x) => 100 + 25 * (2 + erf((x - 70.4) / 2.1) + erf((x - 79.4) / 2.1)) + 6 * u());
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  const along = api.traceStroke(image, edges, strokeAlong((y) => 71 + 1.5 * Math.sin(y / 11)), strokeOptions("slope"), PLAIN);
+  const between = api.traceStroke(image, edges, strokeAlong((y) => 74.9 + 1.5 * Math.sin(y / 11)), strokeOptions("slope"),
+    PLAIN);
+  const onFirst = along.every(([x]) => Math.abs(x - 70.4) < 0.6);
+  const firstOrSecond = between.every(([x]) => Math.abs(x - 70.4) < 0.6) || between.every(([x]) => Math.abs(x - 79.4) < 0.6);
+  check(along.length >= 26 && onFirst && between.length >= 26 && firstOrSecond,
+    `two steps of one sign 9 px apart (T3): a stroke along the first keeps to it (${along.length} points); one midway ` +
+    `follows one of them all along (${between.length} points, at x ${between.length ? between[0][0].toFixed(1) : "-"})`);
+}
+
+function checkTraceAlone() {
+  // (T3): a station placing a point with no other within two on either side places none; a weak edge that stands out
+  // only at every other station keeps its points
+  const placed = (pattern) => {
+    const cuts = { strength: [...pattern].map((c) => Float64Array.of(c === "1" ? 5 : 1)),
+      slope: [...pattern].map((c) => Float64Array.of(c === "1" ? 5 : 1)) };      // the edge along the stroke
+    return [...api.placingStations(cuts, { sign: 1, path: new Int32Array(pattern.length) }, 3.7)].join("");
+  };
+  const got = ["1010101", "0001000", "0101000", "1001001", "11", "10", "1", "1100011"].map(placed).join(" ");
+  // a station across the stroke: the edge strong (|g| 5) but along the normal (D 1): no point
+  const across = { strength: [0, 1, 2].map(() => Float64Array.of(5)), slope: [0, 1, 2].map(() => Float64Array.of(1)) };
+  const crossing = [...api.placingStations(across, { sign: 1, path: new Int32Array(3) }, 3.7)].join("");
+  check(got === "1010101 0000000 0101000 0000000 11 00 0 1100011" && crossing === "000",
+    `lone stations (T3): every other station kept, one alone or three apart dropped, also in strokes of one or two ` +
+    `stations (${got}); an edge that the stroke crosses, its gradient along the stroke, places none (${crossing})`);
+}
+
+function checkTraceNoise() {
+  // (T3): on flat noise a stroke places as good as nothing, the threshold c of (E9) for each station's share of the band
+  const u = gaussian(31);
+  const image = rampImage(160, 160, () => 100 + 12 * u());
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  let placed = 0;
+  let stations = 0;
+  for (let k = 0; k < 20; k++) {
+    const stroke = strokeAlong((y) => 20 + 6 * k + 2 * Math.sin(y / 8 + k), 10, 150);
+    placed += api.traceStroke(image, edges, stroke, strokeOptions("slope"), PLAIN).length;
+    stations += api.strokeStations(stroke, 5, 12, PLAIN).length;
+  }
+  check(placed <= stations / 100, `on flat noise, 20 strokes place ${placed} points at ${stations} stations (T3)`);
+}
+
+function checkTraceCircle() {
+  // (T1)-(T5): a bright disc of radius 40, the hand going round it 3 px in and out: points on the circle, in turn
+  const u = gaussian(41);
+  const image = rampImage(160, 160, (x, y) => 100 + 50 * (1 + erf((40 - Math.hypot(x - 80, y - 80)) / (Math.SQRT2 * 1.5)))
+    + 12 * u());
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  const stroke = [];
+  for (let a = 0; a <= 2 * Math.PI + 1e-9; a += 0.05) {
+    const r = 40 + 3 * Math.sin(5 * a);
+    stroke.push([80 + r * Math.cos(a), 80 + r * Math.sin(a)]);
+  }
+  const points = api.traceStroke(image, edges, stroke, strokeOptions("slope"), PLAIN);
+  const off = spreadOf(points.map(([x, y]) => Math.hypot(x - 80, y - 80) - 40));
+  const angles = points.map(([x, y]) => Math.atan2(y - 80, x - 80));
+  const turns = angles.slice(1).filter((a, i) => ((a - angles[i] + 3 * Math.PI) % (2 * Math.PI)) - Math.PI < 0).length;
+  check(points.length >= 48 && Math.abs(off.mean) < 0.1 && off.rms < 0.3 && turns === 0,
+    `a stroke round a disc of radius 40: ${points.length} points, ${off.mean.toFixed(3)} +- ${off.rms.toFixed(3)} px off ` +
+    "the circle, in turn round it");
+}
+
+function checkTraceGapAndEnds() {
+  // (T3): where the edge breaks off for 30 px the stroke places nothing, and on either side it does; a stroke running
+  // off the image, and over an info bar, places points only above the bar
+  const edgeX = 70.3;
+  const u = gaussian(51);
+  const image = rampImage(160, 160, (x, y) => (y > 60 && y < 90 ? 150 : 100 + 50 * (1 + erf((x - edgeX) / 2.1)))
+    + 10 * u(), 130);
+  const edges = new api.EdgeMap(image.data.subarray(0, 160 * 130), 160, 130, 2, 3);
+  const points = api.traceStroke(image, edges, strokeAlong((y) => 72 + Math.sin(y / 6), 10, 158), strokeOptions("slope"),
+    PLAIN);
+  const inGap = points.filter(([, y]) => y > 63 && y < 87).length;
+  const before = points.filter(([, y]) => y < 55).length;
+  const after = points.filter(([, y]) => y > 95).length;
+  const belowBar = points.filter(([, y]) => y > 129.5).length;
+  const off = api.traceStroke(image, edges, [[150, 20], [175, 20], [200, 40]], strokeOptions("slope"), PLAIN);
+  // within a spacing of the break the band takes in its corners
+  const clear = points.filter(([, y]) => Math.abs(y - 60) > 5 && Math.abs(y - 90) > 5);
+  check(inGap === 0 && before >= 8 && after >= 5 && belowBar === 0 && off.length === 0
+    && clear.every(([x]) => Math.abs(x - edgeX) < 0.6),
+  `an edge broken off for 30 px (T3): ${before} points before, ${inGap} in the break, ${after} after it, those a ` +
+    `spacing clear of it on the edge, ${belowBar} on the info bar; a stroke off the image none`);
+}
+
+function checkJoinStroke() {
+  // (T8): extend after the last vertex from the stroke's nearer end; in place of the nearest covered run, the stroke
+  // facing the vertices around it, also round the end of a closed contour; into the nearest segment when none is covered
+  const square = [[0, 0], [10, 0], [10, 10], [0, 10]];
+  const none = () => false;
+  const j = (points, closed, added, inPlace, covered) => api.joinStroke(points, closed, added, inPlace,
+    (q) => (covered(q) ? 0 : Infinity), PLAIN);
+  // two runs covered at different distances: the nearer takes the points, though no longer
+  const nearer = (q) => (q[0] > 5 && q[1] > 5 ? 0.5 : q[0] < 5 && q[1] < 5 ? 3 : Infinity);
+  const text = (r) => `${JSON.stringify(r.points)} ${r.start} ${r.count} ${r.removed.join(",")}`;
+  const cases = [
+    [j(square, true, [[12, 12], [11, 15], [10, 18]], false, none),
+      "[[0,0],[10,0],[10,10],[0,10],[12,12],[11,15],[10,18]] 4 3 "],
+    [j(square, true, [[10, 18], [11, 15], [12, 12]], false, none),              // painted toward the last vertex
+      "[[0,0],[10,0],[10,10],[0,10],[12,12],[11,15],[10,18]] 4 3 "],
+    [j([], true, [[1, 1], [2, 2]], false, none), "[[1,1],[2,2]] 0 2 "],
+    [j(square, true, [[11, 11], [9, 11]], true, (p) => p[0] > 5 && p[1] > 5),
+      "[[0,0],[10,0],[11,11],[9,11],[0,10]] 2 2 2"],
+    [j(square, true, [[9, 11], [11, 11]], true, (p) => p[0] > 5 && p[1] > 5),   // faces the vertices around it
+      "[[0,0],[10,0],[11,11],[9,11],[0,10]] 2 2 2"],
+    [j(square, true, [[1, -1], [-1, 1]], true, (p) => p[0] < 5),               // round the end: 3 and 0
+      "[[-1,1],[1,-1],[10,0],[10,10]] 0 2 3,0"],
+    [j(square, false, [[1, -1], [-1, 1]], true, (p) => p[0] < 5),              // open: runs 0 and 3 tie, the first
+      "[[-1,1],[1,-1],[10,0],[10,10],[0,10]] 0 2 0"],
+    [j(square, false, [[4, -1], [6, -1]], true, none), "[[0,0],[4,-1],[6,-1],[10,0],[10,10],[0,10]] 1 2 "],
+    [j(square, true, [[-1, 6], [-1, 4]], true, none), "[[0,0],[10,0],[10,10],[0,10],[-1,6],[-1,4]] 4 2 "],
+    [j(square, true, [[5, 5]], true, () => true), "[[5,5]] 0 1 0,1,2,3"],
+    [j(square, true, [], false, none), "[[0,0],[10,0],[10,10],[0,10]] 4 0 "],
+    [api.joinStroke([[0, 0], [5, 0], [10, 0], [10, 10], [0, 10]], true, [[11, 11], [9, 11]], true, nearer, PLAIN),
+      "[[0,0],[5,0],[10,0],[11,11],[9,11],[0,10]] 3 2 3"],
+  ];
+  const wrong = cases.map(([r, want], i) => (text(r) === want ? null : `${i}: ${text(r)}`)).filter((x) => x !== null);
+  // the stretch of the points [0, 0] to [10, 0], R_0 = 2 and h = 4: within 2 of it, and not beyond its ends by more than 2
+  const near = api.stretchNearness([[0, 0], [10, 0]], 2, 4, PLAIN);
+  const stretched = api.stretchNearness([[0, 0], [10, 0]], 2, 4, { ...PLAIN, pixelNm: [1, 3] });   // rows 3 view units apart
+  const one = api.stretchNearness([[0, 0]], 12, 4, PLAIN);
+  const finite = (d) => Number.isFinite(d);
+  const covers = near([5, 1.9]) === 1.9 && !finite(near([5, 2.1])) && near([11.5, 0]) === 1.5 && !finite(near([12.5, 0]))
+    && finite(near([-1.9, 0.5])) && !finite(near([-2.1, 0.1])) && !finite(stretched([5, 1])) && finite(stretched([5, 0.6]))
+    && finite(one([1, 1])) && !finite(one([3, 0]));
+  const freehand = api.freehandStroke([[0, 0], [10, 0], [10, 10]], 4, PLAIN);
+  const freehandEnd = api.freehandStroke([[0, 0], [11, 0]], 4, PLAIN);
+  check(wrong.length === 0 && covers && JSON.stringify(freehand) === "[[0,0],[4,0],[8,0],[10,2],[10,6],[10,10]]"
+    && JSON.stringify(freehandEnd) === "[[0,0],[4,0],[8,0],[11,0]]",
+  `joining a stroke's points (T8): ${cases.length} cases (extend from the nearer end, a new contour, in place of the ` +
+    "run of covered vertices facing the vertices around it, the nearest of two, round a closed contour's end, into the " +
+    `nearest segment, all, none)${wrong.length ? `; wrong: ${wrong.join("; ")}` : ""}; covered: within R_0 of the ` +
+    "points' line in the view and not beyond its ends by more than half a spacing; Alt: the stations as drawn, and the " +
+    "end half a spacing or more beyond the last");
+}
+
+function checkRedoNarrow() {
+  // (T8): a Ctrl-stroke along one long side of a closed rectangle 8 px wide, its vertices 5 px apart: the other side,
+  // within R_0, and the corners, beyond the points' ends, stay
+  const left = Array.from({ length: 13 }, (_v, i) => [0, 60 - 5 * i]);          // (0, 60) up to (0, 0)
+  const right = Array.from({ length: 13 }, (_v, i) => [8, 5 * i]);              // (8, 0) down to (8, 60)
+  const rectangle = [...left, ...right];
+  const added = Array.from({ length: 5 }, (_v, i) => [0.3, 40 - 5 * i]);        // the left side, y 40 to 20, redone
+  const r = api.joinStroke(rectangle, true, added, true, api.stretchNearness(added, 12, 5, PLAIN), PLAIN);
+  const removed = r.removed.map((i) => rectangle[i]);
+  const onLeft = removed.every(([x, y]) => x === 0 && y >= 20 && y <= 40);
+  check(onLeft && removed.length === 5 && r.points.length === rectangle.length,
+    `a Ctrl-stroke along one side of a narrow rectangle (T8): it takes the place of ${removed.length} vertices, all of that ` +
+    "side between its ends; the other side and the corners stay");
+}
+
+function checkTraceAcross() {
+  // (T3): a stroke across a step, at right angles: its normals run along the edge, and it places nothing
+  const image = stepImage((y) => 80.4 + 0 * y, 12, 71);
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  let placed = 0;
+  for (let k = 0; k < 10; k++) {
+    const y = 30 + 10 * k;
+    const stroke = [];
+    for (let x = 60; x <= 100; x += 2) {
+      stroke.push([x, y + 1.5 * Math.sin(x / 5 + k)]);
+    }
+    placed += api.traceStroke(image, edges, stroke, strokeOptions("slope"), PLAIN).length;
+  }
+  check(placed === 0, `10 strokes across a step at right angles place ${placed} points (T3: the edge within 60 degrees)`);
+}
+
+function checkTraceBack() {
+  // (T1): a stroke down a bright line and back up stops where it turns: the points of the way down only, all on one
+  // flank with the steepest slope, and none twice with the bright line
+  const lineX = (y) => 80.2 + 0.1 * y;
+  const u = gaussian(81);
+  const image = rampImage(160, 160, (x, y) => 100 + 80 * Math.exp(-((x - lineX(y)) ** 2) / 8) + 8 * u());
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  const down = strokeAlong((y) => lineX(y) - 1 + 1.5 * Math.sin(y / 7), 10, 150);
+  const back = [...down, ...[...down].reverse().map(([x, y]) => [x + 2, y])];
+  const legDown = api.strokeStations(down, 5, 12, PLAIN).length;
+  const legs = api.firstLeg(api.strokeStations(back, 5, 12, PLAIN)).length;
+  const flank = api.traceStroke(image, edges, back, strokeOptions("slope"), PLAIN).map(([x, y]) => x - lineX(y));
+  const crest = api.traceStroke(image, edges, back, strokeOptions("peak"), PLAIN);
+  const ys = crest.map(([, y]) => y);
+  check(Math.abs(legs - legDown) <= 1 && flank.every((d) => Math.sign(d) === Math.sign(flank[0])) && flank.length <= legDown
+    && ys.every((y, i) => i === 0 || y > ys[i - 1]),
+  `a stroke down a bright line and back up (T1): ${legs} stations to the turn (${legDown} on the way down); the steepest ` +
+    `slope's ${flank.length} points on one flank, the bright line's ${crest.length} in order, none twice`);
+}
+
+function checkTraceMemo() {
+  // the work kept between moves: a stroke grown move by move, placed with its memo, gives at every move the points that
+  // placing it afresh gives, bit for bit; a change of the criterion between moves starts the memo afresh
+  const edgeX = (y) => 60.3 + 0.25 * y;
+  const image = stepImage(edgeX, 12, 91);
+  const edges = new api.EdgeMap(image.data, 160, 160, 2, 3);
+  const stroke = strokeAlong((y) => edgeX(y) + 3 + 2 * Math.sin(y / 9), 10, 100, 1.3);
+  let differ = 0;
+  let moves = 0;
+  for (const frame of [PLAIN, SLANTED]) {
+    const memo = api.newTraceMemo();
+    for (let n = 1; n <= stroke.length; n++) {
+      const criterion = n > stroke.length / 2 ? "threshold" : "slope";
+      const options = strokeOptions(criterion);
+      const kept = api.traceStroke(image, edges, stroke.slice(0, n), options, frame, memo);
+      const fresh = api.traceStroke(image, edges, stroke.slice(0, n), options, frame);
+      differ += JSON.stringify(kept) === JSON.stringify(fresh) ? 0 : 1;
+      moves++;
+    }
+  }
+  check(differ === 0, `a stroke grown move by move with its work kept: the points of a fresh placing at all ${moves} ` +
+    "moves, in a plain and a tilted, turned frame, the criterion changed half way");
+}
+
+
 const images = testImages(process.argv.slice(2));
 checkFei(images.feiFolder);
 checkZeiss(images.zeiss);
@@ -1859,5 +2274,19 @@ checkEdgeNormalNoise();
 checkSquaredProfile();
 checkSquaredAboutEnd();
 checkMagnet();
+checkStrokeStations();
+checkTraceStep();
+checkTraceLine();
+checkTraceBloom();
+checkTraceNeighbours();
+checkTraceAlone();
+checkTraceAcross();
+checkTraceBack();
+checkTraceMemo();
+checkTraceNoise();
+checkTraceCircle();
+checkTraceGapAndEnds();
+checkJoinStroke();
+checkRedoNarrow();
 console.log(failures.length ? `FAIL: ${failures.length} check(s)` : "PASS");
 process.exit(failures.length ? 1 : 0);

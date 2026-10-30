@@ -8,8 +8,9 @@ This document derives what the app computes from an image:
 - **Part 4:** the GDSII export: its grid and its eight-byte reals.
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
 - **Part 6:** line profiles: the band, the samples, the contours that cross the line, squaring a profile to the edge it crosses, and markers for a distance along it.
+- **Part 7:** painted edges: the contour tool's stroke along an edge, the path it follows, the criteria that place its points, and how they join the contour.
 
-Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js` and (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`).
+Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) and (T1)–(T8) in `js/trace.js`.
 
 ## Part 1. Geometry
 
@@ -423,6 +424,7 @@ A ridge detector that finds line centres would be a natural addition.
 | Each pointer move with Snap on | one snap search (2.5, E8) | crest tests on the $\pi r^2/\lvert\det V\rvert$ stored pixels of the search ellipse: 356 for $r = 12$, $k = 1.27$ |
 | A profile shown, or dragged, or a contour crossing it edited | its samples (6.2–6.4) and crossings (6.5); the plot | $(N + 1)\,M$ bilinear values, about one per stored pixel of the band; the crossings linear in the contour vertices |
 | A profile squared (6.6): by E, or by the magnet at each pointer move while an end moves | the strongest edge along its line, and the structure tensor there; or the normal of a contour's segment | $N + 1$ bilinear values; at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$ |
+| Each pointer move while a stroke paints along an edge (Part 7) | the whole stroke placed again: its stations, the edge map along their normals, the path, a profile across the edge for each point | $n(K+1)$ bilinear gradients and $2n(K+1)(2J+1)$ terms for $n$ stations; a profile of $(N+1)M$ values a point: 1–3 ms a move for a stroke of 80 stations (7.9) |
 
 ### 3.2 Measured times
 
@@ -1410,3 +1412,218 @@ A profile of one line gains little. Along a slanted line, each sample reads rows
 **The whole refresh.** With a plot of 598 × 298 CSS pixels at a device pixel ratio of 2, the window's refresh takes 0.5 ms for the band of 476 × 30 values, of which the plot is 0.08 ms. For the band of 3001 × 83 it takes 5.2 ms, of which the plot is 0.4 ms. Both are well within the 16.7 ms of a frame at 60 Hz. A band of about 450 000 values, for instance 3000 × 150, would fill a frame. Beyond that a drag would lag, and the next steps would be to sample coarsely during the drag and fully on release, or to compute in a Worker.
 
 Squaring costs one search along the line, $N + 1$ bilinear values, and one tensor over at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$. In Node, the tensor and its normal took about 10 µs, and a search along 300 samples about 6 µs. The magnet squares at every move of the pointer while an end moves. In Chromium, on the FEI test image, one pull took about 21 µs for a line of 190 samples, and a whole move of the pointer 0.3 ms (0.5 ms at the 95th percentile), the profile window's refresh included.
+
+## Part 7. Painted edges
+
+With the contour tool, a drag that starts where no vertex lies paints along an edge. A band twice the search radius wide follows the pointer, and points appear on the edge inside it, one every *point spacing*, in the order painted. On release they join the selected contour as one edit. A press that moves less than 6 screen pixels, or less than one point spacing in the view, stays a click, with the keys it was pressed with: a stroke that short would place at most one point, and on flat ground none, where the click places its vertex. Escape gives a stroke up, whatever keys are held.
+
+The work has two steps, as in a CD-SEM's edge finder:
+
+1. **Follow the edge through the band** on the edge map (Part 2). This decides which edge the stroke means and keeps to it from one stretch to the next: (T1)–(T3).
+2. **Place each point on a profile across the edge**, averaged along the edge over its own stretch, by the criterion chosen under *stroke points at*: the steepest slope (T5), a threshold between the grey levels on either side (T6), or the crest of a bright line beside the edge (T7). The profile is the line profile of Part 6, laid square to the edge that step 1 found (T4).
+
+How the points join the contour is (T8). The code is `js/trace.js`; its header gives the same equations in brief.
+
+Notation: $V$ is the view matrix of (G11), from stored pixel offsets to view units; $R$ the search radius and $h$ the point spacing, both in view units; $\sigma$ the edge map's smoothing in stored pixels; $k$ the *min. edge strength*; $\mathbf g$ the gradient (E1); and "median" the edge map's median strength (2.3).
+
+### 7.1 Stations (T1)
+
+The stroke is the pointer's path, kept as stored points $u_0, \dots, u_m$ as they arrive. In the view, $w_k = V u_k$, and the length along the stroke is
+
+$$\ell_0 = 0, \qquad \ell_k = \ell_{k-1} + |w_k - w_{k-1}|, \qquad L = \ell_m.$$
+
+The **stations** lie at $\ell_j = jh$ for $j = 0, \dots, \lfloor L/h\rfloor$, the first at the press. Between two pointer samples the stroke is straight, so the point at length $\ell$ is $w(\ell) = w_k + f\,(w_{k+1} - w_k)$ with $f = (\ell - \ell_k)/(\ell_{k+1} - \ell_k)$, for the $k$ with $\ell_k \le \ell \le \ell_{k+1}$. Station $j$ is the stored point $c_j = V^{-1}w(\ell_j)$.
+
+The stations sit at fixed lengths from the start, so a station painted already stays where it is while the stroke grows. Spreading them evenly over $L$ instead would shift every one of them at each move of the pointer, and the points shown would swim. The pointer's moves are taken only when they reach 2 screen pixels, so that a hand resting on the way adds no length with its tremor.
+
+**Where the stroke turns back, the stations end.** Painted down an edge and back up it, the stroke's normal points the other way on the way back. The sign of (T3) is relative to the normal, so on the way back it would pick the other flank of a bright line, and on a step the same edge again: points on both flanks, or every point twice. The stations therefore end where the tangent turns by more than 120° from one station to the next, $t_{j-1}\cdot t_j < -\tfrac12$. A U-turn round a feature turns by $h/r$ radian a station for a radius $r$, 57° for $r = h$, and goes on; only a hairpin under half a spacing in radius counts as turning back. In the test, a stroke down a bright line and back up kept the 29 stations of the way down, its points on one flank.
+
+**The stroke's direction.** The tangent at a station is a chord of the stroke,
+
+$$t_j = \frac{w(\ell_j + a) - w(\ell_j - a)}{|w(\ell_j + a) - w(\ell_j - a)|}, \qquad a = \max(h, R/2), \qquad \text{(T1)}$$
+
+with the lengths held to $[0, L]$. A hand's tremor moves the pointer by about a pixel. Across a chord of $2a$ that turns the tangent by about $1/(2a)$ radian: 5° at the defaults ($a = 6$). The tangent of two neighbouring samples would turn by tens of degrees. Its normal is $n_j = (-t_y, t_x)$ in the view, and $b_j = V^{-1}n_j$ is the stored step of one view unit along it. The stroke's direction serves only to lay the cuts of (T2); the cuts that place the points are laid square to the edge itself (T4).
+
+### 7.2 Cuts of the edge map (T2)
+
+Along each station's normal the gradient is read at the offsets
+
+$$r_k = -R + \frac{2Rk}{K}, \qquad k = 0, \dots, K, \qquad K = \Big\lceil 2R\,\max_j |b_j| \Big\rceil.$$
+
+$R\,|b_j|$ is the cut's half-length in stored pixels, so the offsets lie at most one stored pixel apart, the edge map's own sampling. One $K$ for all stations keeps the states of (T3) alike.
+
+At $p = c_j + r_k b_j$ the gradient $\mathbf g$ (E1) is interpolated bilinearly. The derivative of the smoothed image $I_\sigma$ along the cut follows from the chain rule:
+
+$$\frac{d}{dr}\, I_\sigma\big(c_j + r\,\hat b_j\big) = \nabla I_\sigma \cdot \hat b_j = \mathbf g \cdot \hat b_j, \qquad \hat b_j = b_j/|b_j|.$$
+
+In units of the median, per stored pixel, that is the **slope across**
+
+$$D_{jk} = \frac{\mathbf g(p)\cdot b_j}{|b_j|\ \text{median}}, \qquad \text{(T2)}$$
+
+signed: positive where the image brightens along $n_j$. The **strength** $|\mathbf g(p)|/\text{median}$ is the quantity that snapping compares with its threshold (2.3, E9). Off the edge map (outside the image, or on its info bar) both are missing.
+
+### 7.3 The path (T3)
+
+**One sign along an edge.** An edge between a dark region and a bright one keeps its sense along it: if it is dark to bright along $n_j$ at one station, it is so at the next, the normals of neighbouring stations being nearly parallel. The two flanks of a bright line have opposite senses (2.8). The path is therefore sought for each sign $s = +1$ and $s = -1$ separately, and the better one is kept. Its two flanks are never mixed, and the path follows one of them.
+
+**What the path maximizes.** For a sign $s$, the offsets $k_0, \dots, k_{n-1}$, one per station, that maximize
+
+$$\sum_j \Big[\ln\max\big(1,\ sD_{jk_j}\big) + \ln W(r_{k_j})\Big] \;-\; \lambda\sum_{j\ge1}\Big(\frac{r_{k_j} - r_{k_{j-1}}}{h}\Big)^2, \qquad W(r) = e^{-r^2/2R^2}, \qquad \lambda = 1, \qquad \text{(T3)}$$
+
+with $|r_{k_j} - r_{k_{j-1}}| \le 2h$. Each part has a reason:
+
+- **The logarithm makes an edge's score relative.** The score of one station is that of the slope, $\ln(sD)$. An edge a third stronger than another then gains $\ln(4/3) = 0.29$ a station. A score linear in $D$ was tried first. With it, of two steps of one sign 9 px apart and a stroke midway between them, the path took whichever the hand happened to be nearer: it switched four times along the stroke, at $y \approx 36$, 66, 106 and 141 in the test. In the log score both steps bring the same, and switching costs much more than it brings (below), so the path stays on one of them.
+- **Below the noise, nothing.** $\max(1, \cdot)$ gives every offset without a slope of the right sign above the median the score 0: flat ground, the other flank, missing values. Only an edge of the right sign pulls the path.
+- **The jump cost.** Moving the path across by $\Delta r$ between neighbouring stations costs $\lambda(\Delta r/h)^2$. Read as a log-likelihood, $-\Delta r^2/2\tau^2$ with $\tau = h/\sqrt{2\lambda} = 0.71h$: the edge's offset from the stroke is a random walk that moves by about 0.7 spacing a station. An edge that runs off the stroke at the angle $\theta$ moves by $h\tan\theta$ a station and costs $\lambda\tan^2\theta$: 0.33 at 30°, 1 at 45°, 3 at 60°. An edge placing a point brings at least $\ln c = \ln 3.73 = 1.32$ at the defaults (below), more than it costs up to about 50°. Beyond, the path no longer follows a weak edge; a strong one ($sD = 30$, 3.4 a station) it follows up to 60°.
+- **Switching edges.** For the path to leave one edge for another $\Delta$ away it pays $\lambda(\Delta/h)^2$ at least, or more over several stations, and loses the dip between the two. For the two steps 9 px apart, with $h = 5$, the jump costs $(9/5)^2 = 3.2$. A stroke wavering by $\pm 1.5$ px about their middle brings the nearer step a bonus in $W$ of at most $\tfrac12[(6/12)^2 - (3/12)^2] = 0.09$ a station, so switching would pay only after 35 stations nearer the other edge, longer than the wavering lasts.
+- **The middle of the band.** $\ln W(r) = -\tfrac12(r/R)^2$ prefers the edge nearer the stroke's middle when two score alike. It is gentler than the weight of a click (E5), which is $e^{-2} = 0.14$ at the search radius: here $W(R) = 0.61$. A stroke is a long hint, and where the eye follows a bright line, its steepest flank may lie well off it. On the FEI test image's rib sidewall (7.10), the steepest flank lies 5 to 10 px from the brightest pixel, which is what one paints along. With the click's weight, a flank 9 px off at $R = 12$ would lose $2(9/12)^2 = 1.1$ a station, most of what a weak edge brings ($\ln c = 1.3$), and the path left such flanks for long stretches.
+
+**Dynamic programming.** The maximum over all paths comes from the Viterbi recursion. With $F_0(k) = \ln\max(1, sD_{0k}) + \ln W(r_k)$,
+
+$$F_j(k) = \ln\max(1, sD_{jk}) + \ln W(r_k) + \max_{|k' - k| \le J}\Big[F_{j-1}(k') - \lambda\Big(\frac{r_k - r_{k'}}{h}\Big)^2\Big], \qquad J = \Big\lceil\frac{2h}{\delta}\Big\rceil, \quad \delta = \frac{2R}{K},$$
+
+and the $k'$ that gives each maximum is kept. The path ends at the $k$ of the largest $F_{n-1}(k)$, and is read back through the kept $k'$. $F_{n-1}$'s maximum is the best total, which is compared between the signs. The work is $2n(K+1)(2J+1)$ terms: at $R = 16$ and $h = 5$, $K = 32$ and $J = 10$, 1386 per station.
+
+**Which stations place a point.** The path passes every station, through noise where there is no edge. A station places a point only where the edge on the path stands out of the noise, as a snap target must:
+
+$$\frac{|\mathbf g|}{\text{median}} \ge c = \sqrt{k^2 + \log_2 N}, \qquad N = \max\Big(1, \frac{2Rh}{|\det V|\,\sigma^2}\Big), \qquad sD \ge \tfrac12\,\frac{|\mathbf g|}{\text{median}}.$$
+
+This is (E9) for the station's share of the band. It covers $2R \times h$ view units. $V$ maps a stored area $A$ to $|\det V|\,A$ view units squared, so the share holds $2Rh/|\det V|$ stored pixels, and $N$ independent samples of the gradient, which is correlated over about $\sigma$. The chance that noise alone places a point at a station is then about $N\,2^{-c^2} = 2^{-k^2}$, the chance of one sample beyond $k$. At the defaults, $R = 12$, $h = 5$, $\sigma = 2$ and $k = 3$, $N = 30$ and $c = 3.73$.
+
+The last condition asks that the edge run along the stroke. $D$ is the component of the gradient along the station's normal, $|\mathbf g|\cos\theta$ for an edge at the angle $\theta$ to the stroke, so $sD \ge |\mathbf g|/2$ is $\theta \le 60°$. A stroke that crosses an edge meets it at its stations' normals lengthwise: there $D$ is noise and the path finds nothing, but $|\mathbf g|$ is large all along the edge and would pass. Without it, 40 strokes 10 px long across a noisy step placed 61 points, up to 12 px along the edge from where they were pressed; with it, none. In the test, 10 strokes across a step at right angles place none.
+
+A station that would place a point alone, none of the two stations on either side placing one, places none. Noise stands out at a station with the chance $2^{-k^2}$, 0.2 % at the defaults, so near another such station (4 places) with about 0.8 %: the rule leaves about 1 noise point in 125. An edge places points at most of its stations, and a weak one that stands out only at every other station keeps them all; with only the nearest neighbours counted, it lost them all. The rule holds for every stroke, so that a stroke of two stations places points at both or neither. On flat noise, 20 strokes over 580 stations in all placed no point in the test.
+
+### 7.4 The cut across the edge (T4)
+
+**The edge's point and direction.** At station $j$ the path's offset is refined between samples by the vertex (E6) of $sD$ through $k_j$ and its neighbours: $p_j = c_j + r\,b_j$. The edge's direction there is the chord between the points of the nearest stations that place one, within 2 on either side ($p_j$ itself where there is none), in the view. Its normal $\nu_j$ is turned to the side of $n_j$, so that the sign $s$ keeps its meaning, and $\beta_j = V^{-1}\nu_j$.
+
+**The profile.** A line profile (P1)–(P4) runs from $p_j - R'\beta_j$ to $p_j + R'\beta_j$, with the band width $h$:
+
+$$R' = \max\big(R_0,\ 6\sigma/|\beta_j|\big). \qquad \text{(T4)}$$
+
+$R_0$ is the panel's search radius. For a mouse it is the band's own $R$; a finger's band is 2.5 times wider, to forgive the finger, but the profile keeps $R_0$, since the levels of (T6) and the reach of (T7) depend on it. Along the edge of a bright rib 16 px wide, the threshold placed 29 points on the edge with $R' = 12$ and none with a finger's 30; the bright line placed none with 12, and 29 in the rib's middle with 30.
+
+- **Square to the edge.** The band's lines run parallel to the cut. If the cut were $\delta$ off square, they would cross the edge at places spread over $h\tan\delta$ (P6), and the edge would look wider. The stroke's own normal can be tens of degrees off; the chord of the points found is within a few degrees.
+- **Averaged along the edge over $h$.** Each point stands for its own stretch of the edge, and neighbouring points share no pixel: their errors are independent. The band holds $M = \lceil h\,|V^{-1}n_\text{band}|\rceil$ lines, so the noise of the mean is that of one line over $\sqrt M$: over $\sqrt 5 = 2.2$ at the defaults.
+- **Long enough for the criteria.** $|\beta_j|$ is stored pixels per view unit, so $\sigma/|\beta_j|$ is $\sigma$ in view units, and the cut reaches at least $6\sigma$ either side: the slope filter of (T5) needs $\lceil 3\sigma\rceil$ samples beyond where it reads, and the levels of (T6) lie in the outer halves.
+
+The profile's mean $m_i$, $i = 0, \dots, N$, lies at $r_i = -R' + 2R'i/N$ (6.2). The cut is $2R'|\beta_j|$ stored pixels long and has $N$ steps, so a sample is $2R'|\beta_j|/N$ stored pixels and $\sigma$ is
+
+$$\sigma_s = \frac{\sigma N}{2R'|\beta_j|} \ \text{samples}.$$
+
+A criterion places the edge at a fractional sample $x$, and the point at $p_j + r\,\beta_j$ with $r = -R' + 2R'x/N$. A point nearer than $h/2$ to the one before is left out.
+
+### 7.5 Steepest slope (T5)
+
+The slope of the mean at the scale $\sigma_s$ is the filter (P13), $s_i = \sum_j w_j m_{i+j}$. Its maxima of $s\cdot s_i$, those at least as large as both neighbours and above 0, are the candidates. The one nearest the middle, within $\max(2, 2\sigma_s)$ samples, is the edge: the path put the middle on it. The vertex (E6) of the parabola through it and its neighbours, held to $\pm\tfrac12$, places it between samples.
+
+6.7 shows that this filter keeps the centre of a symmetric edge at any scale, and reads a ramp's slope exactly. It is the slope that markers and the edge map take, at the edge map's $\sigma$, so a painted point and a clicked one (2.4–2.6) mean the same on a straight edge.
+
+In the test, a stroke along a noisy step (noise 12 on a step of 100, erf width 1.5 px), the hand 1 to 5 px off it, placed all 30 points, $0.05 \pm 0.16$ px off the edge. In a tilted, turned frame, where the view stretches the stored grid, all 53 were $0.04 \pm 0.15$ stored px off, 4.8 to 5.1 view units apart. Round a disc of radius 40 they were $-0.02 \pm 0.16$ px off the circle, in turn round it.
+
+### 7.6 Threshold (T6)
+
+**The levels.** The grey levels on either side are the medians of the mean over the outer halves of the cut, $r_i \le -R'/2$ and $r_i \ge R'/2$: $b_-$ and $b_+$. The median is robust to a stray bright pixel and to the tail of the edge reaching in.
+
+**Is there a step?** Two tests:
+
+- **Out of the noise.** For white noise of standard deviation $\sigma_m$ on the samples, $m_{i+1} - m_i$ has the standard deviation $\sqrt2\,\sigma_m$, and on a plateau its median absolute value is $0.6745\sqrt2\,\sigma_m$. Hence $\hat\sigma_m = 1.4826\ \operatorname{median}|m_{i+1} - m_i|/\sqrt2$ over the outer halves. The levels must differ in the sense $s$ by more than $3\hat\sigma_m$.
+- **A step, not a line.** $|b_+ - b_-|$ must be at least a quarter of the swing of the smoothed mean over the middle half, $|r_i| \le R'/2$: $\max - \min$ there. On a bright line both levels are the background, but the line's tail can reach into the outer half on its far side. In the test, the line's tail raised one level by 7.5 grey levels against $\hat\sigma_m = 2.5$, enough for the first test, while the line swung by about 75. A step with a bloom above it swings by more than the step, but by less than 4 times as long as the bloom is less than 3 times the step.
+
+**The crossing.** With $p$ the *threshold level* as a fraction,
+
+$$T = b_\text{dark} + p\,(b_\text{bright} - b_\text{dark}), \qquad b_\text{dark} = \min(b_-, b_+), \quad b_\text{bright} = \max(b_-, b_+). \qquad \text{(T6)}$$
+
+The edge is where the profile crosses $T$ going from $b_-$ toward $b_+$, $u_i = s(m_i - T)$ changing from below 0 to 0 or above, at $x = i - u_i/(u_{i+1} - u_i)$, linear between the samples. Two steps find it:
+
+1. On the mean smoothed at $\sigma_s$, the crossing nearest the middle, within $R'/2$. Smoothing keeps the noise from crossing $T$ again and again near the edge.
+2. On the mean itself, the crossing nearest that one, within $2\sigma_s$; the smoothed one if there is none.
+
+**Why the second step.** Smoothing widens the edge, and every crossing but the middle one moves outward. An edge of erf width $b$ is $f(d) = \tfrac{A}{2}\big[1 + \operatorname{erf}\big(d/\sqrt2 b\big)\big]$, which crosses the level $p$ at $d_p = b\,\Phi^{-1}(p)$, $\Phi$ the normal distribution. Smoothed by a Gaussian of width $\sigma$ it is an erf of width $\sqrt{b^2 + \sigma^2}$, since the widths of Gaussians add in quadrature, and it crosses at $\sqrt{b^2 + \sigma^2}\,\Phi^{-1}(p)$. For the test's step, $b = 1.46$ px across the edge, $\sigma = 2$ and $p = 0.8$ ($\Phi^{-1} = 0.842$), that is 2.08 px against 1.22: 0.85 px too far out. The mean itself has no such bias.
+
+**What remains: interpolation.** Two small widenings remain, both outward:
+
+- **Bilinear interpolation** of the pixels, at positions that fall anywhere between pixel centres, smooths like a triangle of variance $\tfrac16$ px² along each axis, and so along the cut. The edge's width becomes $\sqrt{b^2 + 1/6}$: 1.51 px for $b = 1.46$, which moves the 80 % crossing out by $0.842 \times 0.056 = 0.05$ px.
+- **The chord between samples** runs below a concave stretch of the profile. Where $f$ is concave, a straight line through two samples a sample apart lies below $f$ by up to $|f''|/8$ (a sample squared), so its crossing lies later by up to $|f''|/(8|f'|)$. For the erf, $f''/f' = -d/b^2$, which at $d_p = 0.842\,b$ is $-0.842/b$: up to $0.842/(8 \times 1.46) = 0.07$ px.
+
+Without noise the test's 80 % points lay at 1.320 px, 0.095 px beyond the erf's 1.225. Both widenings shrink as edges get blurrier, as SEM edges usually are: for $b = 3$ px they total about 0.05 px. The 50 % crossing of a symmetric edge has neither: there the bias is 0.0003 px.
+
+**In the tests.** On the noisy step, 50 % placed all 30 points, $0.05 \pm 0.17$ px off the edge, and 80 % lay 1.38 px out (1.225 for the erf). On a step from 100 to 150 with a bloom of 40 just inside its top, as secondary electrons give at an edge, 50 % placed all 29 points at $-0.73$ px, where the profile crosses 125 at $-0.65$. On a bright line it placed none.
+
+### 7.7 Bright line (T7)
+
+**Finding the crest.** From the middle of the cut, which is on the flank the path followed, the mean smoothed at $\sigma_s$ is walked toward the bright side: the direction $s$, where the image brightens. The first sample beyond which it falls is the crest. It must lie within $R'/2$ of the middle; a profile still rising there has no line within reach.
+
+**A line, not a plateau.** With $b_\text{far}$ the level beyond the crest (the median over the outer half on the bright side) and $b_\text{near}$ the level on the other side, the crest must stand above $b_\text{far}$ by at least a tenth of its height above $b_\text{near}$:
+
+$$\text{crest} - b_\text{far} \ge 0.1\,(\text{crest} - b_\text{near}), \qquad \text{crest} > b_\text{far}. \qquad \text{(T7)}$$
+
+A line on a uniform background has the ratio about 1. A step with a bloom, substrate 50, bloom 150 and top 100, has 0.5 from the outer flank and 2 from the inner one. A wobble of the noise on a step's plateau, 1 above a top of 100 over a substrate of 0, has 0.01, and places nothing. On the plain step of the tests, no point was placed.
+
+**The crest on the mean itself.** The point is the vertex (E6) of the parabola through the mean's highest value next to the smoothed crest (that sample or a neighbour) and its two neighbours. The smoothed crest would move whenever the line is lopsided, as the bloom at an edge often is: steep on the outside and long on the inside. Near its crest such a line is $f(x) = f_0 - ax^2 + cx^3$, with its maximum at $x = 0$. Smoothed by a Gaussian of width $\sigma$, whose moments are $\langle t^2\rangle = \sigma^2$ and $\langle t^3\rangle = 0$, it becomes
+
+$$f_\sigma(x) = f_0 - a(x^2 + \sigma^2) + c(x^3 + 3\sigma^2 x),$$
+
+whose slope $-2ax + 3cx^2 + 3c\sigma^2$ vanishes at $x \approx 3c\sigma^2/2a$: the crest moves toward the longer side by an amount that grows as $\sigma^2$. The parabola through $f(-1), f(0), f(1)$ of the mean itself has its vertex at $c/2a$, as (E6) gives for $f(\pm1) = f_0 - a \pm c$. At $\sigma = 2$ that is 12 times less. The price is noise: three samples instead of a smoothed run.
+
+**In the tests.** On a Gaussian line of width 2 px (noise 8 on a height of 80), all 29 points were $-0.03 \pm 0.14$ px off its centre; the steepest slope put them all on one flank, 2.89 px off ($\sqrt{2^2 + 2^2} = 2.83$ for the line smoothed at $\sigma = 2$), and the threshold placed none. On the step with a bloom, the 29 points lay at 2.34 px, where the bloom's crest is at 2.25.
+
+### 7.8 Joining (T8)
+
+The points are in the order painted, $q_1, \dots, q_m$. With $|a - b|$ distances in the view:
+
+- **A plain stroke extends the contour.** The points come after its last vertex $v_n$, the end of the stroke nearest it first: reversed when $|v_n - q_m| < |v_n - q_1|$. A stroke may thus be painted either way along the edge. With no contour selected, the points start a new one, in the order painted.
+- **Ctrl: in place.** A vertex of the selected contour is covered when it lies along the stretch of edge the points cover: within $R_0$ of their polyline, and not beyond either end by more than $h/2$, measured along the end segment. Of the runs of consecutive covered vertices, the one nearest the points, by the mean distance, gives way to them (the longer of two alike); for a closed contour a run may wrap from its last vertex to its first. With no vertex covered, the points go into the segment nearest their middle point, as Ctrl+click inserts a vertex.
+  - **The points, not the band.** The eye may follow a bright line while the edge found lies several pixels off it, and so do the vertices traced on it before. On the FEI test image's sidewall, at the defaults, a Ctrl+stroke along the bright line covered only 12 of the vertices on the steepest flank along its 90 px; the new points reached beyond them, and the vertices left between made the contour zigzag. The band's round ends also reach $R$ beyond the stroke's ends, and take corners: a Ctrl+stroke along one side of a rectangle 14 px wide, ending 6 px from a corner, took 9 vertices with the band, the corner and 3 of the next side among them, where the stretch of its points takes 4.
+  - **The nearest run, not the longest.** Along a narrow feature the other side may lie within $R_0$. The longest covered run could then be the other side, and the points would cross the feature. With the longest run, a Ctrl+stroke along one side of a line 10 px wide, its other side traced more densely, took 17 vertices of the other side and none of its own. In the test, along one long side of a rectangle 8 px wide with vertices 5 px apart, both sides are covered between the points' ends, and the nearer takes them: 5 vertices of that side, the other side and the corners unchanged.
+- **Either way the points face their neighbours.** With $v_\text{before}$ and $v_\text{after}$ the vertices on either side of where they go, the order is the one that makes $|v_\text{before} - q_\text{first}| + |q_\text{last} - v_\text{after}|$ the smaller (a missing neighbour counts 0). A run that wraps round a closed contour's end is replaced with the points first: the contour then starts with them.
+- **Alt: as drawn.** The stations of (T1) themselves become the points, without the edge, and join in the same way.
+- **Starting on a vertex.** A plain drag that starts on a vertex moves the vertex. With Ctrl, or by a finger with *Edge* on, it paints in place from there once it has moved farther than a click: redoing a contour starts on the contour, among vertices 5 px apart, within a click's reach of one of them almost anywhere (8 screen pixels for the mouse, 22 for a finger). Until then the vertex stays put, so that a Ctrl+click or a tap on it still selects it.
+
+While the stroke is painted, the band shows in faint magenta, the points it will place as magenta dots with the contour's segments that will join them dashed, and the vertices they will replace crossed out. What shows is what the release does, with Ctrl and Alt as they are then, for a finger too when a keyboard is at hand. One pointer paints a stroke: a mouse that moves while a finger paints leaves it alone.
+
+### 7.9 Cost
+
+At each move of the pointer the stroke is placed again. Placed afresh, that is the stations, $n(K+1)$ bilinear gradients, the two dynamic programmes of $n(K+1)(2J+1)$ terms each, and for each station placing a point, one profile of $(N+1)M$ values and its criterion: work that grows with the stroke. A stroke keeps its work from one move to the next, though:
+
+- **The cuts** of the stations it has passed: a station's place and normal no longer change once the stroke is $a$ beyond it, so its cut is the one sampled before.
+- **The forward scores** $F_j$ of (T3) for both signs, up to the first station whose cut changed: $F_j$ depends on the cuts up to $j$ only. Each move adds the rows of the new stations and reads the path back, $O(n)$.
+- **The points** placed, by their station point, their direction and the sign: a point is placed again only where the path moved it.
+
+The result is that of placing the whole stroke afresh, bit for bit; a test compares the two at every move of a growing stroke, in a plain and a tilted, turned frame, with the criterion changed half way, which starts the kept work afresh. On a synthetic edge 1800 px long, at the end of a stroke of 364 points, a move took a median of 0.45 ms with the work kept against 6.8 ms afresh ($R = 12$), and 2.2 ms against 22 ms with a finger's band ($R = 30$), in Node (V8, as in Chromium). Where the path changes along much of the stroke, many points are placed again, and a move took up to 23 ms. A frame at 60 Hz lasts 16.7 ms, and browsers deliver at most one pointer move per frame. The tests run the scripts in a `vm` context, where every global name is looked up through the context's interceptor; the same code runs 10 to 30 times slower there, so the tests do not time it.
+
+### 7.10 Limits
+
+- **Weak edges leave gaps, and gradual ones scatter.** A station places no point where the edge stands out by less than $c$. On the FEI test image the rib's sidewall stands only 4 to 5.4 times the median out at $\sigma = 2$, against $c = 3.73$, and it rises over some 12 px, so that its steepest point is ill defined. A stroke along it still placed 21 points, 3.8 to 6.1 px apart, on average 0.12 px from the edge map's crest in each row and 1.5 px at worst; of 43 points after a Ctrl+stroke, three lay 2.6 to 4.9 px off. At $\sigma = 3$ (5 to 6.4 times, against $c = 3.63$ for $R = 16$) a stroke placed 23, 0.04 px from the crest on average and 1.2 px at worst, and no point of 45 lay more than 2.3 px off. A larger $\sigma$ suits a noisy image, as for snapping.
+- **Ends and corners.** Within about a spacing of where an edge ends or turns sharply, the band takes in the corner, and a point may be a pixel off. In the test, the point next to a break in the edge was 0.9 px off. A corner wants a clicked vertex.
+- **Within half the search radius.** The threshold's crossing and the bright line's crest must lie within $R'/2$ of the steepest slope. On the FEI sidewall the crest lies 5 to 10 px from the flank: where the steepest slope placed 41 points, the bright line placed 4 at $R = 12$, and 35 of 42 at $R = 16$. A wider band reaches farther.
+- **A bloom far above the step** gives the threshold no step to take a level of (7.6), and it places nothing: use the bright line or the steepest slope.
+- **Interpolation** widens the edge a little: about 0.1 px at 80 % on an edge of width 1.5 px (7.6).
+- **A stroke that turns back** places points only up to where it turns (7.1): paint on in a new stroke.
+- **A plain press on a vertex drags it.** Start a plain stroke beside the vertices, or use Ctrl.
+- **Clicked and painted points** may follow different definitions: a click snaps to the crest of the gradient (Part 2), a stroke to the criterion chosen.
+
+### 7.11 Tests
+
+`tests/check_core.mjs` checks:
+
+- **Stations**, in a plain and a tilted, turned frame: every $h$ along the stroke in the view, to $10^{-13}$; as many as fit; the normal square to the stroke, and $V^{-1}$ of it the step across; those painted kept as the stroke grows. A stroke down a bright line and back up: the stations of the way down, the points on one flank, none twice.
+- **A noisy step**: the steepest slope and the threshold at 50 % place every station's point, on the edge; 80 % moves the points out as the erf says, to within the widening of 7.6; the bright line places none; in order, about $h$ apart. The same in the tilted, turned frame.
+- **A bright line**: its crest by (T7); the steepest slope on one flank all along; the threshold none.
+- **A step with a bloom**: the threshold where the profile crosses its 50 % level, the bright line at the bloom's crest.
+- **Two steps of one sign 9 px apart**: a stroke along the first keeps to it, and one midway follows one of them all along.
+- **Flat noise**: no point in 580 stations. **Across a step**, 10 strokes at right angles: none.
+- **Lone stations**: every other station kept, one alone or three apart dropped, in strokes of any length; a station whose edge runs across the stroke places none.
+- **The work kept between moves**: the points of a fresh placing at every move of a growing stroke.
+- **A disc**: the points on its circle, in turn.
+- **An edge broken off for 30 px, and an info bar**: no point in the break nor on the bar, the points clear of the break on the edge; a stroke off the image places none.
+- **Joining**: 12 cases: extending from the nearer end, a new contour, in place of a covered run facing the vertices around it, the nearer of two runs, round a closed contour's end, into the nearest segment, all, none; the stretch covered, within $R_0$ of the points and not beyond their ends by more than $h/2$, in the view; Alt's stations and its end. One side of a narrow rectangle redone, the other side and the corners kept.
+
+A probe in Chromium (headless Edge) drove the page with pointer events on the FEI test image:
+
+- strokes along the rib's sidewall, one painted back up toward the last vertex;
+- undo, also while a stroke is held; a click without moving, one that slid 5 screen pixels, and a stroke shorter than a spacing, all clicks; Alt released before the button;
+- Ctrl and Alt strokes; Ctrl+drag from a vertex, which paints in place, and Ctrl+click on one, which selects it; Escape, also with Ctrl held;
+- each criterion; a session saved and loaded with other settings;
+- a finger with *Edge* off (it pans) and on (it paints): resting before it moves, from a vertex, with Ctrl held on a keyboard, and with a mouse hovering meanwhile.

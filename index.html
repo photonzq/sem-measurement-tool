@@ -220,6 +220,7 @@
       <button type="button" id="touch-fit" title="Fit the image to the view (F)">&#x2922;<span>Fit</span></button>
       <button type="button" id="touch-snap" aria-pressed="false" title="Snap to the strongest nearby edge (S)">&#x2316;<span>Snap</span></button>
       <button type="button" id="touch-exact" aria-pressed="false" title="Place or release the next point exactly, without snapping">&#x22B9;<span>Exact</span></button>
+      <button type="button" id="touch-paint" aria-pressed="false" title="Contour tool: a finger drawn along an edge places points on it, instead of panning">&#x223F;<span>Edge</span></button>
     </div>
     <div id="hold-menu" role="menu" aria-label="Point" hidden></div>
     <section id="profile-window" class="floating" aria-label="Line profile" hidden>
@@ -323,10 +324,16 @@
         <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
         <label for="median" title="Median filter before the gradient: removes isolated noisy pixels">median prefilter</label>
         <select id="median"><option value="0">off</option><option value="3" selected>3 &times; 3</option><option value="5">5 &times; 5</option></select>
-        <label for="radius" title="Edges are searched within this distance of the click, in pixels of the corrected view">search radius (px)</label>
+        <label for="radius" title="Edges are searched within this distance of the click, in pixels of the corrected view; a stroke of the contour tool along an edge searches a band this far either side of it">search radius (px)</label>
         <input type="number" inputmode="numeric" id="radius" min="2" max="300" step="1" value="12">
-        <label for="min-contrast" title="How far an edge must stand out of the noise, k: a click on flat noise snaps about as rarely as one pixel exceeds k times the median gradient of the image, so an edge must be k times the median and more, the more pixels the search covers (4 times at the default 3 and radius 12). Markers likewise ask for more than k times the noise, the more the longer their window; squared profiles ask for k times the median">min. edge strength (&times; median)</label>
+        <label for="min-contrast" title="How far an edge must stand out of the noise, k: a click on flat noise snaps about as rarely as one pixel exceeds k times the median gradient of the image, so an edge must be k times the median and more, the more pixels the search covers (4 times at the default 3 and radius 12). Markers likewise ask for more than k times the noise, the more the longer their window, and the points of a stroke along an edge for more than k times the median, the more the wider their stretch of the band; squared profiles ask for k times the median">min. edge strength (&times; median)</label>
         <input type="number" inputmode="decimal" id="min-contrast" min="1" max="100" step="0.5" value="3">
+        <label for="edge-criterion" title="Where a stroke of the contour tool along an edge places its points, each on a profile across the edge averaged over the point spacing: the steepest slope; the threshold, a level between the grey levels on either side of the edge; or the crest of a bright line beside it">stroke points at</label>
+        <select id="edge-criterion"><option value="slope" selected>steepest slope</option><option value="threshold">threshold</option><option value="peak">bright line</option></select>
+        <label for="edge-level" id="edge-level-label" title="How far the threshold lies from the grey level of the dark side toward that of the bright side, each the median of the profile beyond half the search radius from the edge: 50 % is midway, more moves the points toward the bright side" hidden>threshold level (%)</label>
+        <input type="number" inputmode="decimal" id="edge-level" min="1" max="99" step="1" value="50" hidden>
+        <label for="point-spacing" title="A stroke of the contour tool places a point every this many pixels of the corrected view; each point is the edge averaged over its own stretch">point spacing (px)</label>
+        <input type="number" inputmode="decimal" id="point-spacing" min="0.5" max="500" step="0.5" value="5">
       </div>
       <label><input type="checkbox" id="show-edges"> show the edge map <kbd>G</kbd></label>
     </section>
@@ -416,6 +423,7 @@
           <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd> <kbd>6</kbd></td><td>tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile, gap between 2 parallel lines (4 clicks)</td></tr>
           <tr><td>click</td><td>contour: add a vertex to the selected contour, or start a new one when no contour is selected; other tools: place the next point (snapped when Snap is on)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
+          <tr><td>drag along an edge</td><td>contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; <kbd>Ctrl</kbd>: in place of the vertices along the stretch they cover, or into the nearest segment, also when it starts on a vertex; <kbd>Alt</kbd>: along the stroke as drawn. A plain drag from a vertex moves it</td></tr>
           <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>
           <tr><td><kbd>Alt</kbd>+click</td><td>place the point exactly where clicked, without snapping</td></tr>
           <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not); a profile's end does not snap, but the magnet holds the profile square about its other end (<kbd>Alt</kbd>: not)</td></tr>
@@ -423,7 +431,7 @@
           <tr><td>wheel, touchpad pinch</td><td>zoom about the cursor</td></tr>
           <tr><td>middle drag, <kbd>Space</kbd>+drag; drag with no tool</td><td>pan</td></tr>
           <tr><td>touch: two fingers</td><td>pinch to zoom, move together to pan</td></tr>
-          <tr><td>touch: one finger</td><td>no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans</td></tr>
+          <tr><td>touch: one finger</td><td>no tool: pan; with a tool, a tap clicks, a drag from a point moves it, any other drag pans, or with the contour tool and Edge on (touch bar) paints along an edge</td></tr>
           <tr><td>pen</td><td>as the mouse</td></tr>
           <tr><td><kbd>N</kbd> <kbd>C</kbd></td><td>done with the selected contour: the next click of the contour tool starts a new one; close or open the selected contour</td></tr>
           <tr><td>the list under Measurements</td><td>click or tap: select one; its box, or <kbd>Ctrl</kbd>+click: add or take out; <kbd>Shift</kbd>+click: from the row clicked last; <kbd>Ctrl</kbd>+<kbd>A</kbd>: all; double click or double tap: a profile's plot, a contour's vertices; arrow keys: the next one</td></tr>
@@ -442,7 +450,7 @@
           <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>undo / redo (edits, measurements, calibration); while a measurement is being placed, undo first takes back its last point</td></tr>
           <tr><td><kbd>F</kbd> <kbd>+</kbd> <kbd>-</kbd></td><td>fit to window; zoom</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>open image / save session</td></tr>
-          <tr><td><kbd>Esc</kbd></td><td>cancel the measurement being placed, or "Set origin"; close a menu</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>cancel the measurement being placed, a stroke along an edge, or "Set origin"; close a menu</td></tr>
           </tbody>
         </table>
       </details>
@@ -483,6 +491,7 @@
 <script src="js/vertices.js"></script>
 <script src="js/display.js"></script>
 <script src="js/profile.js"></script>
+<script src="js/trace.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

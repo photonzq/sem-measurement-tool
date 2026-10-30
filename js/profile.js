@@ -1,7 +1,8 @@
 "use strict";
 /* global matApply, matInverse, viewMatrix, measurementMatrix */
 /* exported profileBand, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle, widthFromPoint,
-   edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace, profileValueAt, snapToSlope */
+   edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace, profileValueAt, snapToSlope, slopeAtScale,
+   medianOf */
 /*
  * Line profiles: the grey values along a line, averaged across a band of adjustable width, and the
  * places where contours cross the line.  MATH.md, part 6, gives the same derivations with more
