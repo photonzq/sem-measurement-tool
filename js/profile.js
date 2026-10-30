@@ -1,7 +1,7 @@
 "use strict";
 /* global matApply, matInverse, viewMatrix, measurementMatrix */
 /* exported profileBand, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle, widthFromPoint,
-   edgeNormal, segmentNormal, squaredProfile, markerPlace, profileValueAt, snapToSlope */
+   edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace, profileValueAt, snapToSlope */
 /*
  * Line profiles: the grey values along a line, averaged across a band of adjustable width, and the
  * places where contours cross the line.  MATH.md, part 6, gives the same derivations with more
@@ -53,8 +53,11 @@
  * straight edge (near 1) from a corner or noise (near 0) (P9).  J is solved on the stored grid, where
  * the noise adds the same to every direction, and only its eigenvector is carried to the view.  A
  * contour segment that the line crosses gives its normal exactly (P10).  The profile turns about the
- * crossing, its length in the view and the crossing's place along it kept (P11); after one end was
- * dragged, about the other end instead (t = 0 or 1), and the crossing slides along the edge.
+ * crossing, its length in the view and the crossing's place along it kept (P11).  While one end
+ * moves, the second end of a new profile or an end dragged, a magnet turns it about the other end
+ * instead (t = 0 or 1), and the crossing slides along the edge: it catches the profile within 5
+ * degrees of square and lets go beyond 8, so that a pointer trembling at the border does not make
+ * it flicker.
  *
  * Markers (P12)-(P14), MATH.md 6.7.  Two markers, A and B, measure a distance along a profile.  A
  * marker is a stored point; its place along the line is the fraction t of its projection on the
@@ -371,6 +374,20 @@ function squaredProfile(points, pivot, normal, frame) {
     points: [[pivot[0] - t * bx, pivot[1] - t * by], [pivot[0] + (1 - t) * bx, pivot[1] + (1 - t) * by]],
     turnedDeg: (Math.acos(cos) * 180) / Math.PI,
   };
+}
+
+const MAGNET_CATCH_DEG = 5;       // (P11) the magnet catches a profile whose end moves this near square ...
+const MAGNET_HOLD_DEG = 8;        // (P11) ... and holds it until it is further off than this
+
+/**
+ * (P11): whether the magnet holds square a profile whose end moves, ``offDeg`` off square where the
+ * pointer has it: within MAGNET_CATCH_DEG, or MAGNET_HOLD_DEG while it is ``held`` already.
+ * @param {number} offDeg
+ * @param {boolean} held
+ * @returns {boolean}
+ */
+function magnetHolds(offDeg, held) {
+  return offDeg <= (held ? MAGNET_HOLD_DEG : MAGNET_CATCH_DEG);
 }
 
 /**

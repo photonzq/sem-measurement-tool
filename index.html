@@ -129,10 +129,11 @@
   #profile-window .row button + button { margin-left: 0; }
   #profile-plot { display: block; flex: 1 1 0; min-height: 0; height: 0; width: calc(100% - 12px); margin: 0 6px;
                   border: 1px solid var(--line); background: #fff; cursor: crosshair; touch-action: none; }
-  #profile-readout, #profile-markers { margin: 3px 8px 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #profile-markers { margin-top: 1px; }
-  #profile-markers:empty { display: none; }
-  #profile-note { margin: 2px 8px 6px; }
+  /* two lines under the plot, one line each whatever they hold, so that the plot keeps its size */
+  #profile-readout, #profile-note { height: 1.4em; line-height: 1.4em; margin: 3px 8px 0; white-space: nowrap; overflow: hidden;
+                                    text-overflow: ellipsis; }
+  #profile-readout, #profile-note.marked { color: var(--text); }
+  #profile-note { margin: 1px 8px 6px; }
   #colour-window { width: 250px; height: auto; min-height: 0; }
   #colour-window .note { margin: 2px 10px 8px; }
   .slots { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: center; padding: 8px 10px 2px; }
@@ -156,9 +157,9 @@
                     background: linear-gradient(135deg, transparent 50%, var(--muted) 50% 58%, transparent 58% 70%,
                     var(--muted) 70% 78%, transparent 78%); }
   /* the touch layout: a touch screen, or a first touch */
-  body.touch .floating header { min-height: 44px; }
-  body.touch .floating header button { width: 44px; height: 36px; }
-  body.touch button.close svg { width: 16px; height: 16px; stroke-width: 1.4; }
+  body.touch .floating header { min-height: 34px; padding-top: 2px; padding-bottom: 2px; }
+  body.touch .floating header button { width: 40px; height: 30px; }
+  body.touch button.close svg { width: 14px; height: 14px; stroke-width: 1.4; }
   body.touch .floating .row button { min-height: 40px; padding: 4px 10px; }
   body.touch .floating .grip { width: 30px; height: 30px; }
   body.touch #profile-window .row input[type=number] { min-height: 36px; }
@@ -232,12 +233,11 @@
         <button type="button" id="profile-square" title="Turn the profile square to the edge it crosses (E)">&perp; Square</button>
       </div>
       <div class="row">
-        <label class="inline" title="A marker placed or let go on the plot settles on the steepest slope of the profile nearby, unless Alt is held. It stays where it was put when no slope there stands out of the noise, or when the slope places the edge no better than the click"><input type="checkbox" id="snap-markers" checked> snap A, B to the steepest slope</label>
+        <label class="inline" title="A marker placed on the plot, or let go there or on the image, settles on the steepest slope of the profile nearby, unless Alt is held. It stays where it was put when no slope there stands out of the noise, or when the slope places the edge no better than the click"><input type="checkbox" id="snap-markers" checked> snap A, B to the steepest slope</label>
         <button type="button" id="clear-markers" title="Remove the markers A and B (Ctrl+Z brings them back)" disabled>Clear A, B</button>
       </div>
       <canvas id="profile-plot"></canvas>
       <div id="profile-readout" class="note"></div>
-      <div id="profile-markers" class="note"></div>
       <div id="profile-note" class="note"></div>
     </section>
     <section id="colour-window" class="floating" aria-label="Custom colours" hidden>
@@ -317,7 +317,7 @@
     <section>
       <h2>Snapping to edges</h2>
       <label><input type="checkbox" id="snap" checked> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
-      <label title="A profile up to 15° off square turns to run square to the edge it crosses, a traced contour it crosses or else the image's edge: a new one about the crossing, one whose end was dragged about its other end, which stays (Alt with the click or the release: as it is; Ctrl+Z right after: back as it was; E squares it whatever the angle)"><input type="checkbox" id="square-profiles" checked> square profiles to the edge they cross</label>
+      <label title="While an end of a profile moves, a magnet holds the profile square to the edge it crosses, a traced contour it crosses or else the image's edge, turning it about its other end: it catches within 5° of square and lets go beyond 8°, and ⊥ shows that it holds (Alt: as it is; E squares a profile whatever the angle)"><input type="checkbox" id="square-profiles" checked> square profiles to the edge they cross</label>
       <div class="grid">
         <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
         <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
@@ -418,7 +418,7 @@
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
           <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>
           <tr><td><kbd>Alt</kbd>+click</td><td>place the point exactly where clicked, without snapping</td></tr>
-          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not); a profile's end does not snap, but the profile turns square about its other end</td></tr>
+          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not); a profile's end does not snap, but the magnet holds the profile square about its other end (<kbd>Alt</kbd>: not)</td></tr>
           <tr><td>right click</td><td>contour: delete the vertex under the cursor; other tools: delete the measurement under the cursor, or cancel the one being placed</td></tr>
           <tr><td>wheel, touchpad pinch</td><td>zoom about the cursor</td></tr>
           <tr><td>middle drag, <kbd>Space</kbd>+drag; drag with no tool</td><td>pan</td></tr>
@@ -432,9 +432,9 @@
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>snap on or off; edge map on or off</td></tr>
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window (the selected contour)</td></tr>
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
-          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; new and moved profiles up to 15&deg; off square are squared while the option under Snapping to edges is on (<kbd>Alt</kbd> with the click or the release: as it is; <kbd>Ctrl</kbd>+<kbd>Z</kbd> right after: back as it was)</td></tr>
+          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5&deg; of square while the option under Snapping to edges is on (<kbd>Alt</kbd>: not)</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
-          <tr><td>click on the profile plot</td><td>place marker A, then B, then move the nearer one; snapped to the steepest slope while that option is on (<kbd>Alt</kbd>: exactly); drag a marker to move it</td></tr>
+          <tr><td>click on the profile plot</td><td>place marker A, then B, then move the nearer one; snapped to the steepest slope while that option is on (<kbd>Alt</kbd>: exactly); drag a marker to move it, on the plot or by its tick on the image</td></tr>
           <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot or square to edge (a profile)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements</td></tr>

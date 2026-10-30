@@ -7,8 +7,8 @@
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
    selectionRange, valueRange, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
-   widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, markerPlace, profileValueAt, snapToSlope,
-   metadataVendor, withMetadataText, fileStem */
+   widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace, profileValueAt,
+   snapToSlope, metadataVendor, withMetadataText, fileStem */
 /*
  * The SEM measurement tool: open an image, take measurements (contours, rulers, angles, profiles) with
  * optional snapping to edges, correct a tilted specimen, turn the image, and keep the work in a
@@ -69,10 +69,10 @@ const TOOL_HINTS = {
   "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
   gap: "Click two points on one edge, then two on the other: the gap between the lines, along their common normal " +
     "midway between their middles.",
-  profile: "Click both ends of a line profile (never snapped); it turns square to the edge it crosses, by up to 15°, " +
-    "while that option is on (Alt+click: as drawn; Ctrl+Z right after: back as drawn).  Drag the square on the band's " +
-    "side to widen it, an end to move it: it turns square again about the other end (Alt: as dragged); E squares it " +
-    "whatever the turn, P shows the profile window.",
+  profile: "Click both ends of a line profile (never snapped).  With square profiles on, a magnet holds it square to " +
+    "the edge it crosses while an end moves, once within 5° (⊥ shows it; Alt: not).  Drag the square on the band's " +
+    "side to widen it, an end to move it, the tick of A or B to move that marker; E squares it whatever the angle, P " +
+    "shows the profile window.",
 };
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = {
@@ -87,12 +87,21 @@ const HOLD_MS = 500;                 // a finger held still this long on a point
 const DOUBLE_MS = 500;               // two clicks or taps on one list row within this time are a double click
 const FLASH_MS = 1600;               // how long the note beside the cursor stays after a profile is squared
 const MIN_COHERENCE = 0.5;           // (P9) below it, an image edge has no single direction to square a profile to
-const MAX_TURN_DEG = 15;             // (P11) a new or moved profile turns by itself up to this far; E: whatever the turn
+const MAGNET_MIN_PX = 16;            // (P11) a profile shorter on screen is not pulled: a pixel of the pointer turns it 3.6°
+const MAGNET_EDGE_PX = 32;           // how far the edge's dashed line runs beyond the band while the magnet holds
+const MAGNET_MARK_PX = 9;            // the legs of the ⊥ mark where a profile held square crosses the edge
 
 /** @returns {Frame} */
 function defaultFrame() {
   return { pixelNm: null, tiltDeg: 0, correction: "none", customFactor: 1, axisDeg: 0, rotationDeg: 0, originPx: [0, 0] };
 }
+
+/**
+ * The magnet holding a profile square while one of its ends moves (MATH.md 6.6): the profile as pulled, the end that
+ * stays, where the edge was found along the line as the pointer has it, and the contour squared to (null: the image's
+ * edge).
+ * @typedef {{points: Point[], keep: number, pivot: Point, to: string|null}} Magnet
+ */
 
 const app = {
   /** @type {SEMImage|null} */
@@ -124,7 +133,10 @@ const app = {
   /** @type {number[]} the measurements selected in the list, ascending; ``selected`` is one of them (when any) */
   checked: [],
   listAnchor: -1,                    // the row a Shift+click in the list selects from
-  /** @type {{kind: FixedKind, points: Point[]}|null} a measurement being placed */
+  /**
+   * @type {{kind: FixedKind, points: Point[], magnet: Magnet|null}|null} a measurement being placed; ``magnet``, while
+   *   it holds the second end of a profile square
+   */
   pending: null,
   /** @type {Tool} */
   tool: "pan",
@@ -153,10 +165,14 @@ const app = {
   future: [],
   dirty: false,
   /**
-   * @type {{kind: "point"|"width", index: number, point: number, moved: boolean, before: string}|null} a measurement's
-   *   point or a profile's band width; ``before``, the state before it, is recorded for undo at its first move
+   * @type {{kind: "point"|"width"|"marker", index: number, point: number, moved: boolean, before: string,
+   *   magnet: Magnet|null}|null} a measurement's point (``point``), a profile's band width, or a profile's marker
+   *   (``point`` 0 for A, 1 for B) by its tick on the image; ``before``, the state before it, is recorded for undo at
+   *   its first move; ``magnet``, while it holds the profile whose end is dragged square
    */
   drag: null,
+  /** @type {{index: number, marker: number}|null} the profile's marker whose tick on the image is under the pointer */
+  markerHover: null,
   profileWidth: 1,                   // band width of new profiles, pixel widths of the corrected view
   /** @type {number|null} where the cursor is on the profile plot: 0 at the start of the line, 1 at its end */
   profileCursor: null,
@@ -757,6 +773,7 @@ function draw() {
   });
   drawProfileCursor(toScreen);
   drawPending(toScreen);
+  drawMagnet(toScreen);
   drawInsertPreview(toScreen);
   drawMarks(toScreen);
   drawHoldRing();
@@ -846,7 +863,8 @@ function drawInsertPreview(toScreen) {
 }
 
 /**
- * Note Ctrl (or Cmd) and Alt from any event, and redraw when the insert or the snap preview may change.
+ * Note Ctrl (or Cmd) and Alt from any event, and redraw when the insert preview, the snap preview or
+ * the magnet may change.
  * @param {KeyboardEvent|PointerEvent} e
  */
 function trackModifiers(e) {
@@ -855,8 +873,12 @@ function trackModifiers(e) {
     app.insertHeld = insert;
     app.altHeld = e.altKey;
     const c = app.cursor;
-    if (c !== null && app.lastPointer !== "touch") {   // the snap preview follows Alt at once, not at the next move
+    if (c !== null && app.lastPointer !== "touch") {   // they follow Alt at once, not at the next move
       app.preview = insideImage(c[0], c[1]) && !app.altHeld && snapsNow() ? snapTarget(c[0], c[1]) : null;
+      if (app.drag !== null && app.drag.moved) {
+        dragTo(c[0], c[1]);
+      }
+      pullPending(c);
     }
     render();
   }
@@ -1244,13 +1266,14 @@ function drawWidthHandle(ms, toScreen, color) {
 }
 
 /**
- * The point of the shown profile under the cursor on its plot: a tick across the band.
+ * The point of the shown profile under the cursor on its plot: a tick across the band; none while a
+ * marker is under the pointer or dragged, as the marker shows the place itself.
  * @param {(p: Point) => Point} toScreen
  */
 function drawProfileCursor(toScreen) {
   const ms = shownProfile();
   const t = app.profileCursor;
-  if (ms === null || t === null) {
+  if (ms === null || t === null || activeMarker() !== null) {
     return;
   }
   const [u1, u2] = ms.points;
@@ -1271,35 +1294,51 @@ function drawProfileCursor(toScreen) {
 }
 
 /**
- * A profile's markers on the image: ticks across the band, at least 16 screen pixels long, where
- * they lie along the line (P12), in the profile's colour, with their letters beyond one end.
+ * The ticks of a profile's markers on the image, A then B: across the band, at least 16 screen
+ * pixels long, where the markers lie along the line (P12); their ends on screen.
+ * @param {FixedMeasurement} ms
+ * @param {(p: Point) => Point} toScreen
+ * @returns {Array<[Point, Point]>}
+ */
+function markerTicks(ms, toScreen) {
+  const [u1, u2] = ms.points;
+  const h = widthHandle(ms.points, Math.max(ms.width ?? 1, 16 / Math.max(app.view.s, 1e-9)), app.frame);
+  /** @type {Point} half the tick, stored */
+  const half = [h[0] - (u1[0] + u2[0]) / 2, h[1] - (u1[1] + u2[1]) / 2];
+  return (ms.markers ?? []).map((m) => {
+    const p = pointAlong(ms.points, markerPlace(ms.points, m, app.frame));
+    return [toScreen([p[0] - half[0], p[1] - half[1]]), toScreen([p[0] + half[0], p[1] + half[1]])];
+  });
+}
+
+/**
+ * A profile's markers on the image: thin ticks in the profile's colour, so that where they cross
+ * the image reads closely, with their letters beyond one end; the marker under the pointer or
+ * dragged, on the image or on the plot, with a light halo.
  * @param {FixedMeasurement} ms
  * @param {(p: Point) => Point} toScreen
  * @param {string} color
  */
 function drawProfileMarkers(ms, toScreen, color) {
-  const markers = ms.markers ?? [];
-  if (markers.length === 0) {
+  const ticks = markerTicks(ms, toScreen);
+  if (ticks.length === 0) {
     return;
   }
-  const [u1, u2] = ms.points;
-  const h = widthHandle(ms.points, Math.max(ms.width ?? 1, 16 / Math.max(app.view.s, 1e-9)), app.frame);
-  /** @type {Point} half the tick, stored */
-  const half = [h[0] - (u1[0] + u2[0]) / 2, h[1] - (u1[1] + u2[1]) / 2];
-  const ticks = new Path2D();
+  const active = activeMarker();
+  const lit = active !== null && app.measurements[active.index] === ms ? active.marker : -1;
+  const plain = new Path2D();
+  const halo = new Path2D();
   /** @type {Array<[string, Point, Point]>} the letter, the tick's end and its direction on screen */
   const letters = [];
-  markers.forEach((m, k) => {
-    const t = markerPlace(ms.points, m, app.frame);
-    /** @type {Point} */
-    const p = [u1[0] + t * (u2[0] - u1[0]), u1[1] + t * (u2[1] - u1[1])];
-    const a = toScreen([p[0] - half[0], p[1] - half[1]]);
-    const b = toScreen([p[0] + half[0], p[1] + half[1]]);
-    addSegment(ticks, a, b);
+  ticks.forEach(([a, b], k) => {
+    addSegment(k === lit ? halo : plain, a, b);
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
     letters.push(["AB"[k], b, [(b[0] - a[0]) / length, (b[1] - a[1]) / length]]);
   });
-  strokeOverlay(ticks, color, { width: 2.4 });
+  strokeOverlay(plain, color, { width: 1 });
+  if (lit >= 0) {
+    strokeOverlay(halo, color, { width: 1, selected: true });
+  }
   ctx.save();
   ctx.font = `600 ${LABEL_FONT}`;
   ctx.textAlign = "center";
@@ -1389,7 +1428,7 @@ function addShape(ms, paths, pts, toScreen, band) {
 
 /**
  * The measurement being placed, dashed in the colour it will take, its next point following the
- * cursor (or the snap preview).
+ * cursor (or the snap preview, or the magnet).
  * @param {(p: Point) => Point} toScreen
  */
 function drawPending(toScreen) {
@@ -1397,7 +1436,7 @@ function drawPending(toScreen) {
   if (p === null) {
     return;
   }
-  const tip = app.preview ?? app.cursor;
+  const tip = p.magnet?.points[1] ?? app.preview ?? app.cursor;
   /** @type {FixedMeasurement} */
   const ms = { name: "", kind: p.kind, color: nextColorIndex(), points: tip === null ? p.points : [...p.points, tip] };
   drawMeasurement(ms, colorOf(ms), toScreen, { pending: true });
@@ -1600,6 +1639,87 @@ function hitPoint(sx, sy, contour) {
 }
 
 /**
+ * The marker of a profile whose tick on the image (markerTicks) is within hitPx() of a screen
+ * position, the nearest; the selected measurement's first, then the later measurements' before the
+ * earlier, as for points.  Null when there is none.
+ * @param {number} sx
+ * @param {number} sy
+ * @returns {{index: number, marker: number}|null}   marker: 0 for A, 1 for B
+ */
+function hitMarker(sx, sy) {
+  const toScreen = screenMapper();
+  const others = app.measurements.map((_, i) => i).filter((i) => i !== app.selected).reverse();
+  for (const i of app.selected >= 0 ? [app.selected, ...others] : others) {
+    const ms = app.measurements[i];
+    let [best, marker] = [hitPx(), -1];
+    if (ms.kind === "profile") {
+      markerTicks(ms, toScreen).forEach(([a, b], k) => {
+        const d = segmentDistance([sx, sy], a, b);
+        if (d <= best) {
+          [best, marker] = [d, k];
+        }
+      });
+    }
+    if (marker >= 0) {
+      return { index: i, marker };
+    }
+  }
+  return null;
+}
+
+/**
+ * The marker a press at a screen position would drag (startDragAt): with a tool other than the
+ * contour tool, none being placed, and neither a point nor the width handle there, which come first.
+ * @param {number} sx
+ * @param {number} sy
+ * @returns {{index: number, marker: number}|null}
+ */
+function markerAt(sx, sy) {
+  const free = app.tool !== "pan" && app.tool !== "contour" && app.pending === null && !app.originMode;
+  return free && !hitWidthHandle(sx, sy) && hitPoint(sx, sy, false) === null ? hitMarker(sx, sy) : null;
+}
+
+/**
+ * Note the marker under the pointer on the image (null: none): its tick, and its line on the plot,
+ * get a halo, and the pointer a two-way arrow along its profile, also while one is dragged.
+ * @param {{index: number, marker: number}|null} m
+ */
+function hoverMarker(m) {
+  const was = app.markerHover;
+  app.markerHover = m;
+  const d = app.drag;
+  const index = m?.index ?? (d !== null && d.kind === "marker" ? d.index : -1);
+  canvas.style.cursor = index < 0 ? "" : alongCursor(app.measurements[index].points);
+  if (was?.index !== m?.index || was?.marker !== m?.marker) {
+    drawProfilePlot();
+  }
+}
+
+/**
+ * The two-way arrow of the pointer nearest a line's direction on screen.
+ * @param {Point[]} points
+ * @returns {string}
+ */
+function alongCursor(points) {
+  const [a, b] = points.map((p) => storedToScreen(p[0], p[1]));
+  const eighth = Math.round(Math.atan2(b[1] - a[1], b[0] - a[0]) / (Math.PI / 4));   // y down: +1 runs down and right
+  return ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize"][((eighth % 4) + 4) % 4];
+}
+
+/**
+ * @param {Point} p
+ * @param {Point} a
+ * @param {Point} b
+ * @returns {number} the distance from p to the segment from a to b
+ */
+function segmentDistance(p, a, b) {
+  const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+  const squared = dx * dx + dy * dy;
+  const t = squared > 0 ? Math.min(1, Math.max(0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / squared)) : 0;
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
+/**
  * Whether the width handle of the selected profile is under a screen position.
  * @param {number} sx
  * @param {number} sy
@@ -1797,8 +1917,9 @@ function newMeasureName(kind) {
 
 /**
  * Place the next point of the measurement of the current tool at stored (x, y), snapped unless
- * ``exact`` (a profile's ends never snap: a profile runs across edges, not along them); the
- * measurement is complete with its last point.
+ * ``exact``.  A profile's ends never snap, since a profile runs across edges, not along them; its
+ * second end goes where the magnet pulls it, as the cursor showed, unless ``exact``.  The measurement
+ * is complete with its last point.
  * @param {number} x
  * @param {number} y
  * @param {boolean} exact
@@ -1808,8 +1929,10 @@ function placePoint(x, y, exact) {
     return;
   }
   const kind = app.tool;
-  const pending = app.pending ?? { kind, points: [] };
-  pending.points.push((exact || kind === "profile" ? null : snapTarget(x, y)) ?? [x, y]);
+  const pending = app.pending ?? { kind, points: [], magnet: null };
+  const second = kind === "profile" && pending.points.length === 1;
+  const pulled = second && !exact ? magnetPull([pending.points[0], [x, y]], 0, pending.magnet !== null) : null;
+  pending.points.push(pulled?.points[1] ?? (exact || kind === "profile" ? null : snapTarget(x, y)) ?? [x, y]);
   app.pending = pending;
   if (pending.points.length === MEASURE_POINTS[kind]) {
     pushHistory();
@@ -1821,8 +1944,11 @@ function placePoint(x, y, exact) {
     app.measurements.push(ms);
     selectOnly(app.measurements.length - 1);
     app.pending = null;
-    if (kind === "profile" && settings.squareProfiles() && !exact) {
-      squareMeasurement(ms, storedToScreen(x, y), MAX_TURN_DEG);   // a step of its own: Ctrl+Z gives it back as drawn
+    if (pulled !== null) {
+      setStatus(`${ms.name} squared to ${pulled.to ?? "the image's edge"}; Alt+click places a profile as drawn.`);
+      if (app.lastPointer === "touch") {
+        flashNote(`⊥ ${pulled.to ?? "edge"}`, storedToScreen(x, y), true);   // a finger had no ⊥ to see before
+      }
     }
     refreshMeasurements();
     if (kind === "profile") {
@@ -3075,6 +3201,7 @@ const profilePlot = {
   press: null,
   /** @type {{index: number, moved: boolean, before: string}|null} */
   markerDrag: null,
+  hover: -1,                         // the marker under a mouse or pen on the plot: 0 for A, 1 for B, -1 for none
 };
 
 function toggleProfileWindow() {
@@ -3181,19 +3308,34 @@ function refreshProfileWindow() {
   buttonEl("profile-export").disabled = data === null;
   buttonEl("profile-png").disabled = data === null;
   buttonEl("profile-square").disabled = data === null;
-  el("profile-note").textContent = profileNote(data);
   showProfileReadout();
   showMarkerReadout();
   drawProfilePlot();
 }
 
-/** The line of the markers under the readout: A and B, where they are, the mean there, and how far apart. */
+/**
+ * One of the two lines under the plot, which keep one line each whatever they hold, so that the
+ * plot keeps its size: its text, and the same as its tooltip, for when the window cuts it short.
+ * @param {HTMLElement} line
+ * @param {string} text
+ */
+function setProfileLine(line, text) {
+  line.textContent = text;
+  line.title = text;
+}
+
+/**
+ * The second line under the plot: A and B, where they are, the mean there, and how far apart, once
+ * placed; else the note on the line (profileNote).
+ */
 function showMarkerReadout() {
   const data = profilePlot.data;
-  const out = el("profile-markers");
-  buttonEl("clear-markers").disabled = data === null || data.markers.length === 0;
-  if (data === null || data.markers.length === 0) {
-    out.textContent = "";
+  const out = el("profile-note");
+  const marked = data !== null && data.markers.length > 0;
+  buttonEl("clear-markers").disabled = !marked;
+  out.classList.toggle("marked", marked);
+  if (data === null || !marked) {
+    setProfileLine(out, data === null ? "" : profileNote(data));
     return;
   }
   const unit = data.geometry.unit;
@@ -3201,7 +3343,7 @@ function showMarkerReadout() {
     `${Number.isFinite(m.value) ? greyText(m.value) : "no value"}`);
   const [a, b] = data.markers;
   parts.push(b === undefined ? "click again for B" : `A–B ${profileDistanceText(Math.abs(b.distance - a.distance), unit)}`);
-  out.textContent = parts.join("; ");
+  setProfileLine(out, parts.join("; "));
 }
 
 /**
@@ -3215,36 +3357,35 @@ function profileDistanceText(s, unit) {
 }
 
 /**
- * The window's note: the samples along the line, and the contours that cross it, if any.  The lines across
- * the band are left out: the band width above gives them.
- * @param {ProfileData|null} data
+ * The note on the line, under the plot while no marker is placed: the samples along the line, and
+ * the contours that cross it, if any, on one line.  The lines across the band are left out: the
+ * band width above gives them.
+ * @param {ProfileData} data
  * @returns {string}
  */
 function profileNote(data) {
-  if (data === null) {
-    return app.image === null ? "No image." : "Select a profile under Measurements, or draw one with the profile tool (5).";
-  }
   const { geometry: g, crossings } = data;
   const unit = g.unit === null ? "" : ` ${unitText(g.unit)}`;
-  const lines = [`${g.samples} samples along`];
+  const parts = [`${g.samples} samples along`];
   /** @type {Map<string, string[]>} */
   const byContour = new Map();
   for (const c of crossings) {
     byContour.set(c.name, [...(byContour.get(c.name) ?? []), Number.isFinite(c.distance) ? show(c.distance) : "?"]);
   }
   if (byContour.size > 0) {
-    lines.push(`crossed by ${[...byContour].map(([name, at]) => `${name} at ${at.join(", ")}${unit}`).join("; ")}`);
+    parts.push(`crossed by ${[...byContour].map(([name, at]) => `${name} at ${at.join(", ")}${unit}`).join("; ")}`);
   }
-  return lines.join("\n");
+  return parts.join("; ");
 }
 
-/** The readout under the plot: the value at the cursor, or a hint. */
+/** The first line under the plot: the value at the cursor, or a hint; without a profile, why. */
 function showProfileReadout() {
   const data = profilePlot.data;
   const t = app.profileCursor;
   const out = el("profile-readout");
   if (data === null || t === null) {
-    out.textContent = data === null ? "" : "Point at the plot to read a value; click it to place markers A and B.";
+    const none = app.image === null ? "No image." : "Select a profile under Measurements, or draw one with the profile tool (5).";
+    setProfileLine(out, data === null ? none : "Point at the plot to read a value; click it to place markers A and B.");
     return;
   }
   const { profile, geometry } = data;
@@ -3254,7 +3395,7 @@ function showProfileReadout() {
   const [n, across] = [profile.count[i], geometry.offsets.length];
   const spread = n > 1 ? ` ± ${String(Number(profile.spread[i].toPrecision(4)))}` : "";
   const part = n < across ? ` (${n} of ${across} values across, the rest outside the image)` : "";   // the count only when short
-  out.textContent = n === 0 ? `at ${at}: outside the image` : `at ${at}: ${greyText(profile.mean[i])}${spread}${part}`;
+  setProfileLine(out, n === 0 ? `at ${at}: outside the image` : `at ${at}: ${greyText(profile.mean[i])}${spread}${part}`);
 }
 
 /**
@@ -3287,8 +3428,25 @@ function drawProfilePlot() {
   profileCanvas.height = Math.round(h * dpr);
   const g = /** @type {CanvasRenderingContext2D} */ (profileCanvas.getContext("2d"));
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const axis = plotProfile(g, w, h, profilePlot.data, { cursor: app.profileCursor, title: null });
+  const active = activeMarker();
+  const lit = active !== null && active.index === app.selected ? active.marker : -1;
+  // a marker under the pointer, or dragged, shows the place itself: the cursor's line gives way to it
+  const axis = plotProfile(g, w, h, profilePlot.data, { cursor: lit >= 0 ? null : app.profileCursor, title: null, lit });
   Object.assign(profilePlot, axis);
+}
+
+/**
+ * The marker under the pointer, or dragged, on the image or on the plot: drawn with a halo, and the
+ * cursor's pink line and tick give way to it.
+ * @returns {{index: number, marker: number}|null}   index: the profile's in the list; marker: 0 for A, 1 for B
+ */
+function activeMarker() {
+  const d = app.drag;
+  if (d !== null && d.kind === "marker") {
+    return { index: d.index, marker: d.point };
+  }
+  const onPlot = profilePlot.markerDrag?.index ?? profilePlot.hover;
+  return onPlot >= 0 && shownProfile() !== null ? { index: app.selected, marker: onPlot } : app.markerHover;
 }
 
 /**
@@ -3329,13 +3487,14 @@ function yAxisLabels(g, range, height) {
  * A profile plot on ``g``, ``w`` x ``h`` CSS pixels: the mean along the line, its spread across the
  * band shaded, 0 and the full scale of the image's values as solid lines, so that the values
  * clipped at either end show, the contours that cross the line as dashed verticals (those selected
- * thicker), the cursor (0 to 1 along the line, or null) and a title above (or null).  Returns where
- * the axes lie, for the cursor and the markers.
+ * thicker), the cursor (0 to 1 along the line, or null), the marker ``lit`` with a halo (0 for A, 1
+ * for B; none when absent or -1) and a title above (or null).  Returns where the axes lie, for the
+ * cursor and the markers.
  * @param {CanvasRenderingContext2D} g
  * @param {number} w
  * @param {number} h
  * @param {ProfileData|null} data
- * @param {{cursor: number|null, title: TextParts|null}} how
+ * @param {{cursor: number|null, title: TextParts|null, lit?: number}} how
  * @returns {{left: number, right: number, top: number, bottom: number}}
  */
 function plotProfile(g, w, h, data, how) {
@@ -3425,8 +3584,8 @@ function plotProfile(g, w, h, data, how) {
     x: X(c.distance), name: c.name, color: colorOf(app.measurements[c.index]), active: checked.has(c.index),
   })), top, bottom);
   const [ma, mb] = data.markers;
-  drawPlotMarkers(g, data.markers.map((m) => ({ x: left + m.t * (right - left), label: m.label })), top, bottom,
-    mb === undefined ? null : profileDistanceText(Math.abs(mb.distance - ma.distance), geometry.unit));
+  drawPlotMarkers(g, data.markers.map((m, k) => ({ x: left + m.t * (right - left), label: m.label, lit: k === how.lit })),
+    top, bottom, mb === undefined ? null : profileDistanceText(Math.abs(mb.distance - ma.distance), geometry.unit));
   if (how.cursor !== null) {
     const x = X(how.cursor * length);
     g.strokeStyle = PREVIEW_COLOR;
@@ -3521,16 +3680,25 @@ function drawPlotCrossings(g, marks, top, bottom) {
 }
 
 /**
- * The markers on the plot: solid dark lines, their letters on dark chips at the foot, and between
- * A and B a double arrow with the distance.
+ * The markers on the plot: solid dark lines, the one under the pointer or dragged (``lit``) with a
+ * halo, their letters on dark chips at the foot, and between A and B a double arrow with the
+ * distance.
  * @param {CanvasRenderingContext2D} g
- * @param {Array<{x: number, label: string}>} marks
+ * @param {Array<{x: number, label: string, lit: boolean}>} marks
  * @param {number} top
  * @param {number} bottom
  * @param {string|null} apart     the distance between A and B, when both are set
  */
 function drawPlotMarkers(g, marks, top, bottom, apart) {
   g.save();
+  for (const m of marks.filter((n) => n.lit)) {
+    g.strokeStyle = "rgba(39, 39, 39, 0.18)";
+    g.lineWidth = 9;
+    g.beginPath();
+    g.moveTo(m.x, top);
+    g.lineTo(m.x, bottom);
+    g.stroke();
+  }
   g.strokeStyle = MARKER_COLOR;
   g.fillStyle = MARKER_COLOR;
   g.lineWidth = 1.5;
@@ -3651,25 +3819,35 @@ function pointAlong(points, t) {
 }
 
 /**
- * Where a marker put at the fraction t settles (P13): at the steepest slope of the mean within 12
- * pixels of the plot, while snapping markers is on and unless ``exact`` (Alt, or the Exact latch);
- * else, or when no slope there stands out of the noise, or when the slope places the edge no better
- * than 2 samples or 2 pixels of the plot (whichever is more, about what a click is good to), at t.
+ * Where a marker put at the fraction t settles (P13), on a profile whose mean is ``mean``: at the
+ * steepest slope of the mean within 12 pixels of where it was put, the plot or the image, with
+ * ``perPixel`` samples to a pixel there, while snapping markers is on and unless ``exact`` (Alt, or
+ * the Exact latch); else, or when no slope there stands out of the noise, or when the slope places
+ * the edge no better than 2 samples or 2 pixels (whichever is more, about what a click is good to),
+ * at t.
+ * @param {Float64Array} mean
  * @param {number} t
  * @param {boolean} exact
+ * @param {number} perPixel
  * @returns {number}
  */
-function settledFraction(t, exact) {
-  const data = profilePlot.data;
+function settledFraction(mean, t, exact, perPixel) {
   const loose = takeExact() || exact;
-  if (data === null || loose || !settings.snapMarkers() || data.profile.mean.length < 3) {
+  if (loose || !settings.snapMarkers() || mean.length < 3) {
     return t;
   }
-  const last = data.profile.mean.length - 1;
-  const perPixel = last / Math.max(1, profilePlot.right - profilePlot.left);    // samples per pixel of the plot
-  const found = snapToSlope(data.profile.mean, t * last, Math.max(2, 12 * perPixel), settings.sigma(),
-    settings.minContrast(), Math.max(2, 2 * perPixel));
+  const last = mean.length - 1;
+  const found = snapToSlope(mean, t * last, Math.max(2, 12 * perPixel), settings.sigma(), settings.minContrast(),
+    Math.max(2, 2 * perPixel));
   return found === null ? t : found.at / last;
+}
+
+/**
+ * @param {ProfileData} data
+ * @returns {number} the samples of the shown profile to a pixel of its plot
+ */
+function plotPerPixel(data) {
+  return (data.profile.mean.length - 1) / Math.max(1, profilePlot.right - profilePlot.left);
 }
 
 /**
@@ -3680,12 +3858,13 @@ function settledFraction(t, exact) {
  */
 function placeMarker(t, exact) {
   const ms = shownProfile();
-  if (ms === null || profilePlot.data === null) {
+  const data = profilePlot.data;
+  if (ms === null || data === null) {
     return;
   }
   pushHistory();
   const markers = ms.markers ?? [];
-  const p = pointAlong(ms.points, settledFraction(t, exact));
+  const p = pointAlong(ms.points, settledFraction(data.profile.mean, t, exact, plotPerPixel(data)));
   if (markers.length < 2) {
     markers.push(p);
   } else {
@@ -3714,18 +3893,54 @@ function moveMarker(index, t) {
 }
 
 /**
- * Let go of a dragged marker: it settles (P13) unless ``exact``.
+ * Let go of marker ``index`` of profile ``ms``, dragged on the plot or on the image: it settles (P13)
+ * unless ``exact``, on the mean ``mean``, within 12 pixels of where it was let go, with ``perPixel``
+ * samples to a pixel there.
+ * @param {FixedMeasurement} ms
+ * @param {number} index
+ * @param {boolean} exact
+ * @param {Float64Array} mean
+ * @param {number} perPixel
+ */
+function settleMarker(ms, index, exact, mean, perPixel) {
+  const markers = ms.markers;
+  if (markers === undefined || markers[index] === undefined) {
+    return;
+  }
+  const t = markerPlace(ms.points, markers[index], app.frame);
+  markers[index] = pointAlong(ms.points, settledFraction(mean, t, exact, perPixel));
+  refreshMeasurements();
+  render();
+}
+
+/**
+ * Let go of a marker dragged by its tick on the image: it settles (P13) unless ``exact``, within 12
+ * pixels of the screen along the line where it was let go.
+ * @param {FixedMeasurement} ms
  * @param {number} index
  * @param {boolean} exact
  */
-function settleMarker(index, exact) {
-  const ms = shownProfile();
-  if (ms === null || ms.markers === undefined) {
+function letGoMarker(ms, index, exact) {
+  const data = profileData(ms);
+  if (data === null) {
+    refreshMeasurements();
     return;
   }
-  ms.markers[index] = pointAlong(ms.points, settledFraction(markerPlace(ms.points, ms.markers[index], app.frame), exact));
-  refreshMeasurements();
-  render();
+  const [a, b] = ms.points.map((p) => storedToScreen(p[0], p[1]));
+  const perPixel = (data.profile.mean.length - 1) / Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1]));
+  settleMarker(ms, index, exact, data.profile.mean, perPixel);
+}
+
+/**
+ * The marker under the pointer on the plot, within its axes (0: A, 1: B), -1 for none.
+ * @param {PointerEvent} e
+ * @returns {number}
+ */
+function plotMarkerAt(e) {
+  const r = profileCanvas.getBoundingClientRect();
+  const [x, y] = [e.clientX - r.left, e.clientY - r.top];
+  const within = x >= profilePlot.left && x <= profilePlot.right && y >= profilePlot.top && y <= profilePlot.bottom;
+  return within ? markerUnder(e) : -1;
 }
 
 /** Clear A and B of the shown profile: an edit that Ctrl+Z undoes. */
@@ -3786,10 +4001,13 @@ function exportProfilePng(ms = shownProfile()) {
 // A profile is squared to the edge it crosses (MATH.md 6.6): to the normal of a traced contour it
 // crosses (the crossing nearest its middle), else of the image's strongest edge along it, whose
 // direction the structure tensor gives on the stored grid (P8), (P9), carried to the corrected view
-// (P7).  New profiles are squared while the option is on, unless placed with Alt or Exact or further
-// off square than MAX_TURN_DEG, as an edit of their own that Ctrl+Z undoes; so is a profile whose
-// end is dragged, when let go, about its other end, which stays.  E squares the profile edited,
-// whatever the turn.  Either way a note beside the cursor tells, for a moment, what was done.
+// (P7).  While the option is on, a magnet does so as an end of a profile moves, the second end of a
+// new one or an end dragged: it turns the profile about its other end, which stays, once the
+// profile is within 5° of square, and holds it until it is more than 8° off (P11); Alt or Exact
+// keeps it as it is.  A ⊥ mark where it crosses the edge, and the edge's direction dashed, show
+// that it holds, and a click or a release keeps what they show.  E squares the profile edited about
+// its crossing, whatever the turn, as an edit of its own, and a note beside the cursor tells, for a
+// moment, what was done.
 
 /**
  * The strongest edge along a line: where the edge strength (E1), sampled about a stored pixel
@@ -3866,50 +4084,100 @@ function squareProfile(points, keep = null) {
 }
 
 /**
- * Square a profile to the edge it crosses, as an edit of its own that Ctrl+Z undoes, and tell what
- * was done: in the status bar, and in a note beside ``at`` (canvas CSS pixels; null: beside the
- * place where it crosses the edge).  A profile further off square than ``maxTurnDeg`` stays as it is.
- * With ``keep`` (0 or 1), the profile turns about that end, which stays: the end not moved when
- * another was dragged.
- * @param {FixedMeasurement} ms
- * @param {Point|null} at
- * @param {number} maxTurnDeg     MAX_TURN_DEG for a new or moved profile, Infinity for E
- * @param {number|null} [keep]
+ * E: square the profile edited to the edge it crosses, whatever the turn, about the crossing, as an
+ * edit of its own that Ctrl+Z undoes, and tell what was done: in the status bar, and in a note
+ * beside the cursor (or, without one, beside the place where it crosses the edge).
  */
-function squareMeasurement(ms, at, maxTurnDeg, keep = null) {
-  const result = squareProfile(ms.points, keep);
-  const near = at ?? storedToScreen(result.pivot[0], result.pivot[1]);
-  const as = keep === null ? "as drawn" : "as dragged";
-  if ("reason" in result) {
-    setStatus(`${ms.name} stays ${as}: ${result.reason}.`);
-    flashNote("not squared", near, false);
-    return;
-  }
-  const turned = `${result.turnedDeg.toFixed(1)}°`;
-  const to = result.to ?? "the image's edge";
-  if (result.turnedDeg > maxTurnDeg) {
-    setStatus(`${ms.name} stays ${as}: it is ${turned} off square to ${to}, more than the ${maxTurnDeg}° a ` +
-      "profile turns by itself.  E squares it.");
-    flashNote(`not squared: ${turned} off`, near, false);
-    return;
-  }
-  pushHistory();
-  ms.points = result.points;
-  setStatus(`${ms.name} squared to ${to}${keep === null ? "" : ", about the end not moved"}: turned ${turned}.  ` +
-    `Ctrl+Z gives it back ${as}; ${keep === null ? "Alt+click places a profile" : "Alt when letting go keeps it"} ${as}.`);
-  flashNote(`⊥ ${result.to ?? "edge"}, ${turned}`, near, true);
-}
-
-/** E: square the profile edited to the edge it crosses, whatever the turn. */
 function squareSelected() {
   const ms = shownProfile();
   if (ms === null) {
     setStatus("Select a profile first: E squares it to the edge it crosses.");
     return;
   }
-  squareMeasurement(ms, app.cursorScreen, Infinity);
+  const result = squareProfile(ms.points);
+  const near = app.cursorScreen ?? storedToScreen(result.pivot[0], result.pivot[1]);
+  if ("reason" in result) {
+    setStatus(`${ms.name} stays as it is: ${result.reason}.`);
+    flashNote("not squared", near, false);
+    return;
+  }
+  const turned = `${result.turnedDeg.toFixed(1)}°`;
+  pushHistory();
+  ms.points = result.points;
+  setStatus(`${ms.name} squared to ${result.to ?? "the image's edge"}: turned ${turned}.  Ctrl+Z gives it back.`);
+  flashNote(`⊥ ${result.to ?? "edge"}, ${turned}`, near, true);
   refreshMeasurements();
   render();
+}
+
+/**
+ * The magnet: the profile ``points`` turned about its end ``keep`` square to the edge it crosses,
+ * while it is near enough square (magnetHolds, the looser angle once ``held``); null when it lets go,
+ * when the option is off, when no edge along it has a direction, or when it is too short on screen
+ * to have a direction of its own.
+ * @param {Point[]} points     as the pointer has them
+ * @param {number} keep        the end that stays
+ * @param {boolean} held       whether the magnet held it at the last move
+ * @returns {Magnet|null}
+ */
+function magnetPull(points, keep, held) {
+  const [a, b] = points.map((p) => storedToScreen(p[0], p[1]));
+  if (!settings.squareProfiles() || Math.hypot(b[0] - a[0], b[1] - a[1]) < MAGNET_MIN_PX * handleScale()) {
+    return null;
+  }
+  const result = squareProfile(points, keep);
+  return "reason" in result || !magnetHolds(result.turnedDeg, held) ? null
+    : { points: result.points, keep, pivot: result.pivot, to: result.to };
+}
+
+/**
+ * The magnet on the second end of a profile being placed, the cursor at stored ``at`` (null: off
+ * the view); Alt or Exact keeps it off.
+ * @param {Point|null} at
+ */
+function pullPending(at) {
+  const p = app.pending;
+  if (p === null || p.kind !== "profile" || p.points.length !== 1) {
+    return;
+  }
+  p.magnet = at === null || app.altHeld || app.exactOnce ? null : magnetPull([p.points[0], at], 0, p.magnet !== null);
+}
+
+/**
+ * While the magnet holds a profile square: a ⊥ mark where the profile crosses the edge, and the
+ * edge's direction, dashed, through that crossing and beyond the band.  On screen as in the view,
+ * the edge runs square to the profile, and it passes through the place where it was found; the
+ * crossing is that place's foot on the profile.
+ * @param {(p: Point) => Point} toScreen
+ */
+function drawMagnet(toScreen) {
+  const m = app.drag?.magnet ?? app.pending?.magnet ?? null;
+  if (m === null) {
+    return;
+  }
+  const [a, b] = m.points.map(toScreen);
+  const p = toScreen(m.pivot);
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (!(length > 0)) {
+    return;
+  }
+  const u = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];      // along the profile
+  const e = [-u[1], u[0]];                                          // along the edge
+  const s = (p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1];
+  /** @type {Point} */
+  const c = [a[0] + s * u[0], a[1] + s * u[1]];
+  const width = app.drag === null ? app.profileWidth : app.measurements[app.drag.index].width ?? app.profileWidth;
+  const reach = (width / 2) * app.view.s + MAGNET_EDGE_PX;          // a view unit is s screen pixels
+  const edge = new Path2D();
+  addSegment(edge, [c[0] - reach * e[0], c[1] - reach * e[1]], [c[0] + reach * e[0], c[1] + reach * e[1]]);
+  strokeOverlay(edge, PREVIEW_COLOR, { dash: [6, 4], width: 1.4 });
+  const k = MAGNET_MARK_PX * handleScale() * (m.keep === 0 ? 1 : -1);  // the mark's legs: towards the end that moves
+  const j = MAGNET_MARK_PX * handleScale();
+  const mark = new Path2D();
+  mark.moveTo(c[0] + k * u[0], c[1] + k * u[1]);
+  mark.lineTo(c[0] + k * u[0] + j * e[0], c[1] + k * u[1] + j * e[1]);
+  mark.lineTo(c[0] + j * e[0], c[1] + j * e[1]);
+  strokeOverlay(mark, PREVIEW_COLOR, { width: 1.6 });
 }
 
 /**
@@ -4257,9 +4525,9 @@ function insertVertexAfter(index, vi) {
 
 /**
  * Start dragging what lies under a screen point with the current tool: a contour's vertex (contour
- * tool), or the width handle of the profile edited or another measurement's point (the other
- * tools, unless one is being placed).  What is dragged becomes the measurement edited.  Returns
- * whether a drag began.
+ * tool), or the width handle of the profile edited, another measurement's point, or the tick of a
+ * profile's marker (the other tools, unless one is being placed).  What is dragged becomes the
+ * measurement edited.  Returns whether a drag began.
  * @param {number} sx
  * @param {number} sy
  * @returns {boolean}
@@ -4270,15 +4538,20 @@ function startDragAt(sx, sy) {
   }
   const contour = app.tool === "contour";
   if (!contour && hitWidthHandle(sx, sy)) {
-    app.drag = { kind: "width", index: app.selected, point: 0, moved: false, before: snapshot() };
+    app.drag = { kind: "width", index: app.selected, point: 0, moved: false, before: snapshot(), magnet: null };
     return true;
   }
   const hit = hitPoint(sx, sy, contour);
-  if (hit === null) {
+  const marker = hit === null && !contour ? hitMarker(sx, sy) : null;
+  if (hit !== null) {
+    app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false, before: snapshot(), magnet: null };
+  } else if (marker !== null) {
+    app.drag = { kind: "marker", index: marker.index, point: marker.marker, moved: false, before: snapshot(), magnet: null };
+  } else {
     return false;
   }
-  app.drag = { kind: "point", index: hit.index, point: hit.point, moved: false, before: snapshot() };
-  focusMeasurement(hit.index);
+  app.markerHover = null;
+  focusMeasurement(app.drag.index);
   refreshMeasurements();
   render();
   return true;
@@ -4334,7 +4607,9 @@ function setOriginAt(sx, sy) {
 }
 
 /**
- * Move what is dragged to stored (x, y): a point, or the band width of a profile.
+ * Move what is dragged to stored (x, y): a point, the band width of a profile, or a marker, which
+ * goes where (x, y) projects onto its profile (P12).  A profile's end goes where the magnet pulls
+ * it, unless Alt or Exact.
  * @param {number} x
  * @param {number} y
  */
@@ -4344,12 +4619,24 @@ function dragTo(x, y) {
     pushHistory(app.drag.before);    // the drag becomes an edit with its first move
   }
   if (points !== null && app.drag !== null) {
-    points[app.drag.point] = [x, y];
+    const k = app.drag.point;
+    points[k] = [x, y];
+    if (app.measurements[app.drag.index].kind === "profile") {
+      const magnet = app.altHeld || app.exactOnce ? null : magnetPull(points, 1 - k, app.drag.magnet !== null);
+      app.drag.magnet = magnet;
+      points[k] = magnet?.points[k] ?? points[k];
+    }
     app.drag.moved = true;
   } else if (app.drag !== null && app.drag.kind === "width") {
     const ms = app.measurements[app.drag.index];
     ms.width = widthFromPoint(ms.points, app.frame, [x, y]);
     app.profileWidth = ms.width;
+    app.drag.moved = true;
+  } else if (app.drag !== null && app.drag.kind === "marker") {
+    const ms = app.measurements[app.drag.index];
+    const markers = ms.markers ?? [];
+    markers[app.drag.point] = pointAlong(ms.points, markerPlace(ms.points, [x, y], app.frame));
+    ms.markers = markers;
     app.drag.moved = true;
   }
   if (app.drag !== null) {
@@ -4359,9 +4646,8 @@ function dragTo(x, y) {
 
 /**
  * Release what is dragged at stored (x, y).  A point snaps unless ``exact``; a profile's end never
- * does, but the profile is then squared about its other end while that option is on, unless
- * ``exact``.  A vertex let go without moving is selected in the vertex window (added or removed
- * with ``toggle``).
+ * does, but stays where the magnet pulls it, as the drag showed, unless ``exact``.  A vertex let go
+ * without moving is selected in the vertex window (added or removed with ``toggle``).
  * @param {number} x
  * @param {number} y
  * @param {boolean} exact
@@ -4381,6 +4667,11 @@ function endDrag(x, y, exact, toggle) {
     }
     return;
   }
+  const dragged = app.measurements[drag.index];
+  if (drag.kind === "marker" && dragged.kind === "profile") {
+    letGoMarker(dragged, drag.point, exact);
+    return;
+  }
   if (drag.kind === "width" || points === null) {
     refreshMeasurements();
     return;
@@ -4388,9 +4679,10 @@ function endDrag(x, y, exact, toggle) {
   const ms = app.measurements[drag.index];
   const asIs = takeExact() || exact;
   points[drag.point] = (asIs || ms.kind === "profile" ? null : snapTarget(x, y)) ?? [x, y];
-  if (ms.kind === "profile" && settings.squareProfiles() && !asIs) {
-    // a step of its own after the drag's: Ctrl+Z gives it back as dragged
-    squareMeasurement(ms, storedToScreen(x, y), MAX_TURN_DEG, 1 - drag.point);
+  const pulled = ms.kind === "profile" && !asIs ? magnetPull(points, 1 - drag.point, drag.magnet !== null) : null;
+  if (pulled !== null) {
+    points[drag.point] = pulled.points[drag.point];
+    setStatus(`${ms.name} squared to ${pulled.to ?? "the image's edge"}; Alt while dragging keeps it as dragged.`);
   }
   refreshMeasurements();
   render();
@@ -4431,7 +4723,7 @@ function snapsNow() {
  */
 function draggedPoints() {
   const d = app.drag;
-  return d === null || d.kind === "width" ? null : app.measurements[d.index].points;
+  return d === null || d.kind !== "point" ? null : app.measurements[d.index].points;
 }
 
 // ------------------------------------------------------------------------- touch tools
@@ -4562,8 +4854,8 @@ function holdFired() {
 
 /**
  * The actions for the point a finger was held on: for a contour's vertex, the vertex's, then for any
- * measurement its own.
- * @param {{kind: "point"|"width", index: number, point: number}} target
+ * measurement its own (also for a profile's band width or marker).
+ * @param {{kind: "point"|"width"|"marker", index: number, point: number}} target
  * @returns {Array<{label: string, act: () => void, disabled?: boolean}>}
  */
 function holdMenuItems(target) {
@@ -4887,6 +5179,8 @@ canvas.addEventListener("pointermove", (e) => {
   app.cursorScreen = [sx, sy];
   trackModifiers(e);
   dragTo(x, y);
+  pullPending([x, y]);
+  hoverMarker(app.drag === null ? markerAt(sx, sy) : null);
   app.preview = insideImage(x, y) && !e.altKey && snapsNow() ? snapTarget(x, y) : null;
   showCursor(x, y);
   render();
@@ -4922,6 +5216,10 @@ canvas.addEventListener("pointerleave", () => {
   app.preview = null;
   app.cursor = null;
   app.cursorScreen = null;
+  pullPending(null);
+  if (app.drag === null) {
+    hoverMarker(null);
+  }
   render();
 });
 
@@ -5459,14 +5757,18 @@ profileCanvas.addEventListener("pointermove", (e) => {
   } else if (press !== null && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4) {
     profilePlot.press = null;
   }
+  // over a marker, a mouse or pen gets a two-way arrow, and the marker a halo here and on the image
+  profilePlot.hover = drag === null && e.pointerType !== "touch" ? plotMarkerAt(e) : -1;
+  profileCanvas.style.cursor = drag !== null || profilePlot.hover >= 0 ? "ew-resize" : "";
   profilePlotPointer(e);
 });
 profileCanvas.addEventListener("pointerup", (e) => {
   const { markerDrag: drag, press } = profilePlot;
   profilePlot.markerDrag = null;
   profilePlot.press = null;
-  if (drag !== null && drag.moved) {               // a press without moving changed nothing, and recorded nothing
-    settleMarker(drag.index, e.altKey);
+  const [ms, data] = [shownProfile(), profilePlot.data];
+  if (drag !== null && drag.moved && ms !== null && data !== null) {   // a press without moving changed nothing
+    settleMarker(ms, drag.index, e.altKey, data.profile.mean, plotPerPixel(data));
   } else if (press !== null) {
     placeMarker(plotFraction(e), e.altKey);
   }
@@ -5487,6 +5789,8 @@ profileCanvas.addEventListener("pointerleave", (e) => {
     return;                          // a lifted finger leaves its reading in place
   }
   app.profileCursor = null;
+  profilePlot.hover = -1;
+  profileCanvas.style.cursor = "";
   showProfileReadout();
   drawProfilePlot();
   render();
@@ -5601,6 +5905,6 @@ Object.assign(window, {
     gdsFile, setLevels, brightnessMoved, contrastMoved, drawHistogram, paintPicture, toggleProfileWindow,
     refreshProfileWindow, shownProfile, profileData, profileMean, setProfileWidth, exportProfile, exportProfilePng,
     profilePlot, selectOnly, toggleChecked, checkRange, checkAll, deleteMeasurements, downloadItems, refreshMeasurements,
-    squareProfile, squareSelected,
+    squareProfile, squareSelected, magnetPull,
   },
 });

@@ -114,22 +114,29 @@ Every operation can be undone.
 
 The *Profile* tool (5) takes the grey values along a line, averaged across a band around it.
 
-- **Placing.** Click both ends. The ends are never snapped, since a profile runs across edges, not along them; the profile is squared instead (below). Drag an end to move it: when it is let go, the profile is squared again, about the other end.
-- **Squaring.** A new profile turns to run square to the edge it crosses, as seen on screen. It turns about the point where it crosses the edge, and keeps its length and that point's place along it. The edge is:
+- **Placing.** Click both ends. The ends are never snapped, since a profile runs across edges, not along them; a magnet squares the profile instead (below). Drag an end to move it.
+- **The magnet.** While an end moves, a magnet holds the profile square to the edge it crosses, as seen on screen. The end may be the second end of a new profile, following the cursor, or an end being dragged. The profile turns about its other end, which stays where it is, and keeps the length the moving end was taken to.
+  - It catches the profile once it is within 5° of square, and lets go only when it is more than 8° off, so that the end does not flicker at the border.
+  - While it holds, a magenta ⊥ mark sits where the profile crosses the edge, and the edge's direction is drawn dashed through it.
+  - The click, or the release of the drag, keeps what is shown: square while the magnet holds, else as drawn.
+  - A profile drawn square by eye is a few degrees off, and is caught. One drawn at an angle on purpose, for instance horizontally across a sloped sidewall, is usually further off, and stays as drawn.
+
+  The edge is:
   - a traced contour the profile crosses, if there is one (of the crossings, the one nearest the profile's middle);
   - else the image's strongest edge along the profile. Its direction comes from the gradients around the crossing, through the structure tensor, which averages them without letting the two flanks of a bright line cancel (MATH.md 6.6).
 
-  A profile whose end was dragged turns instead about its other end, which stays where it is, and keeps the length it was dragged to. The crossing then slides a little along the edge: by $s\sin\delta$ for a crossing $s$ from that end and a profile $\delta$ off square (MATH.md 6.6).
+  As the profile turns about its end, the crossing slides a little along the edge: by $s\sin\delta$ for a crossing $s$ from that end and a profile $\delta$ off square (MATH.md 6.6).
 
-  For a moment a note beside the cursor shows what was done and the angle turned: "⊥ edge, 4.2°", or the contour's name for a contour. The profile stays as drawn, with "not squared" and the reason in the status bar, in three cases:
-  - no edge along it reaches the snapping threshold;
-  - the edge has no single direction there: a corner, a junction or a tight curve;
-  - it is more than 15° off square ("not squared: 34.1° off"). Such a profile was most likely drawn at its angle on purpose, for instance horizontally across a sloped sidewall. A profile drawn square by eye is a few degrees off.
+  The magnet does not catch a profile:
+  - when no edge along it reaches the snapping threshold;
+  - when the edge has no single direction there: a corner, a junction or a tight curve;
+  - when the profile is shorter than 16 screen pixels (26 after touch), too short for its direction to mean much.
 
   How to keep or redo it:
-  - Ctrl+Z right after gives the profile back as drawn, or as dragged; a second Ctrl+Z removes it, or undoes the drag.
-  - Alt+click places a profile as drawn, and Alt held when a dragged end is let go keeps it as dragged.
-  - E squares the profile edited whatever the angle, for instance when it was more than 15° off. It turns about the crossing, as for a new profile.
+  - Alt, held while placing or dragging, turns the magnet off: the profile stays as drawn or as dragged. On a touch screen, *Exact* does the same for one end.
+  - On a touch screen nothing shows the magnet before a tap. A tap it pulls shows "⊥ edge" beside it for a moment, or the contour's name for a contour.
+  - Ctrl+Z undoes the drag, or removes the new profile.
+  - E squares the profile edited whatever the angle. It turns about the crossing, and keeps the profile's length and the crossing's place along it. For a moment a note beside the cursor shows what was done and the angle turned: "⊥ edge, 4.2°", or the contour's name. When there is nothing to square to, it shows "not squared", with the reason in the status bar.
   - *square profiles to the edge they cross*, under *Snapping*, is on from the start.
 - **The band.** It is a rectangle as seen on screen, whatever the tilt correction or rotation. Its width is in the measurement unit, or in pixels of the corrected view.
   - Widen or narrow it by dragging the white square on its side. The profile must be selected for the square to show.
@@ -143,15 +150,19 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - every contour that crosses the line, as a dashed line in the contour's colour with its name;
   - the markers A and B, as solid dark lines, with the distance between them on a double arrow.
 
-  Point at the plot to read the distance, the mean and the spread there; the image marks the same place with a magenta tick. Where part of the band lies outside the image, the reading also gives how many of its values are left. The note under the plot gives the number of samples along the line and, when contours cross it, which and where along it. Drag the window by its title bar, anywhere on the page, over the panel too, and resize it from its lower right corner.
+  Point at the plot to read the distance, the mean and the spread there; the image marks the same place with a magenta tick. Over a marker, the magenta line and tick give way to the marker, which shows the place itself. Where part of the band lies outside the image, the reading also gives how many of its values are left.
+
+  Under the plot are two lines, one line each whatever they hold, so that the plot keeps its size. The first gives the reading, or a hint. The second gives the markers once placed (below); before that, the number of samples along the line and, when contours cross it, which and where along it. A line too long for the window ends in an ellipsis, and its tooltip gives it whole. Drag the window by its title bar, anywhere on the page, over the panel too, and resize it from its lower right corner.
 - **Markers A and B** measure a distance along the profile, for instance from one edge to the other.
-  - A click on the plot places A, a second one B. Later clicks move the nearer marker, and a marker can be dragged. A drag that starts elsewhere still reads values, and places nothing. *Clear A, B* removes both. Each of these is an edit that Ctrl+Z undoes.
-  - The line under the reading gives where each marker is, the mean there, and the distance A–B. On the image, each is a tick across the band, in the profile's colour, with its letter.
-  - *snap A, B to the steepest slope*, in the window and on from the start, lets a marker settle where the profile is steepest within 12 pixels of the plot. This is where an edge is, for an edge-to-edge distance.
+  - A click on the plot places A, a second one B. Later clicks move the nearer marker. *Clear A, B* removes both.
+  - A marker can be dragged along the profile, by its line on the plot or by its tick on the image. On the image this works with any tool but *Pan* and *Contour*, as for points; a point or the band's square under the pointer comes first. Over a marker the pointer turns into a two-way arrow, and the marker gets a halo, on the plot and the image alike. A drag that starts elsewhere on the plot still reads values, and places nothing.
+  - Each of these is an edit that Ctrl+Z undoes.
+  - The second line under the plot gives where each marker is, the mean there, and the distance A–B. On the image, each is a thin tick across the band, in the profile's colour, with its letter, so that where it crosses the image reads closely.
+  - *snap A, B to the steepest slope*, in the window and on from the start, lets a marker settle where the profile is steepest within 12 pixels of where it was put: of the plot, or of the screen along the line when it is let go on the image. This is where an edge is, for an edge-to-edge distance.
     - The slope is that of the mean, smoothed from the edge map's σ up to 4 times it. The edge clicked is the one the finest of these scales finds; the coarser ones place it, and the one where it stands out of the noise best wins, as long as they find it where it was and no other edge is in their reach. A gradual edge in a noisy FIB image is thus placed nearly as well as a sharp one, and a weak edge is not given up for a stronger one nearby, nor merged with a step beside it.
     - Of two edges in reach, such as a bright line's flanks, the nearer is taken.
     - A marker snaps only where the slope stands out of the noise by more than the edge map's *min. edge strength*. As for a click on the image, the threshold rises with the search, so that a click on flat noise rarely snaps: about 4 times the noise at the default 3. The noise is measured near the click, leaving out stretches clipped to black or white and the edges there. A profile that runs mostly through a dark, quiet region thus does not lower the threshold for a noisier part, nor does a strong edge nearby raise it.
-    - It also stays where it was put when the steepest point is poorly placed: when no scale places it better than 2 samples, or 2 pixels of the plot, about what a click is good to. A long ramp of nearly constant slope has no steepest point to snap to.
+    - It also stays where it was put when the steepest point is poorly placed: when no scale places it better than 2 samples, or 2 pixels of the plot or the screen, about what a click is good to. A long ramp of nearly constant slope has no steepest point to snap to.
     - Alt places or lets go of one exactly. MATH.md 6.7 derives all this.
   - A marker is kept as a point of the image, and its place along the line is where it projects onto it. When the profile is moved, the markers therefore stay on their features of the image. After squaring, a marker on a straight edge lies on the edge where the turned profile crosses it.
 - **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band, the crossings, and the markers with the distance between them.
@@ -232,7 +243,7 @@ With *Snap* on, as it is from the start (S switches it), a click lands on the st
 - **Candidates and choice.** Candidates are the crest pixels within the *search radius*, measured in pixels of the corrected view. The choice weighs strength against distance, and a parabola places the point between pixels, to within 0.05 px for a crest one pixel wide. The point may slide a pixel or two **along** the edge.
 - **Where the map is computed.** The edge map is computed on the stored image, without the info bar, once per σ and median setting. The noise is independent pixel to pixel there and the probe round, so this is also the matched filter.
 - **Bright lines.** Many SEM edges appear as bright lines, which have two flanks. A click snaps to the flank nearest to it, so trace one flank consistently, or use Alt to place points on the line's centre.
-- **Profiles** are not snapped but squared to the edge they cross, when placed and when an end is dragged, while *square profiles to the edge they cross* is on (see *Line profiles*). The image's edge must reach *min. edge strength* times the median gradient: squaring looks along a line, not over a disc.
+- **Profiles** are not snapped. While *square profiles to the edge they cross* is on, a magnet holds a profile square to the edge it crosses as an end moves (see *Line profiles*). The image's edge must reach *min. edge strength* times the median gradient: squaring looks along a line, not over a disc.
 
 *Show the edge map* (G) overlays the edge strength in green, which shows what the snapping sees.
 
@@ -349,7 +360,7 @@ Touch has no hover, so the previews that follow the cursor (snap, insert with Ct
   Held on empty image, nothing happens, and lifting the finger places nothing.
 - **The measurement list** takes a tap as a click. A tap on a row selects it alone, a tap on its box adds it to the selection or takes it out, and two taps on a row open its window. Its rows and boxes are larger in the touch layout.
 - **Larger targets.** A finger hits a point within 22 px, where the mouse needs 8. After touch input, points and handles are drawn larger. Snapping searches 2.5 times the search radius for a finger, which covers far more of the image than a cursor. The panel's buttons, fields and boxes grow to finger size as well.
-- **Floating windows** get title bars and close buttons 44 px tall, and a resize corner that answers a finger; the browser's own corner answers the mouse only.
+- **Floating windows** get title bars 34 px tall, with close buttons of 40 × 30 px, and a resize corner that answers a finger; the browser's own corner answers the mouse only.
 - **The profile plot** reads out under a finger dragged along it, and the reading stays after the finger lifts. A tap places a marker, and a marker can be dragged by a finger.
 - **Number fields** open the number keypad of the Windows touch keyboard.
 - **A long press on the controls** no longer selects their text.
@@ -367,10 +378,10 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | hold Ctrl | contour: show the segment that will receive the vertex and where it will land |
 | click, Shift+click a vertex | contour: select it in the vertex window; add or remove it |
 | Alt+click | place the point exactly, without snapping |
-| drag a point | move a vertex or a measurement point; it snaps when released (Alt: not). A profile's end never snaps; the profile turns square about its other end instead (Alt: not) |
+| drag a point | move a vertex or a measurement point; it snaps when released (Alt: not). A profile's end never snaps; the magnet holds the profile square about its other end instead (Alt: not) |
 | drag the white square | widen or narrow the band of the selected profile |
 | click on the profile plot | place marker A, then B, then move the nearer one; snapped to the steepest slope while that option is on (Alt: exactly) |
-| drag a marker on the plot | move it; it snaps when let go (Alt: not); a drag that starts elsewhere reads values |
+| drag a marker, on the plot or by its tick on the image | move it along the profile; it snaps when let go (Alt: not); on the plot, a drag that starts elsewhere reads values |
 | right click | contour: delete the vertex; other tools: delete the measurement, or cancel the one being placed |
 | wheel, touchpad pinch | zoom about the cursor |
 | middle drag, Space+drag; drag with no tool | pan |
@@ -385,7 +396,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | S, G | snapping on or off; edge map on or off |
 | T | show or hide the vertex window of the selected contour |
 | P | show or hide the profile window; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
-| E | square the selected profile to the edge it crosses, whatever the angle; new and moved profiles up to 15° off square are squared while the option under *Snapping* is on (Alt with the click or the release: as it is; Ctrl+Z right after: back as it was) |
+| E | square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5° of square while the option under *Snapping* is on (Alt: not) |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements |
 | Delete | delete the selected vertices, else the selected measurements, contours included |
@@ -403,7 +414,7 @@ The costs, measured on the FEI test image of 3072 × 2188 pixels (6.29 Mpx above
 - **The edge map** takes 1.1 s with σ = 2 and no median, 2.1 s with the 3 × 3 median (the default), and 4.2 s with 5 × 5. It is computed only when snapping or the overlay needs it, and again only when σ or the median changes.
 - **A snap search** takes microseconds.
 - **A line profile** reads about 20 ns per value: 4.9 ms for 3001 samples along a band of 83 lines. A profile and its window are therefore computed again at every step of a drag; MATH.md 6.8 describes how the loop is tuned.
-- **Squaring a profile** takes microseconds: a search along its line and one structure tensor of a few hundred pixels.
+- **Squaring a profile** takes microseconds: a search along its line and one structure tensor of a few hundred pixels. The magnet therefore runs at every move of the pointer: about 20 µs, and 0.3 ms for the whole move with the profile window open, measured in Chromium on the laptop of the rotation slider below.
 - **Calibration and rotation changes**, panning and zooming cost one GPU-drawn frame.
 - **Dragging the rotation slider** costs about 0.5 ms a frame on an Intel Iris Xe, the GPU's work included, with the FEI image fitted to the view. Zoomed out, the picture is drawn through mipmaps, so its pixels' noise neither aliases nor shimmers as it turns. With the default filtering, the step between neighbouring screen pixels was twice as large as with the mipmaps.
 - **Memory**: about 180 MB for that image with the overlay shown.
@@ -511,7 +522,8 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
     - the direction's scatter over noisy images, against one gradient and a sum of gradient vectors;
     - the turn, which keeps the length, the crossing's place and the sense;
     - the turn about the end not moved, which keeps that end, and the crossing's slide along a straight edge;
-    - a contour segment's normal.
+    - a contour segment's normal;
+    - the magnet, as an end sweeps across square and back: where it catches and lets go, and the profile it holds square, with the end kept to the last bit.
   - Markers:
     - a point off the line, in a tilted, turned frame, placed where it projects, and points beyond the ends held to them;
     - the mean between samples;
@@ -551,7 +563,7 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - The window shows the selected profile only.
   - The plot's y axis spans 0 to the full scale of the file's sample format, not of the detector: 12-bit values stored in 16 bits fill a sixteenth of it, and a profile over a small part of the range plots nearly flat. *Export CSV* has the values in full.
   - Crossings are those of contours with the centre line; other measurements are not marked.
-  - Squaring turns a profile to one edge: the contour crossing nearest its middle, else the strongest edge. A profile meant to cross a feature at a set angle stays as drawn when it is more than 15° off square. One nearer to square, such as a horizontal profile across a sidewall steeper than 75°, is turned; Ctrl+Z gives it back as drawn, and Alt+click places it so.
+  - Squaring turns a profile to one edge: the contour crossing nearest its middle, else the strongest edge. A profile meant to cross a feature at a set angle stays as drawn when it is more than 5° off square. One nearer to square, such as a horizontal profile across a sidewall steeper than 85°, is caught by the magnet; Alt, held while placing or dragging, keeps it as drawn.
 - **Tilt correction.**
   - It is exact only in the chosen plane.
   - It assumes an orthographic projection, which holds to a fraction of a pixel at usual magnifications (MATH.md, 1.2).

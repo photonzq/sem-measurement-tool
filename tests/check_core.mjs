@@ -40,7 +40,8 @@
 //    in a tilted, turned frame, on a step, a bright line and a corner; the tensor of a noisy edge,
 //    on average, exact in a frame that stretches 3 times; the direction's scatter over noisy
 //    images, against one gradient and a sum of gradient vectors; the turn, also about the end not
-//    moved, with the crossing's slide along a straight edge; a segment's normal.  Markers (P12): placed
+//    moved, with the crossing's slide along a straight edge; a segment's normal; the magnet catching
+//    and letting go as an end sweeps across square and back.  Markers (P12): placed
 //    where they project, the mean between samples.  Snapping them (P13): sharp, gradual and noisy edges,
 //    a bright line's flanks, a ridge; the edge clicked, not merged with a step beside it nor taken by a
 //    stronger one farther off; nothing at the end of the data or on a clipped or quieter stretch; a
@@ -78,8 +79,8 @@ function loadApi() {
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
     reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness,
     sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle,
-    widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, markerPlace, profileValueAt,
-    snapToSlope, UTIF })`, context);
+    widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace,
+    profileValueAt, snapToSlope, UTIF })`, context);
 }
 
 const api = loadApi();
@@ -1775,6 +1776,50 @@ function checkSquaredAboutEnd() {
     `${(delta / DEG).toFixed(2)} deg)`);
 }
 
+/**
+ * The magnet (P11): an end dragged 100 view units from the end kept, swept across a straight edge in a tilted, turned
+ * frame from 20 deg off square on one side to 20 deg on the other and back, in steps of 0.5 deg that miss the borders.
+ * Caught within 5 deg and let go beyond 8, it catches at -4.75 deg and lets go at +8.25 on the way there, and catches at
+ * +4.75 and lets go at -8.25 on the way back.  The angle off square is the sweep's; while held, the profile is square
+ * to the edge in the view, keeps the end kept to the last bit and the length dragged to.
+ */
+function checkMagnet() {
+  const v = api.viewMatrix(SLANTED);
+  const toStored = api.matInverse(v);
+  const n = api.segmentNormal([40, 30], [47, 53], SLANTED);
+  const along = [-n[1], n[0]];
+  const a = [12, 18];
+  const end = (deg) => {                                   // a + V^-1 (100 (cos phi n + sin phi tau))
+    const [c, s] = [100 * Math.cos(deg * DEG), 100 * Math.sin(deg * DEG)];
+    const d = api.matApply(toStored, c * n[0] + s * along[0], c * n[1] + s * along[1]);
+    return [a[0] + d[0], a[1] + d[1]];
+  };
+  const there = Array.from({ length: 81 }, (_, k) => -20.25 + 0.5 * k);
+  const changes = [];
+  let [held, angle, square, length, kept] = [false, 0, 0, 0, true];
+  for (const deg of [...there, ...[...there].reverse()]) {
+    const r = api.squaredProfile([a, end(deg)], a, n, SLANTED);
+    angle = Math.max(angle, Math.abs(r.turnedDeg - Math.abs(deg)));
+    const holds = api.magnetHolds(r.turnedDeg, held);
+    if (holds !== held) {
+      changes.push(`${holds ? "catches at" : "lets go at"} ${deg}`);
+    }
+    held = holds;
+    if (held) {
+      const d = api.matApply(v, r.points[1][0] - a[0], r.points[1][1] - a[1]);
+      const l = Math.hypot(...d);
+      square = Math.max(square, Math.abs(d[0] * n[1] - d[1] * n[0]) / l);
+      length = Math.max(length, Math.abs(l - 100) / 100);
+      kept &&= r.points[0][0] === a[0] && r.points[0][1] === a[1];
+    }
+  }
+  const got = changes.join(", ");
+  check(got === "catches at -4.75, lets go at 8.25, catches at 4.75, lets go at -8.25" && angle < 1e-9
+    && square < 1e-12 && length < 1e-12 && kept,
+  `the magnet (P11), an end swept across square and back: ${got}; while held, square to the edge in the view of a ` +
+    "tilted, turned frame, the end kept to the last bit and the length dragged to");
+}
+
 const images = testImages(process.argv.slice(2));
 checkFei(images.feiFolder);
 checkZeiss(images.zeiss);
@@ -1813,5 +1858,6 @@ checkEdgeNormalExpected();
 checkEdgeNormalNoise();
 checkSquaredProfile();
 checkSquaredAboutEnd();
+checkMagnet();
 console.log(failures.length ? `FAIL: ${failures.length} check(s)` : "PASS");
 process.exit(failures.length ? 1 : 0);

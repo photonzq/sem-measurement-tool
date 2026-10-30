@@ -422,7 +422,7 @@ A ridge detector that finds line centres would be a natural addition.
 | Each redraw | one `drawImage` of the picture (and the overlay) through the affine transform; the vertices and labels | resampling on the GPU, through mipmaps when zoomed out (`imageSmoothingQuality` "high"), so that the pixels' noise neither aliases nor shimmers as the view turns; linear in the vertices |
 | Each pointer move with Snap on | one snap search (2.5, E8) | crest tests on the $\pi r^2/\lvert\det V\rvert$ stored pixels of the search ellipse: 356 for $r = 12$, $k = 1.27$ |
 | A profile shown, or dragged, or a contour crossing it edited | its samples (6.2–6.4) and crossings (6.5); the plot | $(N + 1)\,M$ bilinear values, about one per stored pixel of the band; the crossings linear in the contour vertices |
-| A profile squared (6.6) | the strongest edge along its line, and the structure tensor there; or the normal of a contour's segment | $N + 1$ bilinear values; at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$ |
+| A profile squared (6.6): by E, or by the magnet at each pointer move while an end moves | the strongest edge along its line, and the structure tensor there; or the normal of a contour's segment | $N + 1$ bilinear values; at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$ |
 
 ### 3.2 Measured times
 
@@ -854,21 +854,17 @@ $$t = \frac{w \times e}{d \times e}, \qquad q = \frac{w \times d}{d \times e}. \
 
 ### 6.6 Squaring a profile to an edge (P6)–(P11)
 
-A profile measures an edge best when it runs square to it, along the edge's normal as seen. A line drawn by hand is a few degrees off. While **square profiles to the edge they cross** is on (under Snapping, on by default), a new profile therefore turns, about the point where it crosses an edge, to run along that edge's normal. A profile whose end was dragged turns too, when the end is let go, but about its other end (*Turning about the end not moved*, below). **E** squares the profile edited about its crossing. The edge is:
+A profile measures an edge best when it runs square to it, along the edge's normal as seen. A line drawn by hand is a few degrees off. While **square profiles to the edge they cross** is on (under Snapping, on by default), a magnet therefore holds a profile square to the edge it crosses while one of its ends moves: the second end of a new profile as it follows the cursor, or an end being dragged. It turns the profile about its other end, which stays (*Turning about the end not moved*, below), once the profile is within 5° of square, and holds it so until it is more than 8° off (*The magnet*, below). **E** squares the profile edited about its crossing, whatever the angle. The edge is:
 
 1. a traced contour the profile crosses, if there is one: of the crossings, the one nearest the profile's middle (P10);
 2. else the image's strongest edge along the profile, whose direction the structure tensor gives (P7)–(P9).
 
-The profile turns about the crossing and keeps its length and the crossing's place along it (P11). A new or moved profile turns by itself only when it is at most 15° off square (*The largest turn*, below). The squaring is an edit of its own:
+While the magnet holds, a ⊥ mark sits where the profile crosses the edge, and the edge's direction is drawn dashed through it (*What the magnet shows*, below). The click that places the second end, or the release of the drag, keeps what is shown, and the squaring is part of that edit: one Ctrl+Z undoes both. Alt, held while placing or dragging, or Exact on a touch screen, keeps the profile as drawn.
 
-- Ctrl+Z gives the profile back as drawn, or as dragged;
-- Alt+click, or Exact, places a profile as drawn; Alt held, or Exact, when a dragged end is let go keeps it as dragged.
-
-For 1.6 s a note beside the cursor tells what was done:
+E turns the profile about the crossing and keeps its length and the crossing's place along it (P11). Its squaring is an edit of its own, which Ctrl+Z undoes. For 1.6 s a note beside the cursor tells what was done:
 
 - "⊥ edge, 4.2°" for the image's edge, with the contour's name in place of "edge" for a contour;
-- "not squared: 34.1° off" when the turn would exceed the cap;
-- "not squared" otherwise, with the reason in the status bar.
+- "not squared" when there is nothing to square to, with the reason in the status bar.
 
 **What being off square costs (P6).** Work in the view, where the band is a rectangle (P1). Let a straight edge have the unit normal $\hat n$ and the grey profile $f$ across it, so that near it the image is $I(q) = f\big(\hat n\cdot(q - q_e)\big)$, $q_e$ being a point of the edge. Let the profile's direction $t$ make the angle $\delta$ with $\hat n$, and take the axes so that
 
@@ -1159,13 +1155,13 @@ The profile turns through $\arccos(|\hat n\cdot Vd|/L)$, between 0 and 90°, whi
 - **The sense** keeps the plot from flipping: $u_1$ stays the end the plot starts from.
 - **The band's width** $w$, in view units, is kept.
 
-**Turning about the end not moved.** When an end of a profile is dragged and let go, the profile turns about its other end $a$, which stays, rather than about the crossing. This is (P11) with the pivot $p = a$: $t = 0$ when $a = u_1$, and $t = 1$ when $a = u_2$. The new ends are
+**Turning about the end not moved.** While an end of a profile moves, the magnet turns the profile about its other end $a$, which stays, rather than about the crossing. For a new profile, $a$ is the first end, placed already. This is (P11) with the pivot $p = a$: $t = 0$ when $a = u_1$, and $t = 1$ when $a = u_2$. The new ends are
 
 $$u_1' = u_1,\quad u_2' = u_1 + V^{-1}(\varsigma L\hat n) \qquad \text{or} \qquad u_1' = u_2 - V^{-1}(\varsigma L\hat n),\quad u_2' = u_2,$$
 
-with $L$ the view length the profile was dragged to. The normal $\hat n$ is still the edge's where the dragged line crosses it, at $c$ (P8)–(P10). The app keeps $a$ to the last bit; the rounding of $t$ near 1 would otherwise move it by about $10^{-16}L$.
+with $L$ the view length the moving end was taken to. The normal $\hat n$ is still the edge's where the line, as the pointer has it, crosses it, at $c$ (P8)–(P10). The app keeps $a$ to the last bit; the rounding of $t$ near 1 would otherwise move it by about $10^{-16}L$.
 
-Why the other end: it was placed and then left alone, so it is where the user wants it. The drag only says where the moved end should go, and turning about the crossing would move both ends.
+Why the other end: it was placed and then left alone, so it is where the user wants it. The pointer only says where the moving end should go, and turning about the crossing would move both ends.
 
 What it costs: the crossing slides along the edge. Take the edge straight through $c$, with the unit tangent $\hat\tau \perp \hat n$. Let the profile run at the angle $\delta$ to $\hat n$, with $c$ at the view distance $s$ from $a$. In the view, with the signs of $\hat n$ and $\hat\tau$ chosen to suit,
 
@@ -1175,7 +1171,7 @@ The turned centre line is $a + \lambda\hat n$. The edge is the set of points $x$
 
 $$c' = a + s\cos\delta\,\hat n, \qquad c' - c = -s\sin\delta\,\hat\tau.$$
 
-It slides along the edge by $s\sin\delta$, and comes nearer the end that stayed, from $s$ to $s\cos\delta$; the edge moves by $s\,(1 - \cos\delta)$ in the plot. For $\delta = 5°$ and $s = 100$ view units, that is 8.7 units along the edge and 0.38 units in the plot. At the cap, $\delta = 15°$, it is $0.26\,s$ and $0.034\,s$.
+It slides along the edge by $s\sin\delta$, and comes nearer the end that stayed, from $s$ to $s\cos\delta$; the edge moves by $s\,(1 - \cos\delta)$ in the plot. For $\delta = 5°$ and $s = 100$ view units, that is 8.7 units along the edge and 0.38 units in the plot. At the largest angle the magnet holds, $\delta = 8°$, it is $0.14\,s$ and $0.0097\,s$.
 
 On a straight edge nothing else changes: the normal is the same all along it, so the profile is square at $c'$ too. On an edge curving with the radius $R$, the normal turns between $c$ and $c'$ by the arc over the radius. The profile is then off square at $c'$ by about
 
@@ -1183,18 +1179,36 @@ $$\delta' \approx \frac{s\sin\delta}{R},$$
 
 0.5° for $s = 100$, $\delta = 5°$ and $R = 1000$ view units. A contour behaves alike: the profile is square to the segment it crossed, and stays so unless the crossing slides past a vertex onto the next segment. E turns about the crossing and so squares the profile exactly where it now crosses, at the price of moving both ends a little.
 
-**The largest turn.** A new profile, or one whose end was dragged, turns by itself only when it is at most $\delta_{\max} = 15°$ off square. Further off, it stays as drawn, and the note gives the angle. E, the profile window's *Square* button and the press-and-hold menu square it whatever the angle. The cap tells apart two kinds of profile:
+**The magnet.** It acts only while an end moves, so that what it does shows before the click or the release that keeps it. At each move of the pointer, let $\delta \in [0°, 90°]$ be the angle between the line as the pointer has it, from the end that stays to the pointer, and the edge's normal at $c$, as (P11) gives it. The magnet holds the profile square when
 
-- **Drawn square by eye.** Such a profile is off by the error of the eye and of the two clicks, typically a few degrees and well within the cap. Two clicks 100 screen pixels apart, each placed to about 2 px across the line, alone turn it by about $\sqrt2 \times 2/100$ rad, 1.6°.
-- **Drawn at an angle on purpose.** In a cross-section, a horizontal profile across a sloped sidewall at a set height is $90° - \alpha$ off square for a sidewall at $\alpha$ from the horizontal. That is 20–30° for sidewalls at 60–70°, which the cap leaves as drawn. A profile along an edge is 90° off.
+$$\delta \le \delta_c = 5° \ \text{ if it did not hold it at the last move,} \qquad \delta \le \delta_h = 8° \ \text{ if it did.}$$
 
-A horizontal profile across a sidewall steeper than 75° is turned; Ctrl+Z gives it back as drawn. The cap limits only when squaring acts unasked, not what it can correct. A profile 15° off square already widens an edge of $b = 2$ by 29 % in a band 20 wide (P6).
+Between the two angles it keeps its state: the rule has hysteresis. While it holds, the profile is (P11) about the end that stays; otherwise the moving end is at the pointer. The click that places the second end, or the release, applies the same rule where it happens, normally where the last move was, with the state of the last move, and so keeps the profile drawn last. Four choices make the rule:
+
+- **The catch, $\delta_c = 5°$, tells apart two kinds of profile.**
+  - *Drawn square by eye.* Such a profile is off by the error of the eye and of the two clicks, typically a few degrees, and is caught. Two clicks 100 screen pixels apart, each placed to about 2 px across the line, alone turn it by about $\sqrt2 \times 2/100$ rad, 1.6°.
+  - *Drawn at an angle on purpose.* In a cross-section, a horizontal profile across a sloped sidewall at a set height is $90° - \alpha$ off square for a sidewall at $\alpha$ from the horizontal. That is 20–30° for sidewalls at 60–70°, which the magnet leaves as drawn. A profile along an edge is 90° off.
+
+  Within the catch, a profile left as drawn would find the distance between two parallel edges up to 0.38 % too long, and an edge of $b = 2$ up to 3.5 % wider in a band 20 wide (P6). These are the errors the magnet removes. Since it shows where it would put the profile before the click, the catch can be narrow: a profile it does not catch is brought within 5° by eye, and a profile meant to be oblique by more than 5° stays so without Alt. E, the profile window's *Square* button and the press-and-hold menu square a profile whatever the angle.
+- **The hold, $\delta_h = 8°$, keeps the end from flickering.** A pointer at rest trembles by a pixel or so. When the end that moves is $\ell$ screen pixels from the end that stays, a move of $j$ pixels across the line turns it by
+  $$\Delta\delta \approx \frac{j}{\ell}\ \text{rad}.$$
+  With one border at 5°, a pointer resting near it would make the end jump between the pointer and the square position at every pixel of tremble. With the hysteresis, the line must turn by $\delta_h - \delta_c = 3° = 0.052$ rad after the catch before the magnet lets go: a move of $0.052\,\ell$ pixels across the line, 5.2 px for $\ell = 100$. A tremble of $j$ pixels stays below that for $\ell > j/0.052 \approx 19j$ pixels.
+- **The jumps.** When the magnet catches, the end jumps from the pointer to the square position along a circle about the end that stays, by the chord $2\ell\sin(\delta/2) \le 2\ell\sin(\delta_c/2) \approx \ell\,\delta_c$: 8.7 px for $\ell = 100$. When it lets go, the end jumps back to the pointer, by up to $2\ell\sin(\delta_h/2)$, 14 px. Both are large enough to see, which is the point of a magnet.
+- **Not on a short line.** One pixel across a line $\ell$ pixels long turns it by $1/\ell$ rad: 3.6° for $\ell = 16$, near the catch. The magnet leaves a line shorter than 16 screen pixels alone, as its direction says too little; after touch, 26 px, 1.6 times as far, as for the handles.
+
+The angle $\delta$ is that of the line as the pointer has it, not of the line the magnet holds: the latter is square by construction. On a straight edge, the direction found does not depend on where along the edge the line crosses it. On a wavy edge it does a little. At four places along a wavy layer boundary of the FEI test image, it varied by 1.3° to 4.2° as a line 60 screen pixels long turned by 28° about its end, so the angles at which the magnet catches and lets go move by as much there.
+
+**What the magnet shows.** While it holds, the view gets two marks, in the magenta of the snap preview:
+
+- **The edge's direction**, dashed: the line through the place where the edge was found on the line as the pointer has it, $c$, square to the profile held. In the view, and so on screen, which is the view scaled and mirrored (G11), a line square to the profile is the edge's tangent $\hat\tau$. The dashed line runs 32 screen pixels beyond the band on either side of the profile.
+- **The ⊥ mark**, a right-angle corner, where the profile held crosses that line. By *Turning about the end not moved*, above, that crossing is $c' = a + \big((c - a)\cdot\hat n\big)\hat n$: the foot of $c$ on the profile, found on screen by projecting $c$ onto it. The corner's legs, 9 px long (14 after touch), point along the profile towards the end that moves, and along the edge.
 
 **Where the image's edge is taken.** Without a contour, the edge is the strongest point along the centre line. The edge strength $|g|$ (E1) is sampled about one stored pixel apart, at $N + 1$ points as in (P2), and the largest sample at or above the snapping threshold (2.3) is taken. On a straight edge, $|g|$ depends only on the distance across it. Along any line that crosses it, square or not, the largest value therefore lies where the line crosses the crest, so the pivot does not depend on how far the line was off. The tensor is then taken there (P8). The profile stays as drawn when no sample reaches the threshold, or when the coherence is below 0.5 (P9).
 
 **Limits.**
 
-- A line that crosses several edges is squared to one: the contour crossing nearest its middle, or else the image's strongest edge. In a cross-section, a profile across a rib whose two sidewalls slope differently cannot be square to both. A profile meant to run across the rib at a set height stays as drawn when it is more than 15° off square to the sidewall. Nearer to square, it is turned: Ctrl+Z gives it back as drawn, and Alt+click places it so.
+- A line that crosses several edges is squared to one: the contour crossing nearest its middle, or else the image's strongest edge. In a cross-section, a profile across a rib whose two sidewalls slope differently cannot be square to both. A profile meant to run across the rib at a set height stays as drawn when it is more than 5° off square to the sidewall. Nearer to square, the magnet catches it; Alt, held while placing or dragging, keeps it as drawn.
+- As the pointer moves, the strongest edge along the line may change from one edge to another. The magnet then turns the profile to the new edge's normal, which differs when the two edges are not parallel.
 - On an edge curving with the radius $R$, the band is square to it only along its centre line. The band's outer lines meet the edge up to $\pm w/(2R)$ off square, and cross it at places that differ by up to $w^2/(8R)$, the sagitta. Keep $w \ll R$.
 - The coherence refuses corners, junctions and edges curved more tightly than about $2.4\rho$, and the threshold refuses weak edges. Such a profile stays as drawn; with a contour traced along the edge, it is squared to the contour instead.
 
@@ -1205,6 +1219,7 @@ A horizontal profile across a sidewall steeper than 75° is turned; Ctrl+Z gives
 - the scatter of the direction over 100 noisy images, against one gradient and a sum of gradient vectors;
 - that (P11) keeps the length, the fraction, the sense and the angle turned;
 - that (P11) about an end keeps that end, and that on a straight edge the crossing then slides by $s\sin\delta$ and comes to $s\cos\delta$ from it;
+- the magnet, as an end 100 view units from the end that stays sweeps from 20° off square on one side to 20° on the other and back, in steps of 0.5° that miss the borders: it catches at −4.75° and lets go at +8.25°, then catches at +4.75° and lets go at −8.25°. While it holds, the profile is square to the edge in the view of a tilted, turned frame, keeps the end that stays to the last bit, and the length dragged to;
 - that (P10) is square to its segment in the tests' frame;
 - that the crossings (P5) name the segment crossed.
 
@@ -1222,7 +1237,7 @@ A horizontal profile across a sidewall steeper than 75° is turned; Ctrl+Z gives
 
 ### 6.7 Markers (P12)–(P13)
 
-Two markers, A and B, measure a distance along a profile: from one edge to the other, say. They are placed on the plot, kept with the profile in the session, written to the profile file's header, and drawn as ticks across the band on the image.
+Two markers, A and B, measure a distance along a profile: from one edge to the other, say. They are placed on the plot, moved there or by their ticks on the image, kept with the profile in the session, written to the profile file's header, and drawn as ticks across the band on the image. A tick dragged on the image puts the marker where the pointer projects onto the line, by (P12) itself.
 
 **What a marker is (P12).** A marker is a stored point $m$, like every point the app keeps. Its place along the profile from $u_1$ to $u_2$ is the fraction of its projection onto the line in the view, the projection of (P11):
 
@@ -1304,9 +1319,11 @@ over the run. Cramer's rule gives $b_2$, and $d'' = 2b_2$.
 
 The error was compared with $\delta u$ on 300 noisy erf edges for each of seven cases: widths 1.5 to 15 samples, noise 2 to 20 % of the step. It was within $\delta u$ for 60 to 74 % of the edges, and within $2\delta u$ for 92 to 94 %, as a standard deviation should be (68 and 95 %). The gate holds back the badly placed: in the two gradual cases with noise of 5 and 10 %, the edges it held back were 5.6 and 3.9 samples off in rms, against 0.9 and 1.5 for all.
 
-A marker snaps only when the winning scale places it to $\delta u \le \max(2, 2N/W)$ samples: 2 samples, or 2 pixels of the plot, whichever is more, about what a click is good to. Otherwise the slope places it no better than the click, and it stays where it was put. A ramp of nearly constant slope has no steepest point: its peak of $d$ is flat, $d''$ is near 0 and $\delta u$ is large.
+A marker snaps only when the winning scale places it to $\delta u \le \max(2, 2N/W)$ samples: 2 samples, or 2 pixels of the plot (of the screen, for a marker let go on the image), whichever is more, about what a click is good to. Otherwise the slope places it no better than the click, and it stays where it was put. A ramp of nearly constant slope has no steepest point: its peak of $d$ is flat, $d''$ is near 0 and $\delta u$ is large.
 
 **Where it searches.** Within 12 pixels of the plot around the click or the release: $R = \max(2, 12N/W)$ samples, the plot being $W$ pixels wide for $N$ samples. A click is good to a few pixels, and the window takes in the edge clicked near. A long profile on a narrow plot has a wide window: about 68 samples for 3001 samples on a plot 528 pixels wide.
+
+A marker let go by its tick on the image searches 12 pixels of the screen along the line instead. $W$ is then the line's length on screen, $|sFV\,d| = sL$, since the mirror $F$ keeps lengths (G11). Zoomed in, a pixel of the screen is less than a sample, and the floor of 2 samples holds. Zoomed out, the window spans more samples, as on a narrow plot: on the FEI test image fitted to the view, about 3 samples to a pixel, so $R \approx 37$ samples.
 
 **When it snaps.** A marker clicked on a flat stretch should stay where it was put, not jump to a peak of the noise. At each scale take the median slope $\tilde s$, the profile's trend (0 when flat), and the slope's noise as the scaled median absolute deviation
 
@@ -1392,4 +1409,4 @@ A profile of one line gains little. Along a slanted line, each sample reads rows
 
 **The whole refresh.** With a plot of 598 × 298 CSS pixels at a device pixel ratio of 2, the window's refresh takes 0.5 ms for the band of 476 × 30 values, of which the plot is 0.08 ms. For the band of 3001 × 83 it takes 5.2 ms, of which the plot is 0.4 ms. Both are well within the 16.7 ms of a frame at 60 Hz. A band of about 450 000 values, for instance 3000 × 150, would fill a frame. Beyond that a drag would lag, and the next steps would be to sample coarsely during the drag and fully on release, or to compute in a Worker.
 
-Squaring costs one search along the line, $N + 1$ bilinear values, and one tensor over at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$. In Node, the tensor and its normal took about 10 µs, and a search along 300 samples about 6 µs.
+Squaring costs one search along the line, $N + 1$ bilinear values, and one tensor over at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$. In Node, the tensor and its normal took about 10 µs, and a search along 300 samples about 6 µs. The magnet squares at every move of the pointer while an end moves. In Chromium, on the FEI test image, one pull took about 21 µs for a line of 190 samples, and a whole move of the pointer 0.3 ms (0.5 ms at the 95th percentile), the profile window's refresh included.
