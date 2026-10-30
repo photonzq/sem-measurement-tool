@@ -29,7 +29,7 @@
 // 8. The display (display.js): the histogram's bins of whole values (D4), over 0-255 for 8-bit
 //    images and over the values for 16 and 32 bits; brightness and contrast (D3) against the
 //    arithmetic of ImageJ's ContrastAdjuster, transcribed here, and their round trips; the grey
-//    map (D1) and the auto levels (D2).
+//    map (D1) and the auto levels (D2); the full scale the profile plot marks, per sample type.
 // 9. Line profiles (profile.js): samples along a ramp exact, missing outside the image and below
 //    the info bar, distances in micrometres (P2), (P4); the tuned sampling loop bit for bit that of
 //    bilinear() at every value; the band a rectangle as seen in any frame,
@@ -68,7 +68,7 @@ function loadApi() {
     normalizeDegrees, lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, levelRotation,
     axisFromLine, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatSession,
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
-    reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness,
+    reverseContour, selectionRange, findInfoZone, findHitachiBar, parseKeyValueText, hitachiCalibration, metadataVendor, withMetadataText, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness,
     sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle,
     widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, UTIF })`, context);
 }
@@ -1010,6 +1010,17 @@ function checkHistogram() {
     "the full 16 bits in 256 bins of 256, floats in 256 bins with the extremes in the end bins, one value in one bin");
 }
 
+/** The full scale the profile plot marks: 2^bits - 1 for whole numbers, 255 for a palette, the largest value for floats. */
+function checkFullScale() {
+  const cases = [["uint8", 8], ["uint8 (browser decoded)", 8], ["uint8 colour", 8], ["uint8 grey palette", 8],
+    ["uint16", 16], ["uint16 inverted", 16], ["uint16 colour", 16], ["uint16 colour palette", 16], ["uint32", 32],
+    ["float32", 32], ["float32 inverted", 32]];
+  const got = cases.map(([type, bits]) => api.fullScale(type, bits, 1234.5)).join(" ");
+  check(got === "255 255 255 255 65535 65535 65535 255 4294967295 1234.5 1234.5",
+    `full scale for the profile plot: ${got} for ${cases.map(([type]) => type).join(", ")}: 2^bits - 1 for whole ` +
+    "numbers, 255 for a palette, whose colour map gives 0 to 255, and for floats the largest value (here 1234.5)");
+}
+
 /** The largest difference, over all 257 positions of 256-step sliders, between (D3) and ImageJ, in spans. */
 function imagejDifference(span, lo, hi) {
   const s = span[1] - span[0];
@@ -1420,6 +1431,7 @@ checkGdsReals();
 checkGdsFile();
 checkVertexOps();
 checkHistogram();
+checkFullScale();
 checkSliders();
 checkLevels();
 checkProfileSampling();

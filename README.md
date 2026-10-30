@@ -90,7 +90,7 @@ One list under *Measurements* holds them all: contours, rulers, angles and profi
 
 ## Vertex window
 
-*Vertices…*, shown when a contour is selected, opens a floating window over the image. So do T and a double click on a contour in the list. The window lists the selected contour's vertices: their number and X, Y in the measurement frame. These are the micrometres of the polygon file, or corrected pixels without a pixel size. Drag the window by its title bar and resize it from its lower right corner.
+*Vertices…*, shown when a contour is selected, opens a floating window over the image. So do T and a double click on a contour in the list. The window lists the selected contour's vertices: their number and X, Y in the measurement frame. These are the micrometres of the polygon file, or corrected pixels without a pixel size. Drag the window by its title bar, anywhere on the page, over the panel too, and resize it from its lower right corner.
 
 - **Selecting.** A click on a row selects that vertex, Ctrl+click adds or removes one, and Shift+click selects a range. A click on a vertex in the image does the same as a click on its row, Shift+click as Ctrl+click. Selected vertices are ringed in violet in the image, with their numbers.
 - **Up, Down.** Move the selected vertices one place earlier or later in the order. Adjacent selected vertices move as a block, and a block at the start or end stays.
@@ -130,9 +130,10 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
 - **The profile window** plots the selected profile. It opens by itself when a profile is made, and on a double click or double tap on a profile under *Measurements*; P shows or hides it. It shows:
   - the mean across the band against the distance from the first end;
   - the spread across the band (± one standard deviation), shaded;
+  - 0 and the full scale of the image's values, as solid lines labelled on the y axis, which always spans both. A profile clipped at black or at white runs flat along one of them. The full scale is 255 for 8-bit images and those the browser decodes, 65535 for 16-bit ones and $2^{32}-1$ for 32-bit whole numbers. Float images have none: the line marks their largest value above the info bar (see also *Limits*);
   - every contour that crosses the line, as a dashed line in the contour's colour with its name.
 
-  Point at the plot to read the distance, the mean and the spread there; the image marks the same place with a magenta tick. The note under the plot lists the contours crossing the line and where, along it, they cross. Drag the window by its title bar and resize it from its lower right corner.
+  Point at the plot to read the distance, the mean and the spread there; the image marks the same place with a magenta tick. Where part of the band lies outside the image, the reading also gives how many of its values are left. The note under the plot gives the number of samples along the line and, when contours cross it, which and where along it. Drag the window by its title bar, anywhere on the page, over the panel too, and resize it from its lower right corner.
 - **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band and the crossings.
 - **Export PNG**, in the window or under *Download*, writes the plot as an image of 1200 × 750 pixels at twice that resolution. A title above it names the profile and the image and gives its length and band width.
 - **Kept like the other measurements.** A profile is listed under *Measurements*, saved in the session with its band width, and written to the measurements file with its length, band width and mean grey value.
@@ -469,6 +470,7 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - Brightness and contrast against the arithmetic of ImageJ's ContrastAdjuster, transcribed in the test, at every position of its sliders and for 1000 random windows.
   - The sliders' round trip from levels to positions and back.
   - The grey map and the auto levels.
+  - The full scale that the profile plot marks, for each sample type.
 - **Line profiles.**
   - Samples along a ramp exact, along a row and between pixel centres.
   - Values missing outside the image and in the info bar.
@@ -513,6 +515,7 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - Straight lines only.
   - The band is averaged with equal weights.
   - The window shows the selected profile only.
+  - The plot's y axis spans 0 to the full scale of the file's sample format, not of the detector: 12-bit values stored in 16 bits fill a sixteenth of it, and a profile over a small part of the range plots nearly flat. *Export CSV* has the values in full.
   - Crossings are those of contours with the centre line; other measurements are not marked.
   - Squaring turns a profile to one edge: the contour crossing nearest its middle, else the strongest edge. A profile meant to cross a feature at a set angle stays as drawn when it is more than 15° off square. One nearer to square, such as a horizontal profile across a sidewall steeper than 75°, is turned; Ctrl+Z gives it back as drawn, and Alt+click places it so.
 - **Tilt correction.**

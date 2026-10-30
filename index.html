@@ -13,11 +13,13 @@
     --accent: #385c9e;
     --warn: #9e403d;
     --view: #1e1e1e;
+    --panel-width: 360px;
+    --status-height: 22px;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body { font: 13px/1.4 Bahnschrift, Arial, "Helvetica Neue", Helvetica, system-ui, sans-serif; color: var(--text); background: var(--panel); }
-  #app { display: grid; grid-template-columns: 1fr 360px; grid-template-rows: 1fr auto; height: 100vh; }
+  #app { display: grid; grid-template-columns: 1fr var(--panel-width); grid-template-rows: 1fr auto; height: 100vh; }
   #view-wrap { position: relative; background: var(--view); overflow: hidden; min-width: 0; }
   #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
   #view.navigate { cursor: grab; }
@@ -75,13 +77,14 @@
   table.keys { border-collapse: collapse; width: 100%; }
   table.keys td { padding: 2px 4px; vertical-align: top; border-bottom: 1px solid var(--line); }
   table.keys td:first-child { width: 36%; }
-  #status { grid-column: 1; font: 12px ui-monospace, Consolas, monospace; padding: 3px 8px; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 22px; }
+  #status { grid-column: 1; font: 12px ui-monospace, Consolas, monospace; padding: 3px 8px; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: var(--status-height); }
   .pair { display: flex; gap: 4px; }
   #histogram { display: block; width: 100%; height: 96px; background: #fff; border: 1px solid var(--line); border-radius: 3px;
                cursor: ew-resize; touch-action: none; }
   input[type=range] { width: 100%; margin: 0; }
   .row label.inline { align-self: center; white-space: nowrap; }
-  .floating { position: absolute; top: 12px; right: 12px; width: 300px; height: 360px; min-width: 230px; min-height: 170px;
+  /* floating windows are placed on the page, so that they can be moved over the panel too; they open over the view */
+  .floating { position: fixed; top: 12px; right: calc(var(--panel-width) + 12px); width: 300px; height: 360px; min-width: 230px; min-height: 170px;
               max-width: calc(100% - 24px); max-height: calc(100% - 24px); display: flex; flex-direction: column;
               background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
               overflow: hidden; z-index: 5; }
@@ -104,7 +107,7 @@
   #vertex-table tr.picked td { background: #e1d8ff; }
   #vertex-table td input { width: 100%; font: inherit; text-align: right; padding: 0 2px; }
   #vertex-note { margin: 4px 8px 6px; }
-  #profile-window { top: auto; right: auto; bottom: 12px; left: 12px; width: 560px; height: 330px; min-width: 300px; min-height: 220px; }
+  #profile-window { top: auto; right: auto; bottom: calc(var(--status-height) + 12px); left: 12px; width: 560px; height: 330px; min-width: 300px; min-height: 220px; }
   #profile-window .row { align-items: center; flex-wrap: wrap; }
   #profile-window .row input[type=number] { width: 96px; flex: 0 0 auto; }
   #profile-window .row button { flex: 0 0 auto; margin-left: auto; }

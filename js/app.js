@@ -4,7 +4,7 @@
    measureRuler, measureAngle, measureLineAngle, levelRotation, axisFromLine, lineIntersection, measurementMatrix,
    viewStepToStored, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, MEASURE_POINTS,
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
-   selectionRange, valueRange, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
+   selectionRange, valueRange, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
    widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, metadataVendor, withMetadataText,
    fileStem */
@@ -2226,6 +2226,7 @@ function refreshColourWindow() {
 function toggleColourWindow() {
   const w = el("colour-window");
   w.hidden = !w.hidden;
+  keepWindowsInView();
   refreshColourWindow();
 }
 
@@ -2544,6 +2545,7 @@ function layerInputsChanged() {
 function toggleVertexWindow() {
   const w = el("vertex-window");
   w.hidden = !w.hidden;
+  keepWindowsInView();
   refreshVertexWindow();
 }
 
@@ -2800,12 +2802,14 @@ function toggleProfileWindow() {
     app.profileCursor = null;
     render();
   }
+  keepWindowsInView();
   refreshProfileWindow();
 }
 
 /** Show the profile window (of the selected profile), if it is not shown already. */
 function openProfileWindow() {
   el("profile-window").hidden = false;
+  keepWindowsInView();
   refreshProfileWindow();
 }
 
@@ -2885,7 +2889,8 @@ function refreshProfileWindow() {
 }
 
 /**
- * The window's note: the sampling, and the contours that cross the line.
+ * The window's note: the samples along the line, and the contours that cross it, if any.  The lines across
+ * the band are left out: the band width above gives them.
  * @param {ProfileData|null} data
  * @returns {string}
  */
@@ -2895,14 +2900,15 @@ function profileNote(data) {
   }
   const { geometry: g, crossings } = data;
   const unit = g.unit === null ? "" : ` ${unitText(g.unit)}`;
-  const lines = [`${g.samples} samples along, ${g.offsets.length} line${g.offsets.length === 1 ? "" : "s"} across the band`];
+  const lines = [`${g.samples} samples along`];
   /** @type {Map<string, string[]>} */
   const byContour = new Map();
   for (const c of crossings) {
     byContour.set(c.name, [...(byContour.get(c.name) ?? []), Number.isFinite(c.distance) ? show(c.distance) : "?"]);
   }
-  lines.push(byContour.size === 0 ? "no contour crosses the line"
-    : `crossed by ${[...byContour].map(([name, at]) => `${name} at ${at.join(", ")}${unit}`).join("; ")}`);
+  if (byContour.size > 0) {
+    lines.push(`crossed by ${[...byContour].map(([name, at]) => `${name} at ${at.join(", ")}${unit}`).join("; ")}`);
+  }
   return lines.join("\n");
 }
 
@@ -2919,8 +2925,10 @@ function showProfileReadout() {
   const i = Math.round(t * (profile.mean.length - 1));
   const unit = geometry.unit === null ? "" : ` ${unitText(geometry.unit)}`;
   const at = Number.isFinite(profile.distance[i]) ? `${profile.distance[i].toFixed(geometry.unit === "um" ? 4 : 2)}${unit}` : "?";
-  const spread = profile.count[i] > 1 ? ` ± ${String(Number(profile.spread[i].toPrecision(4)))} (${profile.count[i]} values across)` : "";
-  out.textContent = profile.count[i] === 0 ? `at ${at}: outside the image` : `at ${at}: ${greyText(profile.mean[i])}${spread}`;
+  const [n, across] = [profile.count[i], geometry.offsets.length];
+  const spread = n > 1 ? ` ± ${String(Number(profile.spread[i].toPrecision(4)))}` : "";
+  const part = n < across ? ` (${n} of ${across} values across, the rest outside the image)` : "";   // the count only when short
+  out.textContent = n === 0 ? `at ${at}: outside the image` : `at ${at}: ${greyText(profile.mean[i])}${spread}${part}`;
 }
 
 /**
@@ -2959,10 +2967,45 @@ function drawProfilePlot() {
 }
 
 /**
+ * The labels of a profile plot's y axis: those of the lines at 0 and the full scale, then the ticks
+ * that keep 16 pixels clear of the lines, so that no two labels touch (an 8-bit image's 250 and 260
+ * are left out beside 255); with the width of the widest, for the margin.
+ * @param {CanvasRenderingContext2D} g
+ * @param {{lo: number, hi: number, limits: number[]}} range
+ * @param {number} height   of the plot, CSS pixels
+ * @returns {{labels: Array<{v: number, text: string, limit: boolean}>, width: number}}
+ */
+function yAxisLabels(g, range, height) {
+  const { lo, hi, limits } = range;
+  const clear = (16 * (hi - lo)) / height;
+  /** @type {Array<{v: number, text: string, limit: boolean}>} */
+  const labels = [];
+  for (const v of limits) {
+    if (labels.every((l) => Math.abs(l.v - v) >= clear)) {
+      labels.push({ v, text: greyText(v), limit: true });
+    }
+  }
+  const ys = niceTicks(lo, hi, height / 36);
+  for (const v of ys.ticks) {
+    if (limits.every((l) => Math.abs(l - v) >= clear)) {
+      labels.push({ v, text: v.toFixed(ys.digits), limit: false });
+    }
+  }
+  let width = 0;
+  for (const l of labels) {
+    g.font = l.limit ? `600 ${LABEL_FONT}` : LABEL_FONT;
+    width = Math.max(width, g.measureText(l.text).width);
+  }
+  g.font = LABEL_FONT;
+  return { labels, width };
+}
+
+/**
  * A profile plot on ``g``, ``w`` x ``h`` CSS pixels: the mean along the line, its spread across the
- * band shaded, the contours that cross the line as dashed verticals (those selected amber), the
- * cursor (0 to 1 along the line, or null) and a title above (or null).  Returns where the axis
- * lies, for the cursor.
+ * band shaded, 0 and the full scale of the image's values as solid lines, so that the values
+ * clipped at either end show, the contours that cross the line as dashed verticals (those selected
+ * thicker), the cursor (0 to 1 along the line, or null) and a title above (or null).  Returns where
+ * the axis lies, for the cursor.
  * @param {CanvasRenderingContext2D} g
  * @param {number} w
  * @param {number} h
@@ -2997,8 +3040,12 @@ function plotProfile(g, w, h, data, how) {
   }
   const { profile, crossings, geometry } = data;
   const wide = geometry.offsets.length > 1;
-  let lo = Infinity;
-  let hi = -Infinity;
+  // the values with their spread, 0 and the full scale, whatever the values: a profile clipped at
+  // either end runs along a line
+  const full = app.image === null ? NaN : fullScale(app.image.sampleType, app.image.bitsPerSample, app.hist?.max ?? NaN);
+  const limits = [0, full].filter(Number.isFinite);
+  let lo = Math.min(...limits);
+  let hi = Math.max(...limits);
   profile.mean.forEach((m, i) => {
     if (profile.count[i] > 0) {
       const s = wide ? profile.spread[i] : 0;
@@ -3006,17 +3053,19 @@ function plotProfile(g, w, h, data, how) {
       hi = Math.max(hi, m + s);
     }
   });
-  if (!(hi >= lo)) {
-    [lo, hi] = [0, 1];
+  if (!(hi > lo)) {
+    hi = lo + 1;
   }
-  const pad = hi > lo ? 0.06 * (hi - lo) : 1;
+  const pad = 0.05 * (hi - lo);
   [lo, hi] = [lo - pad, hi + pad];
-  const [left, right, bottom] = [58, w - 12, h - 30];
+  const bottom = h - 30;
+  const ys = yAxisLabels(g, { lo, hi, limits }, bottom - top);
+  const [left, right] = [Math.max(58, Math.ceil(ys.width) + 12), w - 12];   // wide enough for the labels
   /** @param {number} s @returns {number} */
   const X = (s) => left + (s / length) * (right - left);
   /** @param {number} v @returns {number} */
   const Y = (v) => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
-  drawPlotAxes(g, { left, right, top, bottom }, { length, lo, hi, unit: geometry.unit });
+  drawPlotAxes(g, { left, right, top, bottom }, { length, lo, hi, unit: geometry.unit, limits, labels: ys.labels });
   // the spread across the band, then the mean, both broken where no line has a value
   const runs = [];
   let run = [];
@@ -3069,16 +3118,27 @@ function plotProfile(g, w, h, data, how) {
 }
 
 /**
- * The plot's frame, ticks and labels.
+ * The plot's frame, ticks and labels, and the solid lines at 0 and the full scale.
  * @param {CanvasRenderingContext2D} g
  * @param {{left: number, right: number, top: number, bottom: number}} box
- * @param {{length: number, lo: number, hi: number, unit: "um"|"px"|null}} range
+ * @param {{length: number, lo: number, hi: number, unit: "um"|"px"|null, limits: number[],
+ *          labels: Array<{v: number, text: string, limit: boolean}>}} range
  */
 function drawPlotAxes(g, box, range) {
   const { left, right, top, bottom } = box;
   g.strokeStyle = "#d4d4d0";
   g.lineWidth = 1;
   g.strokeRect(left, top, right - left, bottom - top);
+  /** @param {number} v @returns {number} */
+  const Y = (v) => bottom - ((v - range.lo) / (range.hi - range.lo)) * (bottom - top);
+  g.strokeStyle = "#8c8c8c";                         // darker than the frame, under the profile
+  g.beginPath();
+  for (const v of range.limits) {
+    const y = Math.round(Y(v)) + 0.5;                // on whole pixels: sharp
+    g.moveTo(left, y);
+    g.lineTo(right, y);
+  }
+  g.stroke();
   g.fillStyle = "#6f6f6f";
   const xs = niceTicks(0, range.length, (right - left) / 80);
   g.textAlign = "center";
@@ -3090,13 +3150,15 @@ function drawPlotAxes(g, box, range) {
   }
   g.textAlign = "right";
   g.fillText(`distance (${range.unit === null ? "?" : unitText(range.unit)})`, right, bottom + 17);
-  const ys = niceTicks(range.lo, range.hi, (bottom - top) / 36);
   g.textBaseline = "middle";
-  for (const v of ys.ticks) {
-    const y = bottom - ((v - range.lo) / (range.hi - range.lo)) * (bottom - top);
-    g.fillRect(left - 4, y, 4, 1);
-    g.fillText(v.toFixed(ys.digits), left - 6, y);
+  for (const l of range.labels) {
+    const y = l.limit ? Math.round(Y(l.v)) + 0.5 : Y(l.v);
+    g.font = l.limit ? `600 ${LABEL_FONT}` : LABEL_FONT;  // the lines' labels bold and dark
+    g.fillStyle = l.limit ? "#272727" : "#6f6f6f";
+    g.fillRect(left - 4, l.limit ? y - 0.5 : y, 4, 1);
+    g.fillText(l.text, left - 6, y);
   }
+  g.font = LABEL_FONT;
 }
 
 /**
@@ -4063,7 +4125,7 @@ function resizableWindow(win) {
   /** @type {{x: number, y: number, w: number, h: number}|null} */
   let start = null;
   grip.addEventListener("pointerdown", (e) => {
-    const area = el("view-wrap").getBoundingClientRect();
+    const area = windowArea();
     const box = win.getBoundingClientRect();
     win.style.left = `${box.left - area.left}px`;            // anchored at its top left while it grows
     win.style.top = `${box.top - area.top}px`;
@@ -4081,7 +4143,7 @@ function resizableWindow(win) {
     if (start === null) {
       return;
     }
-    const area = el("view-wrap").getBoundingClientRect();
+    const area = windowArea();
     const box = win.getBoundingClientRect();
     const style = window.getComputedStyle(win);
     const w = Math.min(Math.max(start.w + e.clientX - start.x, parseFloat(style.minWidth) || 200), area.right - box.left - 4);
@@ -4362,17 +4424,37 @@ window.addEventListener("resize", () => {
   drawHistogram();
 });
 
-/** Keep the floating windows that were moved inside the view, e.g. after the browser window shrank: their bars stay in reach. */
+/**
+ * The area the floating windows may take: the whole page, the panel included (they are fixed to the
+ * page, and open over the view).
+ * @returns {{left: number, top: number, width: number, height: number, right: number, bottom: number}}
+ */
+function windowArea() {
+  const { clientWidth: width, clientHeight: height } = document.documentElement;
+  return { left: 0, top: 0, width, height, right: width, bottom: height };
+}
+
+/**
+ * Keep the floating windows inside the page, e.g. after the browser window shrank, or when one opens on a page too
+ * narrow for it beside the panel: their bars stay in reach.  A window inside is left alone, so that one never moved
+ * keeps the place the page gives it.
+ */
 function keepWindowsInView() {
-  const area = el("view-wrap").getBoundingClientRect();
+  const area = windowArea();
   for (const id of ["vertex-window", "profile-window", "colour-window"]) {
     const win = el(id);
-    if (win.hidden || win.style.left === "") {
-      continue;                      // where the page puts it, it is inside
+    if (win.hidden) {
+      continue;
     }
     const box = win.getBoundingClientRect();
-    win.style.left = `${Math.min(Math.max(box.left - area.left, 0), Math.max(area.width - box.width, 0))}px`;
-    win.style.top = `${Math.min(Math.max(box.top - area.top, 0), Math.max(area.height - box.height, 0))}px`;
+    const left = Math.min(Math.max(box.left - area.left, 0), Math.max(area.width - box.width, 0));
+    const top = Math.min(Math.max(box.top - area.top, 0), Math.max(area.height - box.height, 0));
+    if (left !== box.left - area.left || top !== box.top - area.top) {
+      win.style.left = `${left}px`;
+      win.style.top = `${top}px`;
+      win.style.right = "auto";
+      win.style.bottom = "auto";
+    }
   }
 }
 
@@ -4740,7 +4822,7 @@ el("vertex-rows").addEventListener("click", (e) => {
   }
 });
 /**
- * Let a floating window be moved by its title bar, within the view.
+ * Let a floating window be moved by its title bar, anywhere on the page: over the panel too.
  * @param {HTMLElement} win
  * @param {HTMLElement} bar
  */
@@ -4763,7 +4845,7 @@ function movableWindow(win, bar) {
     if (drag === null) {
       return;
     }
-    const area = wrap.getBoundingClientRect();
+    const area = windowArea();
     const box = win.getBoundingClientRect();
     const left = Math.min(Math.max(e.clientX - area.left - drag.dx, 0), Math.max(area.width - box.width, 0));
     const top = Math.min(Math.max(e.clientY - area.top - drag.dy, 0), Math.max(area.height - box.height, 0));

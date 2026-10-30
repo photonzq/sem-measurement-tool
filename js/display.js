@@ -1,6 +1,6 @@
 "use strict";
 /* global sortedSample, percentileOf */
-/* exported valueRange, fixedSpan, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
+/* exported valueRange, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast */
 /*
  * The display: how the grey values become the picture on screen.  Two levels map the values
@@ -26,6 +26,10 @@
  * The span [m0, m1], over which the histogram and the sliders run, is ImageJ's: 0 to 255 for an
  * 8-bit image, grey, palette or colour; for 16 and 32 bits, the darkest to the brightest value
  * above the info bar (ImageJ takes the whole image, knowing nothing of the bar).
+ *
+ * The full scale, the largest value a sample can hold, is 2^bits - 1 for whole numbers and 255 for
+ * a palette; floats have none, and the largest value above the info bar stands in.  The profile
+ * plot draws it and 0 as lines, so that values clipped at either end show.
  *
  * Brightness and contrast (D3), as ImageJ's ContrastAdjuster sets them and shows them.  Write the
  * window between the levels as its centre C = (l0 + l1) / 2 and its width W = l1 - l0, and the
@@ -98,6 +102,22 @@ function valueRange(data) {
  */
 function fixedSpan(bitsPerSample) {
   return bitsPerSample === 8 ? [0, 255] : null;
+}
+
+/**
+ * The full scale of an image's values, the largest a sample can hold: 2^bits - 1 for whole-number
+ * samples (255 for 8 bits, those the browser decodes included, 65535 for 16), 255 for a palette,
+ * whose colour map gives 0 to 255 (tiff.js), and for floats, which have none, the largest value.
+ * @param {string} sampleType      of the image, e.g. "uint16", "uint8 grey palette", "float32"
+ * @param {number} bitsPerSample
+ * @param {number} largest         the largest value above the info bar
+ * @returns {number}
+ */
+function fullScale(sampleType, bitsPerSample, largest) {
+  if (sampleType.startsWith("float")) {
+    return largest;
+  }
+  return sampleType.includes("palette") ? 255 : 2 ** bitsPerSample - 1;
 }
 
 /**
