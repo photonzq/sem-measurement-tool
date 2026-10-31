@@ -52,6 +52,9 @@
 //    lone stations; nothing across an edge, on flat noise, in a break of the edge or on an info bar; a
 //    disc's circle; the work kept between moves the same as a fresh placing; the joining of the points to
 //    a contour, and a redone side of a narrow rectangle (T8).
+// 11. The line fit (linefit.js, (L1)-(L4)): a line with residuals that it must find exactly, at any
+//    angle, turned and reversed; the figures; the sum of squares least at the line found; points that
+//    coincide, two points, collinear points, a vertical line; the line fit file.
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -60,7 +63,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPTS = ["vendor/pako_inflate.min.js", "vendor/UTIF.js", "js/metadata.js", "js/tiff.js", "js/edges.js",
   "js/transform.js", "js/polygons.js", "js/session.js", "js/gds.js", "js/vertices.js", "js/display.js", "js/profile.js",
-  "js/trace.js"];
+  "js/trace.js", "js/linefit.js"];
 const LOCAL_DATA = path.join(ROOT, "tests", "local_data.json");
 const failures = [];
 
@@ -88,7 +91,7 @@ function loadApi() {
     sliderContrast, centreOfBrightness, widthOfContrast, profileGeometry, bilinear, sampleProfile, profileCrossings, widthHandle,
     widthFromPoint, formatProfileFile, edgeNormal, segmentNormal, squaredProfile, magnetHolds, markerPlace,
     profileValueAt, snapToSlope, strokeStations, firstLeg, newTraceMemo, traceStroke, freehandStroke, stretchNearness,
-    joinStroke, placingStations, UTIF })`, context);
+    joinStroke, placingStations, fitLine, formatLineFitFile, UTIF })`, context);
 }
 
 const api = loadApi();
@@ -2235,6 +2238,85 @@ function checkTraceMemo() {
 }
 
 
+/**
+ * (L1)-(L4): eight points on a line at 73 degrees, 0.05 um apart along it, with residuals +a -a -a +a +a -a -a +a
+ * symmetric about the middle, so that sum r = 0 and sum s r = 0 and the line fitted is the line itself.  Then the same
+ * turned by 31 degrees, and in the reverse order.
+ */
+function checkLineFit() {
+  const [theta, step, a, c] = [73 * DEG, 0.05, 0.002, [1.2, -0.7]];
+  const t = [Math.cos(theta), Math.sin(theta)];
+  const n = [-t[1], t[0]];
+  const r = [1, -1, -1, 1, 1, -1, -1, 1].map((v) => v * a);
+  const s = r.map((_, k) => (k - 3.5) * step);
+  const pts = s.map((sk, k) => [c[0] + sk * t[0] + r[k] * n[0], c[1] + sk * t[1] + r[k] * n[1]]);
+  const f = api.fitLine(pts);
+  const off = (xs, ys) => Math.max(...xs.map((x, i) => Math.abs(x - ys[i])));
+  const exact = Math.abs(f.angleDeg - 73) < 1e-9 && off(f.residuals, r) < 1e-12 && off(f.along, s.map((v) => v - s[0])) < 1e-12
+    && Math.abs(f.sigma - Math.sqrt((8 * a * a) / 6)) < 1e-15 && Math.abs(f.peakToValley - 2 * a) < 1e-15
+    && Math.abs(f.length - 7 * step) < 1e-12 && off(f.centroid, c) < 1e-12;
+  const phi = 31 * DEG;
+  const turn = ([x, y]) => [x * Math.cos(phi) - y * Math.sin(phi), x * Math.sin(phi) + y * Math.cos(phi)];
+  const turned = api.fitLine(pts.map(turn));
+  const back = api.fitLine([...pts].reverse());
+  const invariant = Math.abs(turned.angleDeg - (73 + 31 - 180)) < 1e-9 && off(turned.residuals, r) < 1e-12
+    && Math.abs(back.angleDeg - 73) < 1e-9 && off(back.residuals, [...r].reverse().map((v) => -v)) < 1e-12;
+  check(exact && invariant,
+    "line fit (L1)-(L4): at 73 deg the line itself, residuals, places along it, sigma = sqrt(8 a^2 / 6), peak to valley " +
+      `2a and length exact; turned by 31 deg, ${turned.angleDeg.toFixed(6)} deg with the same residuals; reversed, the ` +
+      "residuals' signs and order reversed");
+}
+
+/**
+ * (L1): on random points, the sum of squared distances is least at the line found (turned by 0.01 deg about the
+ * centroid, it grows), the residuals sum to 0, and sigma^2 (n - 2) is that sum; coinciding points have no line, two
+ * points no sigma, collinear points neither residuals nor sigma, and a vertical line is at 90 deg.
+ */
+function checkLineFitCases() {
+  let seed = 7;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647 - 0.5;
+  };
+  const pts = Array.from({ length: 40 }, (_, k) => [0.02 * k + 0.003 * rand(), 0.5 + 0.011 * k + 0.003 * rand()]);
+  const f = api.fitLine(pts);
+  const sum = (dir) => pts.reduce((acc, [x, y]) => acc + ((x - f.centroid[0]) * -dir[1] + (y - f.centroid[1]) * dir[0]) ** 2, 0);
+  const at = (deg) => [Math.cos((f.angleDeg + deg) * DEG), Math.sin((f.angleDeg + deg) * DEG)];
+  const least = sum(at(0)) < sum(at(0.01)) && sum(at(0)) < sum(at(-0.01));
+  const total = f.residuals.reduce((acc, v) => acc + v, 0);
+  const squares = f.residuals.reduce((acc, v) => acc + v * v, 0);
+  const two = api.fitLine([[0, 0], [1, 1]]);
+  const line = api.fitLine([[0, 0], [1, 2], [2, 4], [3, 6]]);
+  const vertical = api.fitLine([[5, 0], [6, 1], [6, 2], [5, 3]]);
+  check(least && Math.abs(total) < 1e-12 && Math.abs(f.sigma ** 2 * 38 - squares) < 1e-18
+    && api.fitLine([[1, 2], [1, 2], [1, 2]]) === null && api.fitLine([[1, 2]]) === null
+    && Number.isNaN(two.sigma) && two.peakToValley < 1e-15 && line.sigma < 1e-15
+    && Math.abs(line.angleDeg - Math.atan(2) / DEG) < 1e-9 && Math.abs(vertical.angleDeg - 90) < 1e-9,
+  "line fit cases (L1): least squares at the line found, residuals summing to 0, sigma^2 (n - 2) the sum of squares; " +
+    "no line for one point or points that coincide; two points and collinear points; a vertical line at 90 deg");
+}
+
+/** The line fit file: its first line, its header, and one row per vertex fitted, in the measurement frame. */
+function checkLineFitFile() {
+  const frame = { pixelNm: [2, 2], tiltDeg: 0, correction: "none", customFactor: 1, axisDeg: 0, rotationDeg: 0, originPx: [0, 0] };
+  const contour = { name: "edge, left", closed: false, points: [[10, 10], [11, 20], [10.5, 30], [12, 40], [11, 50], [13, 60]] };
+  const picked = [1, 2, 3, 4];
+  const fit = api.fitLine(picked.map((i) => api.toMeasurement(frame, contour.points[i][0], contour.points[i][1])));
+  const text = api.formatLineFitFile(IMAGE, frame, contour, picked, fit);
+  const lines = text.trim().split("\n");
+  const has = (line) => lines.includes(line);
+  const rows = lines.slice(lines.indexOf("vertex,x_px,y_px,x,y,along,residual") + 1).map((l) => l.split(","));
+  const xy = api.toMeasurement(frame, 11, 20);
+  const six = (v) => v.toFixed(6).replace(/^-(0\.0+)$/, "$1");
+  check(lines[0] === "# sem-measurement-tool line fit 1" && has("# unit: um") && has("# contour: edge, left")
+    && has("# vertices: 1 2 3 4") && has("# points: 4") && has(`# sigma: ${six(fit.sigma)}`)
+    && has(`# three_sigma: ${six(3 * fit.sigma)}`) && has(`# line_angle_deg: ${six(fit.angleDeg)}`)
+    && rows.length === 4 && rows[0][0] === "1" && rows[0][1] === "11.000" && rows[0][3] === six(xy[0])
+    && rows[0][4] === six(xy[1]) && rows.every((row, k) => row[6] === six(fit.residuals[k])),
+  "line fit file: format line, unit, contour, vertices, points, sigma and 3 sigma, the line's angle, and one row per " +
+    "vertex with its pixel and measurement coordinates, place along the line and residual");
+}
+
 const images = testImages(process.argv.slice(2));
 checkFei(images.feiFolder);
 checkZeiss(images.zeiss);
@@ -2288,5 +2370,8 @@ checkTraceCircle();
 checkTraceGapAndEnds();
 checkJoinStroke();
 checkRedoNarrow();
+checkLineFit();
+checkLineFitCases();
+checkLineFitFile();
 console.log(failures.length ? `FAIL: ${failures.length} check(s)` : "PASS");
 process.exit(failures.length ? 1 : 0);

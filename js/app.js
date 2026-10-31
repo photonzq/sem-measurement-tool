@@ -1,6 +1,7 @@
 "use strict";
 /* global decodeSEMImage, emptyCalibration, describeCalibration, EdgeMap, correctionFactor,
-   matApply, matInverse, matDet, viewMatrix, toMeasurement, fromMeasurement, normalizeDegrees, measureContour,
+   matApply, matInverse, matDet, viewMatrix, toMeasurement, fromMeasurement, normalizeDegrees, measureContour, fitLine,
+   formatLineFitFile,
    measureRuler, measureAngle, measureLineAngle, measureGap, levelRotation, axisFromLine, lineIntersection,
    measurementMatrix,
    viewStepToStored, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, MEASURE_POINTS,
@@ -89,6 +90,8 @@ const MIN_COHERENCE = 0.5;           // (P9) below it, an image edge has no sing
 const MAGNET_MIN_PX = 16;            // (P11) a profile shorter on screen is not pulled: a pixel of the pointer turns it 3.6°
 const MAGNET_EDGE_PX = 32;           // how far the edge's dashed line runs beyond the band while the magnet holds
 const MAGNET_MARK_PX = 9;            // the legs of the ⊥ mark where a profile held square crosses the edge
+const PICKED_NUMBERS = 8;            // more vertices picked than this: only the ends of each run numbered
+const FIT_LINE_BEYOND_PX = 16;       // the line fitted runs this far beyond its first and last vertex, on screen
 
 /** @returns {Frame} */
 function defaultFrame() {
@@ -183,6 +186,9 @@ const app = {
    */
   hover: null,
   profileOpen: false,                // the profile window is wanted: it shows while a profile is selected
+  fitOpen: false,                    // the line fit window shows: it fits the vertices picked of the selected contour
+  /** @type {number|null} the point of the line fit at the cursor on its plot: its place among the vertices picked */
+  fitCursor: null,
   /** @type {Array<{x: number, y: number, w: number, h: number}>} the labels drawn so far in the frame: centres and sizes */
   labelBoxes: [],
   /**
@@ -838,6 +844,7 @@ function draw() {
     }
   });
   drawPicked(toScreen);
+  drawFit(toScreen);
   app.measurements.forEach((ms, i) => {
     if (ms.kind !== "contour") {
       drawMeasurement(ms, colorOf(ms), toScreen, { selected: checked.has(i), handle: i === app.selected });
@@ -864,6 +871,9 @@ function drawPicked(toScreen) {
     return;
   }
   const points = c.points;
+  const picked = new Set(app.picked);
+  // many picked, as for a line fit: only the first and the last of each run of neighbours numbered
+  const numbered = (/** @type {number} */ i) => app.picked.length <= PICKED_NUMBERS || !picked.has(i - 1) || !picked.has(i + 1);
   ctx.save();
   ctx.strokeStyle = PICKED_COLOR;
   ctx.lineWidth = 2.5;
@@ -875,7 +885,9 @@ function drawPicked(toScreen) {
     ctx.beginPath();
     ctx.arc(x, y, 8.5, 0, 2 * Math.PI);
     ctx.stroke();
-    drawLabel(String(i), [x + 14, y - 12], PICKED_COLOR);
+    if (numbered(i)) {
+      drawLabel(String(i), [x + 14, y - 12], PICKED_COLOR, false, false);     // beside its vertex, wherever other labels are
+    }
   }
   ctx.restore();
 }
@@ -1080,17 +1092,19 @@ function drawPoints(pts, color, selected, first = 1) {
 }
 
 /**
- * A label on a dark chip edged in its measurement's colour: white text, legible on any grey.
+ * A label on a dark chip edged in its measurement's colour: white text, legible on any grey; kept
+ * clear of the labels drawn before it (clearSpot) unless ``apart`` is false.
  * @param {string} text
  * @param {Point} at          the chip's centre
  * @param {string} color
  * @param {boolean} [selected]   a thicker edge
+ * @param {boolean} [apart]
  */
-function drawLabel(text, at, color, selected = false) {
+function drawLabel(text, at, color, selected = false, apart = true) {
   ctx.save();
   ctx.font = LABEL_FONT;
   const w = ctx.measureText(text).width + 10;
-  const [x, y] = clearSpot(at, w, LABEL_HEIGHT);
+  const [x, y] = apart ? clearSpot(at, w, LABEL_HEIGHT) : at;
   ctx.beginPath();
   ctx.roundRect(x - w / 2, y - LABEL_HEIGHT / 2, w, LABEL_HEIGHT, 4);
   ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
@@ -3115,6 +3129,7 @@ function toggleVertexWindow() {
 
 /** The rows of the vertex window: the selected contour in the measurement frame, (G8). */
 function refreshVertexWindow() {
+  refreshFitWindow();                // the line fit follows the vertices picked, whether this window shows or not
   if (el("vertex-window").hidden) {
     return;
   }
@@ -3153,6 +3168,251 @@ function refreshVertexWindow() {
   el("vertex-note").textContent = current === null
     ? "Select a contour under Measurements, or start one with the contour tool (1)."
     : `${c.points.length} vertices, ${app.picked.length} selected (${c.closed ? "closed" : "open"}).${why}`;
+}
+
+// ------------------------------------------------------------------------- line fit window
+//
+// A straight line fitted to the vertices picked in the vertex window (linefit.js, MATH.md Part 8), in
+// the measurement frame, and each vertex's residual: a simple measure of line edge roughness.  The
+// window follows the vertices picked of the selected contour as they change, and while it shows, the
+// image shows the line, dashed.  Nothing is kept: picking the vertices again gives the fit again.
+
+/** Where the fit's plot put its axes (CSS pixels) and what they span, for the cursor. */
+const fitPlot = { left: 0, right: 1, top: 0, bottom: 0, sLo: 0, sHi: 1 };
+const fitCanvas = /** @type {HTMLCanvasElement} */ (el("fit-plot"));
+
+/** L, the vertex window's Fit line and the window's cross: show the line fit window, or hide it. */
+function toggleFitWindow() {
+  app.fitOpen = !app.fitOpen;
+  el("fit-window").hidden = !app.fitOpen;
+  app.fitCursor = null;
+  if (app.fitOpen) {
+    keepWindowsInView();
+  }
+  buttonEl("fit-line").classList.toggle("active", app.fitOpen);
+  refreshFitWindow();
+  render();
+}
+
+/**
+ * The line fitted to the vertices picked of the selected contour, (L1)-(L4), in the measurement frame,
+ * with the contour, the vertices in order and the unit; null with no contour, fewer than 3 vertices
+ * picked, an undefined correction factor, or vertices that coincide.
+ * @returns {{contour: Contour, picked: number[], fit: LineFit, unit: "um"|"px"}|null}
+ */
+function currentFit() {
+  const c = currentContour();
+  const m = measurementMatrix(app.frame);
+  const picked = c === null ? [] : app.picked.filter((i) => i < c.points.length);
+  if (c === null || m === null || picked.length < 3) {
+    return null;
+  }
+  const [ox, oy] = app.frame.originPx;
+  const lf = fitLine(picked.map((i) => matApply(m.matrix, c.points[i][0] - ox, c.points[i][1] - oy)));
+  return lf === null ? null : { contour: c, picked, fit: lf, unit: m.unit };
+}
+
+/**
+ * A residual, or another figure of roughness, on screen: in nm when the unit is µm, to about a tenth
+ * of a pixel as lengths are (MATH.md 1.13, three decimals fewer), else in pixels; with ``signed``, a
+ * plus sign before a positive one.
+ * @param {number} v
+ * @param {"um"|"px"} unit
+ * @param {boolean} [signed]
+ * @returns {string}
+ */
+function roughnessText(v, unit, signed = false) {
+  const text = unit === "um" ? decimalsText(1000 * v, Math.max(0, lengthDecimals() - 3)) : lengthText(v);
+  return `${signed && Number(text) > 0 ? "+" : ""}${text} ${unit === "um" ? "nm" : "px"}`;
+}
+
+/** The line fit window's title, lines and plot, from the vertices picked. */
+function refreshFitWindow() {
+  if (!app.fitOpen) {
+    return;
+  }
+  const data = currentFit();
+  const c = currentContour();
+  el("fit-title").textContent = c === null ? "Line fit" : `Line fit: ${c.name}`;
+  buttonEl("fit-export").disabled = data === null;
+  if (app.fitCursor !== null && (data === null || app.fitCursor >= data.picked.length)) {
+    app.fitCursor = null;
+  }
+  showFitLines(data);
+  drawFitPlot(data);
+}
+
+/**
+ * The two lines under the fit's plot: the figures, or what to pick; then the vertices, the length and
+ * the line's angle, or the reading at the cursor.
+ * @param {{fit: LineFit, unit: "um"|"px", picked: number[]}|null} data
+ */
+function showFitLines(data) {
+  const figures = el("fit-figures");
+  const note = el("fit-note");
+  if (data === null) {
+    setPlotLine(figures, currentContour() === null ? "Select a contour, then pick 3 or more of its vertices."
+      : "Pick 3 or more vertices: click one, Shift+click a range, Ctrl+click more.");
+    setPlotLine(note, "");
+    return;
+  }
+  const { fit: lf, unit, picked } = data;
+  setPlotLine(figures, `σ ${roughnessText(lf.sigma, unit)}, 3σ ${roughnessText(3 * lf.sigma, unit)}, ` +
+    `peak to valley ${roughnessText(lf.peakToValley, unit)}`);
+  const k = app.fitCursor;
+  setPlotLine(note, k === null
+    ? `${picked.length} vertices over ${lengthText(lf.length)} ${unitText(unit)}, line at ${lf.angleDeg.toFixed(2)}°`
+    : `vertex ${picked[k]}: ${lengthText(lf.along[k])} ${unitText(unit)} along, residual ${roughnessText(lf.residuals[k], unit, true)}`);
+}
+
+/**
+ * The fit's plot: the residuals, in nm (or pixels), against the place along the line, dots joined in
+ * that order; 0 as a solid line and ±3σ dashed; the point at the cursor ringed.
+ * @param {{fit: LineFit, unit: "um"|"px"}|null} data
+ */
+function drawFitPlot(data) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = fitCanvas.clientWidth;
+  const h = fitCanvas.clientHeight;
+  if (!(w > 0 && h > 0)) {
+    return;
+  }
+  fitCanvas.width = Math.round(w * dpr);
+  fitCanvas.height = Math.round(h * dpr);
+  const g = /** @type {CanvasRenderingContext2D} */ (fitCanvas.getContext("2d"));
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, w, h);
+  g.font = LABEL_FONT;
+  if (data === null) {
+    g.fillStyle = "#6f6f6f";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("no line fitted", w / 2, h / 2);
+    return;
+  }
+  const { fit: lf, unit } = data;
+  const scale = unit === "um" ? 1000 : 1;                       // residuals in nm, or pixels
+  const order = lf.along.map((_, k) => k).sort((p, q) => lf.along[p] - lf.along[q]);
+  const three = 3 * lf.sigma * scale;
+  const reach = 1.15 * Math.max(Number.isFinite(three) ? three : 0, ...lf.residuals.map((r) => Math.abs(r) * scale)) || 1;
+  const [sLo, sHi] = [lf.along[order[0]], lf.along[order[order.length - 1]]];
+  const [top, bottom] = [22, h - 30];
+  const ys = niceTicks(-reach, reach, (bottom - top) / 36);
+  const width = Math.max(...ys.ticks.map((v) => g.measureText(v.toFixed(ys.digits)).width));
+  const [left, right] = [Math.max(48, Math.ceil(width) + 12), w - 12];
+  /** @param {number} s @returns {number} */
+  const X = (s) => left + ((s - sLo) / (sHi - sLo || 1)) * (right - left);
+  /** @param {number} v @returns {number} */
+  const Y = (v) => bottom - ((v + reach) / (2 * reach)) * (bottom - top);
+  g.strokeStyle = "#d4d4d0";
+  g.lineWidth = 1;
+  g.strokeRect(left, top, right - left, bottom - top);
+  g.fillStyle = "#6f6f6f";
+  g.textAlign = "center";
+  g.textBaseline = "top";
+  const xs = niceTicks(sLo, sHi, (right - left) / 80);
+  for (const v of xs.ticks) {
+    g.fillRect(X(v), bottom, 1, 4);
+    g.fillText(v.toFixed(xs.digits), X(v), bottom + 6);
+  }
+  g.textAlign = "right";
+  g.fillText(`along the line (${unitText(unit)})`, right, bottom + 17);
+  g.textAlign = "left";
+  g.fillText(`residual (${unit === "um" ? "nm" : "px"})`, left, 5);
+  g.textAlign = "right";
+  g.textBaseline = "middle";
+  for (const v of ys.ticks) {
+    g.fillRect(left - 4, Y(v), 4, 1);
+    g.fillText(v.toFixed(ys.digits), left - 6, Y(v));
+  }
+  g.strokeStyle = "#8c8c8c";                         // 0: the line itself
+  g.beginPath();
+  g.moveTo(left, Math.round(Y(0)) + 0.5);
+  g.lineTo(right, Math.round(Y(0)) + 0.5);
+  g.stroke();
+  if (Number.isFinite(three)) {
+    g.strokeStyle = PICKED_COLOR;
+    g.fillStyle = PICKED_COLOR;
+    g.setLineDash([5, 4]);
+    for (const v of [three, -three]) {
+      g.beginPath();
+      g.moveTo(left, Y(v));
+      g.lineTo(right, Y(v));
+      g.stroke();
+      g.fillText(v > 0 ? "+3σ" : "−3σ", right - 4, Y(v) + (v > 0 ? -8 : 8));
+    }
+    g.setLineDash([]);
+  }
+  g.strokeStyle = PLOT_COLOR;
+  g.fillStyle = PLOT_COLOR;
+  g.lineWidth = 1.5;
+  g.beginPath();
+  order.forEach((k, i) => (i === 0 ? g.moveTo : g.lineTo).call(g, X(lf.along[k]), Y(lf.residuals[k] * scale)));
+  g.stroke();
+  if (order.length <= 400) {                         // the vertices themselves, while they stay apart
+    for (const k of order) {
+      g.beginPath();
+      g.arc(X(lf.along[k]), Y(lf.residuals[k] * scale), 2.5, 0, 2 * Math.PI);
+      g.fill();
+    }
+  }
+  const k = app.fitCursor;
+  if (k !== null) {
+    g.strokeStyle = PREVIEW_COLOR;
+    g.lineWidth = 2;
+    g.beginPath();
+    g.arc(X(lf.along[k]), Y(lf.residuals[k] * scale), 5, 0, 2 * Math.PI);
+    g.stroke();
+  }
+  Object.assign(fitPlot, { left, right, top, bottom, sLo, sHi });
+}
+
+/**
+ * While the line fit window shows: the line fitted, dashed in white over the stretch the vertices
+ * cover and a little beyond, at L(s) = q_bar + (s - mean s) t in the measurement frame; the vertex at
+ * the plot's cursor ringed.
+ * @param {(p: Point) => Point} toScreen
+ */
+function drawFit(toScreen) {
+  const data = app.fitOpen ? currentFit() : null;
+  if (data === null) {
+    return;
+  }
+  const { fit: lf, contour, picked } = data;
+  const mean = lf.along.reduce((sum, s) => sum + s, 0) / lf.along.length;
+  /** @param {number} s @returns {Point|null} */
+  const at = (s) => fromMeasurement(app.frame, lf.centroid[0] + (s - mean) * lf.direction[0],
+    lf.centroid[1] + (s - mean) * lf.direction[1]);
+  const [a, b] = [at(Math.min(...lf.along)), at(Math.max(...lf.along))];
+  if (a !== null && b !== null) {
+    const [p, q] = [toScreen(a), toScreen(b)];
+    const length = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+    const [ux, uy] = [(FIT_LINE_BEYOND_PX * (q[0] - p[0])) / length, (FIT_LINE_BEYOND_PX * (q[1] - p[1])) / length];
+    const line = new Path2D();
+    addSegment(line, [p[0] - ux, p[1] - uy], [q[0] + ux, q[1] + uy]);
+    strokeOverlay(line, "#ffffff", { dash: [6, 4], width: 1.4 });   // white, edged dark: clear of the violet rings
+  }
+  const k = app.fitCursor;
+  if (k !== null) {
+    const [x, y] = toScreen(contour.points[picked[k]]);
+    ctx.save();
+    ctx.strokeStyle = PREVIEW_COLOR;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 8 * handleScale(), 0, 2 * Math.PI);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/** Export CSV in the line fit window: the line fit file (FORMAT.md) of the vertices picked. */
+function exportFit() {
+  const data = currentFit();
+  if (data !== null) {
+    download(formatLineFitFile(imageInfo(), app.frame, data.contour, data.picked, data.fit),
+      `${stem()}_${fileSafe(data.contour.name)}_line_fit.csv`, "text/csv;charset=utf-8");
+  }
 }
 
 /**
@@ -3502,12 +3762,13 @@ function refreshProfileWindow() {
 }
 
 /**
- * One of the two lines under the plot, which keep one line each whatever they hold, so that the
- * plot keeps its size: its text, and the same as its tooltip, for when the window cuts it short.
+ * One of the two lines under the plot of the profile window or the line fit window, which keep one
+ * line each whatever they hold, so that the plot keeps its size: its text, and the same as its
+ * tooltip, for when the window cuts it short.
  * @param {HTMLElement} line
  * @param {string} text
  */
-function setProfileLine(line, text) {
+function setPlotLine(line, text) {
   line.textContent = text;
   line.title = text;
 }
@@ -3523,7 +3784,7 @@ function showMarkerReadout() {
   buttonEl("clear-markers").disabled = !marked;
   out.classList.toggle("marked", marked);
   if (data === null || !marked) {
-    setProfileLine(out, data === null ? "" : profileNote(data));
+    setPlotLine(out, data === null ? "" : profileNote(data));
     return;
   }
   const unit = data.geometry.unit;
@@ -3531,7 +3792,7 @@ function showMarkerReadout() {
     `${Number.isFinite(m.value) ? greyText(m.value) : "no value"}`);
   const [a, b] = data.markers;
   parts.push(b === undefined ? "click again for B" : `A–B ${profileDistanceText(Math.abs(b.distance - a.distance), unit)}`);
-  setProfileLine(out, parts.join("; "));
+  setPlotLine(out, parts.join("; "));
 }
 
 /**
@@ -3573,7 +3834,7 @@ function showProfileReadout() {
   const out = el("profile-readout");
   if (data === null || t === null) {
     const none = app.image === null ? "No image." : "Select a profile under Measurements, or draw one with the profile tool (5).";
-    setProfileLine(out, data === null ? none : "Point at the plot to read a value; click it to place markers A and B.");
+    setPlotLine(out, data === null ? none : "Point at the plot to read a value; click it to place markers A and B.");
     return;
   }
   const { profile, geometry } = data;
@@ -3583,7 +3844,7 @@ function showProfileReadout() {
   const [n, across] = [profile.count[i], geometry.offsets.length];
   const spread = n > 1 ? ` ± ${String(Number(profile.spread[i].toPrecision(4)))}` : "";
   const part = n < across ? ` (${n} of ${across} values across, the rest outside the image)` : "";   // the count only when short
-  setProfileLine(out, n === 0 ? `at ${at}: outside the image` : `at ${at}: ${greyText(profile.mean[i])}${spread}${part}`);
+  setPlotLine(out, n === 0 ? `at ${at}: outside the image` : `at ${at}: ${greyText(profile.mean[i])}${spread}${part}`);
 }
 
 /**
@@ -5762,7 +6023,7 @@ function windowArea() {
  */
 function keepWindowsInView() {
   const area = windowArea();
-  for (const id of ["vertex-window", "profile-window", "colour-window"]) {
+  for (const id of ["vertex-window", "profile-window", "fit-window", "colour-window"]) {
     const win = el(id);
     if (win.hidden) {
       continue;
@@ -5837,6 +6098,7 @@ const KEY_ACTIONS = {
   "=": () => zoomCentre(1.25),
   "-": () => zoomCentre(0.8),
   t: () => toggleVertexWindow(),
+  l: () => toggleFitWindow(),
   Backspace: () => backspace(),
   Delete: () => {
     if (app.picked.length) {
@@ -6129,6 +6391,28 @@ el("vertex-drop").addEventListener("click", () => dropPicked());
 el("vertex-first").addEventListener("click", () => makePickedFirst());
 el("vertex-reverse").addEventListener("click", () => reversePicked());
 el("vertex-zoom").addEventListener("click", () => zoomToPicked());
+el("fit-line").addEventListener("click", () => toggleFitWindow());
+el("fit-close").addEventListener("click", () => toggleFitWindow());
+el("fit-export").addEventListener("click", () => exportFit());
+fitCanvas.addEventListener("pointermove", (e) => {
+  const data = currentFit();
+  if (data === null) {
+    return;
+  }
+  const x = e.clientX - fitCanvas.getBoundingClientRect().left;
+  const s = fitPlot.sLo + ((x - fitPlot.left) / (fitPlot.right - fitPlot.left || 1)) * (fitPlot.sHi - fitPlot.sLo);
+  const along = data.fit.along;
+  app.fitCursor = along.reduce((best, v, k) => (Math.abs(v - s) < Math.abs(along[best] - s) ? k : best), 0);
+  showFitLines(data);
+  drawFitPlot(data);
+  render();                          // the vertex at the cursor, ringed on the image
+});
+fitCanvas.addEventListener("pointerleave", () => {
+  app.fitCursor = null;
+  refreshFitWindow();
+  render();
+});
+new ResizeObserver(() => refreshFitWindow()).observe(fitCanvas);
 /** The last plain click on a coordinate of the vertex window: two on one within DOUBLE_MS edit it. */
 let cellClick = { key: "", time: -Infinity };
 el("vertex-rows").addEventListener("click", (e) => {
@@ -6220,7 +6504,7 @@ function restoreWindows() {
   } catch {
     return;                          // storage refused, or a damaged entry
   }
-  for (const id of ["vertex-window", "profile-window", "colour-window"]) {
+  for (const id of ["vertex-window", "profile-window", "fit-window", "colour-window"]) {
     const { left, top, width, height } = saved[id] ?? {};
     if (typeof left === "number" && typeof top === "number") {
       const win = el(id);
@@ -6234,8 +6518,10 @@ function restoreWindows() {
 movableWindow(el("vertex-window"), el("vertex-bar"));
 movableWindow(el("profile-window"), el("profile-bar"));
 movableWindow(el("colour-window"), el("colour-bar"));
+movableWindow(el("fit-window"), el("fit-bar"));
 resizableWindow(el("vertex-window"));
 resizableWindow(el("profile-window"));
+resizableWindow(el("fit-window"));
 restoreWindows();
 el("touch-undo").addEventListener("click", () => undo());
 el("touch-redo").addEventListener("click", () => redo());
@@ -6505,6 +6791,6 @@ Object.assign(window, {
     gdsFile, setLevels, brightnessMoved, contrastMoved, drawHistogram, paintPicture, toggleProfileWindow,
     refreshProfileWindow, shownProfile, profileData, profileMean, setProfileWidth, exportProfile, exportProfilePng,
     profilePlot, selectOnly, toggleChecked, checkRange, checkAll, deleteMeasurements, downloadItems, refreshMeasurements,
-    squareProfile, squareSelected, magnetPull,
+    squareProfile, squareSelected, magnetPull, toggleFitWindow, currentFit, exportFit,
   },
 });

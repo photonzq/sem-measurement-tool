@@ -16,7 +16,7 @@ All of these work through one affine map from the stored pixels, so no calibrati
 
 **Nothing leaves your computer.** The app is a static page with no server behind it. Images are read with the browser's File API and results are saved as downloads, whether the page comes from GitHub Pages or from disk.
 
-- [MATH.md](MATH.md) derives the geometry, the edge detection, the snapping, the display, the line profiles and their squaring to an edge, and the painted edges, and analyses the performance.
+- [MATH.md](MATH.md) derives the geometry, the edge detection, the snapping, the display, the line profiles and their squaring to an edge, the painted edges and the line fit, and analyses the performance.
 - [FORMAT.md](FORMAT.md) specifies the files.
 
 ## Opening it
@@ -110,16 +110,29 @@ One list under *Measurements* holds them all: contours, rulers, angles, gaps and
 
 *Vertices…*, shown when a contour is selected, opens a floating window over the image. So do T and a double click on a contour in the list. The window lists the selected contour's vertices: their number and X, Y in the measurement frame. These are the micrometres of the polygon file, or corrected pixels without a pixel size. Drag the window by its title bar, anywhere on the page, over the panel too, and resize it from its lower right corner.
 
-- **Selecting.** A click on a row selects that vertex, Ctrl+click adds or removes one, and Shift+click selects a range. A click on a vertex in the image does the same as a click on its row, Shift+click as Ctrl+click. Selected vertices are ringed in violet in the image, with their numbers.
+- **Selecting.** A click on a row selects that vertex, Ctrl+click adds or removes one, and Shift+click selects a range. A click on a vertex in the image does the same as a click on its row, Shift+click as Ctrl+click. Selected vertices are ringed in violet in the image, with their numbers; with more than eight selected, only the first and the last of each run are numbered.
 - **Up, Down.** Move the selected vertices one place earlier or later in the order. Adjacent selected vertices move as a block, and a block at the start or end stays.
 - **Drop** (Delete, or Backspace): remove the selected vertices.
 - **First** (closed contours, one vertex selected): renumber the contour to start there. The polygon is unchanged.
 - **Reverse**: run the contour the other way. A closed contour keeps its first vertex; an open one swaps its ends.
 - **Zoom**: centre and zoom the view on the selected vertices, or on the whole contour when none is selected.
+- **Fit line** (L): fit a straight line to the selected vertices, in a window of its own (*Line fit*, below).
 - **Typing coordinates.** Double-click or double-tap an X or Y cell, type the value, and press Enter (Esc keeps the old one). The vertex moves to the stored point that the inverse map (MATH.md, (G10)) gives.
 - **Arrow keys** move the selected vertices by one view unit in the direction they point on screen (Shift: ten), whatever the zoom, tilt correction or rotation. One view unit is the width of a stored pixel: a cross-section's rows count $k$ times, so Up moves a vertex by $1/k$ of a row (MATH.md, (G15)).
 
 Every operation can be undone.
+
+## Line fit
+
+*Fit line* in the vertex window, or L, opens a window that fits a straight line to the selected vertices of the selected contour, and shows how far each vertex lies from it: a simple measure of line edge roughness (MATH.md, Part 8).
+
+- **What it fits.** Exactly the selected vertices: Shift+click a range in the vertex window, or Ctrl+click any. The line is fitted by total least squares in the measurement frame, tilt-corrected and turned: the line through the vertices' centroid that minimises the sum of their squared perpendicular distances. Unlike a fit of y on x, it is the same at any angle of the edge and any rotation of the image.
+- **Residuals.** Each vertex's signed distance from the line, positive to the left of the line run from the first vertex selected to the last. The plot shows them against the place along the line, in nm (in pixels without a pixel size), with 0 and ±3σ as lines.
+- **Figures.** σ, the residuals' root mean square over n − 2 degrees of freedom; 3σ, the usual figure of line edge roughness; the peak to valley. Then the number of vertices, the length they span along the line and the line's angle, counter-clockwise from +X. Point at the plot to read a vertex's number, its place along the line and its residual; the image rings that vertex.
+- **On the image** the line is drawn dashed in white, a little beyond the first and the last vertex.
+- **Live.** The window follows the selected vertices as they change, and the contour's edits and the calibration. Nothing is kept: select the same vertices again for the same fit.
+- **Export CSV** writes the line fit file: the vertices, their coordinates in the measurement frame, their places along the line and residuals, and the figures (FORMAT.md).
+- **Spacing.** Painted edges place the vertices one point spacing apart, as roughness metrology asks. Hand-clicked vertices count as they are: where they crowd, that stretch weighs more. The figures depend on the length fitted and the spacing, and include the noise of the edge detection (MATH.md 8.5).
 
 ## Line profiles
 
@@ -268,6 +281,7 @@ With *Snap* on, as it is from the start (S switches it), a click lands on the st
 | `<image>_measurements.csv`, `<image>_<ruler or angle>.csv` | one row per measurement: value, unit, components, points; a profile's band width and mean grey value; a contour's vertex count, area and bounding box |
 | `<image>_<profile>.csv` | the samples of one line profile |
 | `<image>_<profile>.png` | the plot of one line profile |
+| `<image>_<contour>_line_fit.csv` | a straight line fitted to the selected vertices of a contour, with their residuals and the figures |
 | `<image>.gds`, `<image>_<contour>.gds` | contours as a GDSII layout, for KLayout, gdstk, GDSFactory and other layout tools; written only |
 
 *Save session* writes the first; *Download* under *Measurements* writes the others, for the selection or for all. The names in angle brackets are made safe for a file name. [FORMAT.md](FORMAT.md) specifies them all and includes a dependency-free Python reader for the polygon file.
@@ -410,6 +424,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | H, V | level the selected ruler horizontal or vertical |
 | S, G | snapping on or off; edge map on or off |
 | T | show or hide the vertex window of the selected contour |
+| L | show or hide the line fit window: a straight line fitted to the selected vertices, with their residuals |
 | P | show or hide the profile window, which shows the selected profile and steps aside while none is selected; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
 | E | square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5° of square while the option under *Snapping* is on (Alt: not) |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
@@ -452,6 +467,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `js/vertices.js` | the vertex window's operations on a contour's vertex list |
 | `js/display.js` | the display: levels, brightness and contrast, the histogram's bins; derivations (D1)–(D4) in the header |
 | `js/profile.js` | line profiles: the band, the samples, the contour crossings, squaring to an edge, markers; derivations (P1)–(P14) in the header |
+| `js/linefit.js` | the line fit: total least squares, the residuals, σ and the figures; derivations (L1)–(L4) in the header |
 | `js/trace.js` | painted edges: the stations along a stroke, the path along the edge, the criteria that place the points, the joining; derivations (T1)–(T8) in the header |
 | `js/app.js` | the user interface, mouse, pen and touch input; zooming about a point, (G16), in its comments |
 | `vendor/` | UTIF.js and pako (inflate), unmodified, with their licences |
@@ -558,6 +574,11 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - Joining: after the last vertex from the nearer end, a new contour, in place of the vertices along the stretch the points cover, the nearer of two runs, round a closed contour's end, into the nearest segment; one side of a narrow rectangle redone, the other side and the corners kept; Alt's stations and its end.
   - A stroke across an edge places nothing; one down a bright line and back up stops at the turn; strokes of one or two stations follow the lone-station rule.
   - The work kept between pointer moves gives, at every move of a growing stroke, the points of a fresh placing, bit for bit.
+- **Line fit.**
+  - A line at 73° with residuals symmetric about its middle, which the fit must find exactly: the angle, the residuals, the places along the line, σ, the peak to valley and the length. The same turned by 31°, and in the reverse order.
+  - On random points, the sum of squares least at the line found; the residuals summing to 0; σ²(n − 2) the sum of squares.
+  - No line for one point or points that coincide; two points, collinear points, a vertical line at 90°.
+  - The line fit file: its header and one row per vertex.
 
 The decoding checks need SEM images of your own, which the repository does not hold. Name them on the command line:
 
@@ -592,6 +613,7 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - Interpolation widens an edge slightly: on a sharp edge, the 80 % threshold lies about 0.1 px further out than the edge's own (MATH.md 7.6).
   - A stroke that turns back places points only up to where it turns.
   - A plain stroke cannot start on a vertex, which a plain drag moves: start it beside the vertex, or use Ctrl.
+- **Line fit.** A straight line only. The figures depend on the length fitted and the spacing of the vertices; they include the noise of the edge detection, and a curved stretch's curvature (MATH.md 8.5).
 - **Line profiles.**
   - Straight lines only.
   - The band is averaged with equal weights.

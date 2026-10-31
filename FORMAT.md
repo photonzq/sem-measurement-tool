@@ -404,6 +404,67 @@ distance,mean,std,count,x_px,y_px
 
 The grey values are those stored in the image, not the display's.
 
+## Line fit file, version 1
+
+A straight line fitted to vertices of a contour, and each vertex's residual (MATH.md, Part 8), written by **Export CSV** in the line fit window. The example below comes from vertices painted along the rib's left sidewall on the FEI test image, in the frame of the session example; the rest of its 54 rows are left out:
+
+```
+# sem-measurement-tool line fit 1
+# image: fib_cross_section.tif
+# image_sha256: 8719dc9863e3ed63e8a20aa7b6c0d80f25ec7db5c6dff7b46b1199baec3e0567
+# image_size_px: 3072 2188
+# databar_rows: 140
+# microscope: FEI Helios 5 UX
+# pixel_size_nm: 1.34896 1.34896
+# tilt_deg: 51.996
+# correction: cross-section
+# correction_factor: 1.269087439
+# tilt_axis_deg: 0
+# rotation_deg: 0.25
+# origin_px: 1536 1024
+# px_to_um: 0.001348947159 0.000007469759442 0.000005885929693 -0.001711931896
+# unit: um
+# contour: rib sidewall
+# vertices: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53
+# points: 54
+# centroid: -1.117176 0.039069
+# direction: -0.294144134 -0.955761073
+# line_angle_deg: 72.893777
+# length: 0.364203
+# sigma: 0.002184
+# three_sigma: 0.006552
+# peak_to_valley: 0.011681
+# along: from the first vertex's foot on the line; residual: the signed distance from it, positive to the left; both in the unit above
+vertex,x_px,y_px,x,y,along,residual
+0,748.682,894.933,-1.063015,0.216320,0.000000,-0.000372
+1,745.466,902.426,-1.067297,0.203473,0.013539,-0.000686
+2,744.765,906.360,-1.068213,0.196735,0.020248,0.000421
+3,744.894,910.544,-1.068008,0.189573,0.027033,0.002723
+```
+
+**Header.** The keys of the CSV header (*The CSV header* above), then:
+
+| Key | Value | Meaning |
+|:--|:--|:--|
+| `unit` | `um` or `px` | the unit of the coordinates, the places along the line, the residuals and the figures: micrometres, or pixels of the corrected view without a pixel size |
+| `contour` | text | the contour's name |
+| `vertices` | integers | the vertices fitted, by their numbers in the contour, in the order fitted |
+| `points` | integer | how many |
+| `centroid` | `x y` | the vertices' centroid, which the line passes through (MATH.md, (L1)) |
+| `direction` | `x y` | the unit vector along the line, from the first vertex toward the last |
+| `line_angle_deg` | number | the line's angle, counter-clockwise from +X, in (−90, 90] (MATH.md, (L4)) |
+| `length` | number | the length the vertices span along the line |
+| `sigma`, `three_sigma` | number | the residuals' root mean square over n − 2 degrees of freedom, and three times it (MATH.md, (L3)); absent for two vertices |
+| `peak_to_valley` | number | the largest residual less the smallest |
+
+**Rows.** One per vertex fitted, in the order fitted:
+
+- `vertex`: its number in the contour;
+- `x_px`, `y_px`: its pixel coordinates;
+- `x`, `y`: its coordinates in the measurement frame, in the unit, with 6 decimals in µm and 3 in pixels;
+- `along`: its place along the line, from the first vertex's foot;
+- `residual`: its signed distance from the line, positive to the left of the line run from the first vertex to the last (MATH.md, (L2)).
+
 ## GDSII file
 
 A binary GDSII stream file (release 6.0) with one library holding one cell. MATH.md, part 4, derives its units and its eight-byte reals.

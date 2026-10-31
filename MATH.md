@@ -9,8 +9,9 @@ This document derives what the app computes from an image:
 - **Part 5:** the display: the info bar, the levels, brightness and contrast, and the histogram.
 - **Part 6:** line profiles: the band, the samples, the contours that cross the line, squaring a profile to the edge it crosses, and markers for a distance along it.
 - **Part 7:** painted edges: the contour tool's stroke along an edge, the path it follows, the criteria that place its points, and how they join the contour.
+- **Part 8:** line edge roughness: a straight line fitted to vertices of a contour, their residuals and the figures.
 
-Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) and (T1)–(T8) in `js/trace.js`.
+Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) (T1)–(T8) in `js/trace.js` and (L1)–(L4) in `js/linefit.js`.
 
 ## Part 1. Geometry
 
@@ -1645,3 +1646,120 @@ A probe in Chromium (headless Edge) drove the page with pointer events on the FE
 - Ctrl and Alt strokes; Ctrl+drag from a vertex, which paints in place, and Ctrl+click on one, which selects it; Escape, also with Ctrl held;
 - each criterion; a session saved and loaded with other settings;
 - a finger with *Edge* off (it pans) and on (it paints): resting before it moves, from a vertex, with Ctrl held on a keyboard, and with a mouse hovering meanwhile.
+
+## Part 8. Line edge roughness
+
+An edge that should be straight, the sidewall of a waveguide seen from above or of a rib in a cross-section, deviates from a straight line. The line fit window takes vertices of a traced contour, fits a straight line to them, and gives how far each lies from it. The fit is made in the measurement frame (1.6), in micrometres, corrected for the tilt and turned: the residuals are then lengths on the specimen, whatever the rotation of the image. Without a pixel size, the frame is in pixels of the corrected view.
+
+### 8.1 The line (L1)
+
+Let the vertices be $q_i = (x_i, y_i)$, $i = 1 \dots n$. A line is the set of points $q$ with $\hat n\cdot q = c$, for a unit normal $\hat n$ and an offset $c$. The perpendicular distance of $q_i$ from it is $\hat n\cdot q_i - c$, and the fit minimises the sum of their squares (total least squares, or orthogonal regression):
+
+$$F(\hat n, c) = \sum_i (\hat n\cdot q_i - c)^2.$$
+
+**The offset.** $\partial F/\partial c = -2\sum_i(\hat n\cdot q_i - c) = 0$ gives $c = \hat n\cdot\bar q$, with the centroid $\bar q = \frac1n\sum_i q_i$. The best line, whatever its direction, passes through the centroid.
+
+**The direction.** With $u_i = q_i - \bar q$, $F = \sum_i(\hat n\cdot u_i)^2 = \hat n^{\mathsf T} S\,\hat n$, where
+
+$$S = \sum_i u_i u_i^{\mathsf T} = \begin{pmatrix} a & b \\ b & d \end{pmatrix}, \qquad a = \sum_i u_{x,i}^2,\quad b = \sum_i u_{x,i}u_{y,i},\quad d = \sum_i u_{y,i}^2$$
+
+is the scatter matrix. Write the normal of a line at the angle $\theta$ as $\hat n = (-\sin\theta, \cos\theta)$. Then
+
+$$F(\theta) = a\sin^2\theta - 2b\sin\theta\cos\theta + d\cos^2\theta.$$
+
+With $\sin^2\theta = \frac{1 - \cos2\theta}{2}$, $\cos^2\theta = \frac{1 + \cos2\theta}{2}$ and $2\sin\theta\cos\theta = \sin2\theta$,
+
+$$F(\theta) = \frac{a + d}{2} - \frac{a - d}{2}\cos2\theta - b\sin2\theta.$$
+
+The last two terms are $R\cos(2\theta - \varphi)$, with $R = \sqrt{\big(\frac{a - d}{2}\big)^2 + b^2}$, $\cos\varphi = \frac{a - d}{2R}$ and $\sin\varphi = \frac bR$, that is $\varphi = \operatorname{atan2}(2b, a - d)$. So
+
+$$F(\theta) = \frac{a + d}{2} - R\cos(2\theta - \varphi), \qquad \theta = \tfrac12\operatorname{atan2}(2b,\ a - d), \qquad F_{\min} = \frac{a + d}{2} - R. \qquad \text{(L1)}$$
+
+$F$ is least where the cosine is 1. The eigenvalues of $S$ are $\lambda_\pm = \frac{a + d}2 \pm R$: the least sum of squares is the smaller, $\lambda_-$, and the line runs along $\hat t = (\cos\theta, \sin\theta)$, the eigenvector of the larger. This is the principal axis of the vertices, the same eigenproblem as that of the structure tensor (P8), on positions rather than gradients. When $b = 0$ and $a < d$, $\operatorname{atan2}(0, a - d) = \pi$ gives a vertical line, $\theta = 90°$.
+
+**Why not y on x.** An ordinary least-squares fit of $y$ on $x$ minimises the vertical distances, which are the perpendicular ones divided by $\cos\theta$. Its weights therefore change with the line's angle; at $\theta = 90°$ its slope is infinite; and it changes when the image is turned. Turning all points by a rotation $Q$ turns $S$ into $QSQ^{\mathsf T}$, whose eigenvectors are those of $S$ turned by $Q$ and whose eigenvalues are unchanged. The orthogonal fit, its residuals and its figures are therefore the same at any rotation; only its angle turns.
+
+### 8.2 Residuals (L2)
+
+The residual of vertex $i$ is its signed distance from the line, and its place along the line is measured from the first vertex's foot:
+
+$$r_i = \hat n\cdot u_i, \qquad s_i = \hat t\cdot(q_i - q_1). \qquad \text{(L2)}$$
+
+The sense of $\hat t$ is chosen so that it points from the first vertex toward the last, $\hat t\cdot(q_n - q_1) \ge 0$, and $\hat n$ is $\hat t$ turned 90° counter-clockwise. A residual is thus positive to the left of the line, walking from the first vertex to the last.
+
+Two sums vanish: these are the normal equations of the fit.
+
+- $\sum_i r_i = \hat n\cdot\sum_i u_i = 0$, since the line passes through the centroid.
+- $\sum_i (\hat t\cdot u_i)\,r_i = \hat t^{\mathsf T}S\,\hat n = \lambda_-\,\hat t\cdot\hat n = 0$, since $\hat n$ is an eigenvector of $S$ and $\hat t \perp \hat n$. The residuals do not correlate with the place along the line: the fit has taken out every tilt of the vertices.
+
+$\sum_i r_i^2 = F_{\min} = \lambda_-$.
+
+### 8.3 Figures (L3), (L4)
+
+$$\sigma = \sqrt{\frac{\sum_i r_i^2}{n - 2}}, \qquad 3\sigma, \qquad \text{peak to valley} = \max_i r_i - \min_i r_i, \qquad L = \max_i s_i - \min_i s_i. \qquad \text{(L3)}$$
+
+The line's angle (L4) is $\theta$, counter-clockwise from $+X$ in the measurement frame, in $(-90°, 90°]$, as for a line rather than a direction. The window gives σ, 3σ and the peak to valley in nm when the frame is in micrometres, rounded as lengths are on screen (1.13) but with three decimals fewer; the file keeps them in the frame's unit.
+
+**Why $n - 2$.** Suppose the edge is a straight line and each vertex deviates from it, across it, by $\varepsilon_i$: independent, of mean 0 and variance $\sigma^2$. The fitted line differs from the true one by a small offset $\delta c$ and a small angle $\delta\theta$. To first order in them, in the true line's own frame, with $s'_i$ the place along it,
+
+$$r_i = \varepsilon_i - \delta c - \delta\theta\, s'_i.$$
+
+The fit chooses $\delta c$ and $\delta\theta$ to minimise $\sum_i r_i^2$: a least-squares fit of $\varepsilon$ on the two vectors $(1, \dots, 1)$ and $(s'_1, \dots, s'_n)$. The residual vector is therefore $P\varepsilon$, with $P$ the projection onto the $(n - 2)$-dimensional complement of the plane they span. Then
+
+$$\mathrm E\sum_i r_i^2 = \mathrm E\,\varepsilon^{\mathsf T}P\varepsilon = \sigma^2\operatorname{tr}P = (n - 2)\,\sigma^2,$$
+
+and dividing by $n - 2$ makes $\sigma^2$ unbiased. Dividing by $n$ instead would make $\sigma$ smaller by the factor $\sqrt{(n - 2)/n}$: 0.5 % less at $n = 200$, 1 % at 100, 2.5 % at 40.
+
+**3σ.** Line edge roughness is usually quoted as $3\sigma$ of the residuals from a straight line. The ITRS 2007 metrology chapter defines its recommended metric so, along a line 2 µm long, following the SEMI standard (references below). For deviations distributed normally, 99.7 % of them lie within $\pm3\sigma$, which the plot marks.
+
+Bunday et al. (2004, Eq. (7)) also divide the sum of an edge's squared residuals by $N - 2$. Their line is fitted by ordinary least squares across the scan, and their residuals are taken across it. For an edge at the small angle $\alpha$ to the scan's direction, these are the perpendicular residuals of (L2) divided by $\cos\alpha$: the two agree to the factor $1 + \alpha^2/2$.
+
+**The peak to valley** is the range of the residuals. It is easily read, but grows with the number of vertices even for the same edge. For normally distributed deviations its expected value is about $4.1\sigma$ for $n = 30$, $4.5\sigma$ for 50 and $5.0\sigma$ for 100, so it compares only fits of about the same number of vertices.
+
+### 8.4 Vertices, and their spacing
+
+The fit counts every vertex once. The figures estimate the roughness along the edge only when the vertices sample it evenly. Painted edges place them so, one point spacing apart along the stroke (Part 7), and so does a roughness measurement that takes the edge at equally spaced lines. Hand-clicked vertices crowd where the hand slowed, and that stretch then weighs more in σ. Snapped clicks can also land twice on one pixel of the edge, which counts that place twice.
+
+### 8.5 Limits
+
+- **The length fitted.** Undulations of the edge longer than the length $L$ fitted are taken up by the line itself, its offset and its angle, and do not appear in the residuals. σ therefore grows with $L$ until $L$ is several times the edge's correlation length $\xi$. Compare σ only between fits of similar length.
+  - The ITRS 2007 metrology chapter notes that $3\sigma$ depends strongly on the length and on the sampling interval, and reports the SEMI standard's defaults: $L \ge 2$ µm and a sampling interval of at most 10 nm.
+  - For deviations that correlate exponentially over $\xi$, Mack (2017, Eq. (13)) gives the expected sample standard deviation over a length $L$, after removing the mean: $\mathrm E\,s \approx \sigma\,(1 - \tfrac54\,\xi/L)$. That is 2.5 % low for $\xi = 20$ nm and $L = 1$ µm. A fitted line removes the tilt as well, so it should remove at least as much; that is an inference here, not the paper's result.
+  - The same paper gives the random uncertainty of $s$ (Eq. (10)): about $\sigma\sqrt{\xi/(2L)}$, 10 % for that case.
+- **The spacing.** Undulations shorter than about twice the vertex spacing $\Delta$ are not resolved; the vertices sample the edge, and the polygon between them is straight. A stretch of length $L$ sampled every $\Delta$ holds the spatial frequencies from $1/L$ up to the Nyquist frequency $1/(2\Delta)$ (Bunday et al. 2004, Section 3). Compare σ only between fits of similar spacing.
+- **Noise.** Each vertex carries the error of the edge detection that placed it, from the image's noise, independent of the edge's own roughness. Independent variances add: $\sigma_{\text{measured}}^2 = \sigma_{\text{edge}}^2 + \sigma_{\text{detection}}^2$.
+  - Villarrubia and Bunday (2005, Eq. (3)) write this as $\langle R_0^2\rangle = R_t^2 + \sigma_\varepsilon^2$: the expected measured roughness is always higher than the true one.
+  - They remove the noise's share without bias from $M \ge 2$ images of the same place, each taken with $1/M$ of the dwell. The scatter from image to image at each position gives the noise's variance, which they subtract.
+  - From one image the window cannot do that, and does not subtract the detection's share. The repeatability of the vertices gauges it: paint the same edge twice, with the same settings, and compare the two sets.
+- **Curvature.** A straight line fitted to a stretch of an edge curving with the radius $R$ takes the curvature as roughness. Across the stretch, at the place $s$ from its middle, the arc lies $s^2/(2R)$ from its tangent. The fit removes the mean and the tilt, and for $s$ uniform over $[-L/2, L/2]$ the residual variance is
+
+  $$\operatorname{Var}\frac{s^2}{2R} = \frac{1}{4R^2}\Big(\mathrm E\,s^4 - (\mathrm E\,s^2)^2\Big) = \frac{1}{4R^2}\Big(\frac{L^4}{80} - \frac{L^4}{144}\Big) = \frac{L^4}{720R^2},$$
+
+  so that $\sigma_{\text{curvature}} = L^2/(12\sqrt5\,R) \approx L^2/(26.8\,R)$: 0.4 nm for $L = 1$ µm and $R = 100$ µm. Keep $L^2 \ll 27\,R\,\sigma$.
+- **The frame.** The residuals are lengths in the measurement frame. In a cross-section corrected for the tilt, they are lengths on the cut face only where the face is the plane the correction assumes (1.3).
+
+### 8.6 Tests
+
+The tests check:
+
+- that eight points on a line at 73°, 0.05 µm apart along it, with residuals $+a, -a, -a, +a, +a, -a, -a, +a$ symmetric about the middle (so that $\sum r_i = 0$ and $\sum s_i r_i = 0$, and the line fitted is the line itself), give the angle, the residuals, the places along the line, $\sigma = \sqrt{8a^2/6}$, the peak to valley $2a$ and the length exactly; and the same turned by 31° and taken in the reverse order;
+- that on 40 random points the sum of squares is least at the line found, turning it by ±0.01° about the centroid makes it grow, the residuals sum to 0, and $\sigma^2(n - 2)$ is the sum of squares;
+- that one point, or points that coincide, give no line; two points give no σ; collinear points give σ = 0 at their angle; and a vertical line is at 90°;
+- the line fit file's header and rows.
+
+**References.** Each was checked on the page cited.
+
+- B. D. Bunday, M. Bishop, D. McCormack, J. S. Villarrubia, A. E. Vladár, R. Dixson, T. Vorburger, N. G. Orji and J. A. Allgair, "Determination of optimal parameters for CD-SEM measurement of line edge roughness," *Proc. SPIE* **5375**, 515–533 (2004). [doi:10.1117/12.535926](https://doi.org/10.1117/12.535926).
+  - Eq. (7), p. 518: the mean square roughness of an edge, its squared residuals from a line fitted by least squares summed over $N - 2$.
+  - Section 3, p. 522: the frequencies a line of length $L$ sampled every $\Delta$ holds, from $1/L$ to $1/(2\Delta)$.
+- J. S. Villarrubia and B. D. Bunday, "Unbiased estimation of linewidth roughness," *Proc. SPIE* **5752**, 480–488 (2005). [doi:10.1117/12.599981](https://doi.org/10.1117/12.599981).
+  - Eq. (3), p. 482: the noise's variance adds to the roughness's.
+  - Section 2.3, from p. 482: the unbiased estimate from repeated images.
+- C. A. Mack, "Uncertainty in roughness measurements: putting error bars on line-edge roughness," *J. Micro/Nanolith. MEMS MOEMS* **16**(1), 010501 (2017). [doi:10.1117/1.JMM.16.1.010501](https://doi.org/10.1117/1.JMM.16.1.010501).
+  - Eq. (2), p. 010501-1: the sample variance of correlated deviations is biased low.
+  - Eqs. (10) and (13), p. 010501-2: the uncertainty and the bias for an exponential autocorrelation.
+- International Technology Roadmap for Semiconductors, 2007 Edition, *Metrology*, section "Line roughness", p. 11. [PDF from the Semiconductor Industry Association](https://www.semiconductors.org/wp-content/uploads/2018/08/2007Metrology.pdf).
+  - $3\sigma$ of the residuals as the metric, and its strong dependence on the length and the sampling interval.
+  - The SEMI standard's defaults, $L \ge 2$ µm and at most 10 nm between samples.
+  - The noise's positive bias.
+- SEMI P47-0307 (reapproved 0513), "Test method for evaluation of line-edge roughness and linewidth roughness," SEMI. It is cited as the ITRS 2007 chapter reports it: its text, which SEMI sells, was not read here.

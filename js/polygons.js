@@ -1,11 +1,13 @@
 "use strict";
 /* global CORRECTIONS, correctionFactorOrNull, measurementMatrix, toMeasurement, measureContour, measureRuler,
    measureAngle, measureLineAngle, measureGap, profileGeometry, markerPlace, profileValueAt */
-/* exported formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatProfileFile */
+/* exported formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatProfileFile,
+   formatLineFitFile */
 /*
  * The CSV files of FORMAT.md: the polygon file, the interface to a mode solver or any program that
- * takes the traced contours; the measurements file, for a spreadsheet or a report; and the profile
- * file, the samples of one line profile.  All header the measurement frame of transform.js: its
+ * takes the traced contours; the measurements file, for a spreadsheet or a report; the profile file,
+ * the samples of one line profile; and the line fit file, a line fitted to vertices of a contour with
+ * their residuals (linefit.js).  All header the measurement frame of transform.js: its
  * parameters, for the record and to restore them, and the matrix px_to_um, A of (G8), which is all
  * a reader needs to go between pixels and micrometres:
  *
@@ -31,6 +33,7 @@
 const POLYGON_FORMAT_LINE = "# sem-measurement-tool polygons 1";
 const MEASUREMENT_FORMAT_LINE = "# sem-measurement-tool measurements 1";
 const PROFILE_FORMAT_LINE = "# sem-measurement-tool profile 1";
+const LINE_FIT_FORMAT_LINE = "# sem-measurement-tool line fit 1";
 const REQUIRED_COLUMNS = ["contour", "closed", "vertex", "x_um", "y_um"];
 
 /**
@@ -430,5 +433,41 @@ function formatProfileFile(image, frame, ms, profile, crossings) {
     lines.push([Number.isFinite(d) ? formatNumber(d, digits) : "", greyField(profile.mean[i]), greyField(profile.spread[i]),
       String(profile.count[i]), formatNumber(profile.x[i], 3), formatNumber(profile.y[i], 3)].join(","));
   }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * The line fit file (FORMAT.md): the vertices of a contour a line was fitted to, the line (linefit.js,
+ * (L1)-(L4)) in the measurement frame, each vertex's place along it and residual, and the figures.
+ * @param {ImageInfo} image
+ * @param {Frame} frame
+ * @param {{name: string, points: Point[]}} contour
+ * @param {number[]} picked      the vertices fitted, in the order given to the fit
+ * @param {LineFit} fit
+ * @returns {string}
+ */
+function formatLineFitFile(image, frame, contour, picked, fit) {
+  const m = measurementMatrix(frame);
+  const unit = m === null ? "px" : m.unit;
+  const digits = unit === "um" ? 6 : 3;
+  const n = picked.length;
+  const lines = [LINE_FIT_FORMAT_LINE, ...headerLines(image, frame), `# unit: ${unit}`,
+    `# contour: ${contour.name.replace(/[\r\n]+/g, " ")}`, `# vertices: ${picked.join(" ")}`, `# points: ${n}`,
+    `# centroid: ${formatNumber(fit.centroid[0], digits)} ${formatNumber(fit.centroid[1], digits)}`,
+    `# direction: ${formatNumber(fit.direction[0], 9)} ${formatNumber(fit.direction[1], 9)}`,
+    `# line_angle_deg: ${formatNumber(fit.angleDeg, 6)}`, `# length: ${formatNumber(fit.length, digits)}`];
+  if (n > 2) {
+    lines.push(`# sigma: ${formatNumber(fit.sigma, digits)}`, `# three_sigma: ${formatNumber(3 * fit.sigma, digits)}`);
+  }
+  lines.push(`# peak_to_valley: ${formatNumber(fit.peakToValley, digits)}`,
+    "# along: from the first vertex's foot on the line; residual: the signed distance from it, positive to the left; " +
+      "both in the unit above",
+    "vertex,x_px,y_px,x,y,along,residual");
+  picked.forEach((v, k) => {
+    const [x, y] = contour.points[v];
+    const q = toMeasurement(frame, x, y) ?? [NaN, NaN];
+    lines.push([String(v), formatNumber(x, 3), formatNumber(y, 3), formatNumber(q[0], digits), formatNumber(q[1], digits),
+      formatNumber(fit.along[k], digits), formatNumber(fit.residuals[k], digits)].join(","));
+  });
   return `${lines.join("\n")}\n`;
 }
