@@ -28,7 +28,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
 ## Working with it
 
-1. **Open an image**: *Open image…*, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, and Hitachi TIFFs with their pixel size. Where the microscope writes its metadata to a file beside the image (Hitachi's and JEOL's `.txt`, TESCAN's `.hdr`), select or drop both files together; that file is then used, for an image of any format, JPEG included. The panel shows the metadata under *Metadata*. The image opens with automatic contrast; *Display*, at the bottom of the panel, shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
+1. **Open an image**: *Open image…*, in the panel or in the middle of the empty view, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, and Hitachi TIFFs with their pixel size. Where the microscope writes its metadata to a file beside the image (Hitachi's and JEOL's `.txt`, TESCAN's `.hdr`), select or drop both files together; that file is then used, for an image of any format, JPEG included. The panel shows the metadata under *Metadata*. The image opens with automatic contrast; *Display*, at the bottom of the panel, shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
 2. **Check the calibration** under *Scale, tilt and rotation*. Choose the tilt correction:
    - *cross-section* for a FIB face;
    - *tilted surface* for features in a tilted surface;
@@ -47,6 +47,10 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
    Its last entries do the same for all the measurements.
 
 Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes points, measurements and calibration changes. While a measurement is being placed, Ctrl+Z first takes back its last point.
+
+**The panel's sections fold.** A click on a section's heading folds it to the heading, or unfolds it; the browser keeps which are folded. The keys work whether a section is folded or not.
+
+**Numbers on screen** give lengths to about a tenth of a pixel: 4 decimals in micrometres for pixels of 1.35 nm, 3 for 18 nm, 1 in pixels. Areas are given to what moving the outline by a tenth of a pixel changes. The files keep their full precision (MATH.md 1.12, 1.13).
 
 **The status bar** under the view is hidden at first. The *status bar* switch, pinned at the bottom right under the panel, shows it, and the browser keeps the choice. It gives the cursor's position in pixels and micrometres, the grey value there and the edge strength, and the app's messages: a file opened or saved, why a profile was not squared, what to select first. While it is hidden, each message shows for a few seconds in a box at the bottom of the view.
 
@@ -78,13 +82,14 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 The **points of a measurement** handle as follows:
 
 - drag a point to move it; it snaps when released;
+- the pointer shows what a press would drag: over a point or a vertex it turns into four arrows, and a light ring marks the point; over a profile's band square, or a marker's tick, a two-way arrow shows the way it moves;
 - right-click a point to delete its measurement;
 - Esc, or a right click, cancels a measurement being placed, and Backspace or Ctrl+Z removes its last point;
 - Alt with any click or release places a point exactly, without snapping.
 
 ## Measurements
 
-One list under *Measurements* holds them all: contours, rulers, angles, gaps and profiles, in the order made, each with its colour and its brief measures. Selected measurements keep their colour and are drawn thicker, with a light halo and white points (see *Overlay colours*).
+One list under *Measurements* holds them all: contours, rulers, angles, gaps and profiles, in the order made, each with its colour and its brief measures. It grows to eight rows, and scrolls beyond. Selected measurements keep their colour and are drawn thicker, with a light halo and white points (see *Overlay colours*).
 
 - **Selecting.** A click or a tap on a row selects that measurement alone. Its box, or Ctrl+click, adds it to the selection or takes it out. Shift+click selects from the row clicked last, and Ctrl+A selects all.
 - **The one edited.** A measurement selected alone is the one edited, marked by a bar at the left of its row. It is the contour the contour tool extends, the profile the profile window shows, and the ruler that *Level* and *Tilt axis along ruler* take. Touching a measurement's point with its tool makes it the one edited.
@@ -149,7 +154,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - Or type the width in the profile window.
   - New profiles take the last width set. A width of one pixel or less is the line alone.
 - **Sampling.** Values are read about one stored pixel apart, both along the line and across the band. They are interpolated bilinearly from the stored grey values, not from the display. Points outside the image, or in its info bar, have no value. MATH.md, Part 6, derives the sampling.
-- **The profile window** plots the selected profile. It opens by itself when a profile is made, and on a double click or double tap on a profile under *Measurements*; P shows or hides it. It shows:
+- **The profile window** plots the selected profile, and takes the profile's name as its title. It opens by itself when a profile is made, and on a double click or double tap on a profile under *Measurements*; P shows or hides it. While another kind of measurement, or none, is selected, it steps aside, and it comes back with the next profile selected. It opens at most 45 % of the view's height tall, to the right of the touch bar on a touch screen. Like the other floating windows, once moved or resized it opens where it was left, at its size, in this browser. It shows:
   - the mean across the band against the distance from the first end;
   - the spread across the band (± one standard deviation), shaded;
   - 0 and the full scale of the image's values, as solid lines labelled on the y axis, which always spans both. A profile clipped at black or at white runs flat along one of them. The full scale is 255 for 8-bit images and those the browser decodes, 65535 for 16-bit ones and $2^{32}-1$ for 32-bit whole numbers. Float images have none: the line marks their largest value above the info bar (see also *Limits*);
@@ -181,7 +186,7 @@ Measurements are drawn in colours made to show on grey images, dark or bright:
 
 - **One colour each.** Each new measurement takes the next colour of a colour order, as MATLAB colours the lines it plots, and keeps it; the session saves it. The list shows each measurement's colour, and the profile plot marks a crossing contour in that contour's colour.
 - **Outlined lines.** Every line has a thin outline in the contrasting grey: white around a dark colour, black around a light one. No single colour stands out on dark, mid and bright grey alike, but an outlined one does.
-- **Labels on dark chips.** A value is written in white on a dark chip edged in the measurement's colour, legible on any grey.
+- **Labels on dark chips.** A value is written in white on a dark chip edged in the measurement's colour, legible on any grey. A label that would cover another moves up or down, by one to three label heights, to the nearest free place; the edge's colour still tells whose it is.
 - **Selection.** Selected measurements keep their colour, drawn thicker with a light halo, white points and a thicker chip edge.
 
 *Overlay colours*, in the *Display* section, chooses the colours:
@@ -405,7 +410,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | H, V | level the selected ruler horizontal or vertical |
 | S, G | snapping on or off; edge map on or off |
 | T | show or hide the vertex window of the selected contour |
-| P | show or hide the profile window; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
+| P | show or hide the profile window, which shows the selected profile and steps aside while none is selected; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
 | E | square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5° of square while the option under *Snapping* is on (Alt: not) |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements |

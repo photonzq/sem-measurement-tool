@@ -42,6 +42,8 @@ const PALETTES = {
 };
 const COLOURS_KEY = "sem-measurement-tool colours";       // where the browser keeps the choice (localStorage)
 const STATUS_KEY = "sem-measurement-tool status bar";     // "on" when the status bar is shown (localStorage)
+const FOLDED_KEY = "sem-measurement-tool folded";         // the ids of the panel's sections folded (localStorage)
+const WINDOWS_KEY = "sem-measurement-tool windows";       // where the floating windows were left, and their sizes (localStorage)
 /** The colours chosen: a palette, or "custom" with its own order. */
 const colours = { palette: "matlab", custom: [...PALETTES.matlab] };
 const PREVIEW_COLOR = "#ff3ec8";     // magenta: where a click lands (with Snap on, or inserting)
@@ -60,21 +62,13 @@ const LABEL_HEIGHT = 18;             // of the dark chip a label sits on, CSS pi
 const TOOLS = ["pan", "contour", "ruler", "angle", "line-angle", "profile", "gap"];
 /** @type {Record<Tool, string>} */
 const TOOL_HINTS = {
-  pan: "No tool: drag to pan, wheel to zoom; on a touch screen one finger pans and two pinch.  Choose a tool (1-6) " +
-    "to trace or measure; click it again, or press 0, to come back here.",
-  contour: "Click: add a vertex to the selected contour; with no contour selected, the first click starts a new one " +
-    "(N: done with this one).  Drag along an edge: points on it, after the last vertex (Ctrl: in place of the " +
-    "vertices along it, also from a vertex; Alt: as drawn; Esc: not).  Ctrl+click inserts (hold Ctrl to see where), drag " +
-    "a vertex to move it, right click deletes; click a vertex to select it in the vertex window (T).",
-  ruler: "Click both ends of a distance.  Drag an end to move it; right click deletes the ruler.",
+  pan: "No tool: drag to pan, wheel to zoom.  Choose a tool, or press 1 to 6; click it again, or press 0, to come back.",
+  contour: "Click: add a vertex (N: done); Ctrl+click inserts one.  Drag along an edge: points on it (Ctrl: in place).",
+  ruler: "Click both ends of a distance.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
-  "line-angle": "Click two points on one line, then two on the other: the angle between the lines.",
-  gap: "Click two points on one edge, then two on the other: the gap between the lines, along their common normal " +
-    "midway between their middles.",
-  profile: "Click both ends of a line profile (never snapped).  With square profiles on, a magnet holds it square to " +
-    "the edge it crosses while an end moves, once within 5° (⊥ shows it; Alt: not).  Drag the square on the band's " +
-    "side to widen it, an end to move it, the tick of A or B to move that marker; E squares it whatever the angle, P " +
-    "shows the profile window.",
+  "line-angle": "Click two points on one line, then two on the other.",
+  gap: "Click two points on one edge, then two on the other.",
+  profile: "Click both ends; a magnet holds it square to the edge (Alt: not).  Drag an end, the band's square, A or B.",
 };
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = {
@@ -183,8 +177,14 @@ const app = {
    *   ``press``, where it was pressed (screen)
    */
   drag: null,
-  /** @type {{index: number, marker: number}|null} the profile's marker whose tick on the image is under the pointer */
-  markerHover: null,
+  /**
+   * @type {{kind: "point"|"width"|"marker", index: number, point: number}|null} what a press under the mouse or pen
+   *   would drag: a point, the band's square of the profile edited, or a marker (``point`` 0 for A, 1 for B)
+   */
+  hover: null,
+  profileOpen: false,                // the profile window is wanted: it shows while a profile is selected
+  /** @type {Array<{x: number, y: number, w: number, h: number}>} the labels drawn so far in the frame: centres and sizes */
+  labelBoxes: [],
   /**
    * @type {{points: Point[], start: Point, last: Point, exact: boolean, insert: boolean, vertex: number, id: number,
    *   radius: number, moved: boolean, join: Joined|null, memo: TraceMemo}|null} a stroke of the contour tool
@@ -444,6 +444,47 @@ function nextPaint() {
  */
 function show(v) {
   return String(Number(v.toPrecision(5)));
+}
+
+/**
+ * The decimals of a length on screen: to about a tenth of a pixel, the pixel being a pixel width of
+ * the corrected view, c of (P2), in the unit (µm, or px without a pixel size): d = ceil(-log10(c/10)),
+ * so 4 in µm for pixels of 1.35 nm, 3 for 18 nm, and 1 in pixels.  The files keep full precision.
+ * @returns {number}
+ */
+function lengthDecimals() {
+  return Math.max(0, Math.ceil(-Math.log10(unitsPerView() / 10) - 1e-9));
+}
+
+/**
+ * A number to ``d`` decimals, without a minus sign on zero.
+ * @param {number} v
+ * @param {number} d
+ * @returns {string}
+ */
+function decimalsText(v, d) {
+  const text = v.toFixed(d);
+  return Number(text) === 0 ? (0).toFixed(d) : text;
+}
+
+/**
+ * @param {number} v
+ * @returns {string} a length on screen, to about a tenth of a pixel (lengthDecimals)
+ */
+function lengthText(v) {
+  return decimalsText(v, lengthDecimals());
+}
+
+/**
+ * An area on screen: to what moving its outline by a tenth of a pixel changes it, the perimeter
+ * times c / 10.
+ * @param {number} area
+ * @param {number} perimeter
+ * @returns {string}
+ */
+function areaText(area, perimeter) {
+  const step = (perimeter * unitsPerView()) / 10;
+  return step > 0 ? decimalsText(area, Math.max(0, Math.ceil(-Math.log10(step) - 1e-9))) : show(area);
 }
 
 /**
@@ -748,6 +789,7 @@ function render() {
 
 function draw() {
   app.raf = 0;
+  app.labelBoxes = [];
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   const w = Math.max(1, Math.round(rect.width * dpr));
@@ -805,6 +847,7 @@ function draw() {
   drawPending(toScreen);
   drawStroke(toScreen);
   drawMagnet(toScreen);
+  drawHover(toScreen);
   drawInsertPreview(toScreen);
   drawMarks(toScreen);
   drawHoldRing();
@@ -911,6 +954,9 @@ function trackModifiers(e) {
         dragTo(c[0], c[1]);
       }
       pullPending(c);
+      if (app.drag === null && app.cursorScreen !== null) {
+        hoverTarget(dragTarget(app.cursorScreen[0], app.cursorScreen[1]));   // Ctrl turns a vertex's drag into painting
+      }
     }
     render();
   }
@@ -1044,8 +1090,9 @@ function drawLabel(text, at, color, selected = false) {
   ctx.save();
   ctx.font = LABEL_FONT;
   const w = ctx.measureText(text).width + 10;
+  const [x, y] = clearSpot(at, w, LABEL_HEIGHT);
   ctx.beginPath();
-  ctx.roundRect(at[0] - w / 2, at[1] - LABEL_HEIGHT / 2, w, LABEL_HEIGHT, 4);
+  ctx.roundRect(x - w / 2, y - LABEL_HEIGHT / 2, w, LABEL_HEIGHT, 4);
   ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
   ctx.fill();
   ctx.lineWidth = selected ? 2.2 : 1.4;
@@ -1054,8 +1101,25 @@ function drawLabel(text, at, color, selected = false) {
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(text, at[0], at[1] + 0.5);
+  ctx.fillText(text, x, y + 0.5);
   ctx.restore();
+}
+
+/**
+ * Where a label ``w`` x ``h`` CSS pixels, centred at ``at``, keeps clear of the labels drawn before it
+ * in the frame: there, or the nearest free place one, two or three label heights above or below; as
+ * it is when none is free.  The place is taken for the labels after it.
+ * @param {Point} at
+ * @param {number} w
+ * @param {number} h
+ * @returns {Point}
+ */
+function clearSpot(at, w, h) {
+  const step = h + 2;
+  const y = [0, step, -step, 2 * step, -2 * step, 3 * step, -3 * step].map((dy) => at[1] + dy).find((c) =>
+    app.labelBoxes.every((b) => 2 * Math.abs(b.x - at[0]) >= b.w + w + 4 || 2 * Math.abs(b.y - c) >= b.h + h + 2)) ?? at[1];
+  app.labelBoxes.push({ x: at[0], y, w, h });
+  return [at[0], y];
 }
 
 /**
@@ -1124,11 +1188,11 @@ function drawContour(c, color, how, toScreen) {
 function measurementLabel(ms) {
   if (ms.kind === "ruler" || ms.kind === "profile") {
     const r = measureRuler(ms.points, app.frame);
-    return r === null ? "?" : `${show(r.length)} ${unitText(r.unit)}`;
+    return r === null ? "?" : `${lengthText(r.length)} ${unitText(r.unit)}`;
   }
   if (ms.kind === "gap") {
     const g = measureGap(ms.points, app.frame);
-    return g === null ? "?" : `${show(g.gap)} ${unitText(g.unit)}`;
+    return g === null ? "?" : `${lengthText(g.gap)} ${unitText(g.unit)}`;
   }
   const angle = ms.kind === "angle" ? measureAngle(ms.points, app.frame)
     : (measureLineAngle(ms.points, app.frame)?.angleDeg ?? null);
@@ -1231,7 +1295,7 @@ function addGap(solid, dashed, stored, pts, toScreen) {
   // as far out as the label's box reaches that way, half its width or height, and a margin: clear of the arrow
   ctx.save();
   ctx.font = LABEL_FONT;
-  const half = (ctx.measureText(`${show(g.gap)} ${unitText(g.unit)}`).width + 10) / 2;
+  const half = (ctx.measureText(`${lengthText(g.gap)} ${unitText(g.unit)}`).width + 10) / 2;
   ctx.restore();
   const reach = half * Math.abs(side[0]) + (LABEL_HEIGHT / 2) * Math.abs(side[1]) + 6;
   return [(f1[0] + f2[0]) / 2 + reach * side[0], (f1[1] + f2[1]) / 2 + reach * side[1]];
@@ -1701,31 +1765,98 @@ function hitMarker(sx, sy) {
 }
 
 /**
- * The marker a press at a screen position would drag (startDragAt): with a tool other than the
- * contour tool, none being placed, and neither a point nor the width handle there, which come first.
+ * What a press at a screen position would drag, as startDragAt takes it: with the contour tool a
+ * contour's vertex, unless Ctrl is down (a press with Ctrl paints from it); with the other tools the
+ * band's square of the profile edited, a measurement's point, or a marker's tick, in that order.  Null
+ * with no tool, while a measurement is being placed or the origin set, and over nothing.
  * @param {number} sx
  * @param {number} sy
- * @returns {{index: number, marker: number}|null}
+ * @returns {{kind: "point"|"width"|"marker", index: number, point: number}|null}
  */
-function markerAt(sx, sy) {
-  const free = app.tool !== "pan" && app.tool !== "contour" && app.pending === null && !app.originMode;
-  return free && !hitWidthHandle(sx, sy) && hitPoint(sx, sy, false) === null ? hitMarker(sx, sy) : null;
+function dragTarget(sx, sy) {
+  if (app.tool === "pan" || app.pending !== null || app.originMode) {
+    return null;
+  }
+  if (app.tool === "contour") {
+    const vertex = app.insertHeld ? null : hitPoint(sx, sy, true);
+    return vertex === null ? null : { kind: "point", index: vertex.index, point: vertex.point };
+  }
+  if (hitWidthHandle(sx, sy)) {
+    return { kind: "width", index: app.selected, point: 0 };
+  }
+  const hit = hitPoint(sx, sy, false);
+  if (hit !== null) {
+    return { kind: "point", index: hit.index, point: hit.point };
+  }
+  const marker = hitMarker(sx, sy);
+  return marker === null ? null : { kind: "marker", index: marker.index, point: marker.marker };
 }
 
 /**
- * Note the marker under the pointer on the image (null: none): its tick, and its line on the plot,
- * get a halo, and the pointer a two-way arrow along its profile, also while one is dragged.
- * @param {{index: number, marker: number}|null} m
+ * Note what a press under the mouse or pen would drag (null: nothing): a point or the band's square
+ * gets a light ring (drawHover), a marker its halo on the image and the plot, and the pointer shows how
+ * it moves (dragCursor), also while something is dragged.
+ * @param {{kind: "point"|"width"|"marker", index: number, point: number}|null} t
  */
-function hoverMarker(m) {
-  const was = app.markerHover;
-  app.markerHover = m;
+function hoverTarget(t) {
+  const was = app.hover;
+  app.hover = t;
   const d = app.drag;
-  const index = m?.index ?? (d !== null && d.kind === "marker" ? d.index : -1);
-  canvas.style.cursor = index < 0 ? "" : alongCursor(app.measurements[index].points);
-  if (was?.index !== m?.index || was?.marker !== m?.marker) {
-    drawProfilePlot();
+  const moving = d !== null ? d : t;
+  canvas.style.cursor = moving === null ? "" : dragCursor(moving);
+  if ((was?.kind === "marker" || t?.kind === "marker") && (was?.index !== t?.index || was?.point !== t?.point)) {
+    drawProfilePlot();               // the plot shows the marker's halo too
   }
+}
+
+/**
+ * The pointer over what a press would drag: four arrows over a point, a two-way arrow across the band
+ * over its square, and along the profile over a marker.
+ * @param {{kind: "point"|"width"|"marker", index: number}} t
+ * @returns {string}
+ */
+function dragCursor(t) {
+  const ms = app.measurements[t.index];
+  if (t.kind === "point" || ms === undefined) {
+    return "move";
+  }
+  if (t.kind === "marker") {
+    return alongCursor(ms.points);
+  }
+  return alongCursor([pointAlong(ms.points, 0.5), widthHandle(ms.points, ms.width ?? 1, app.frame)]);
+}
+
+/**
+ * A light ring around what a press would drag, or what is dragged: a point, or the band's square of a
+ * profile.  A marker has its halo instead (drawProfileMarkers).
+ * @param {(p: Point) => Point} toScreen
+ */
+function drawHover(toScreen) {
+  const t = app.drag ?? app.hover;
+  const ms = t === null || t.kind === "marker" ? undefined : app.measurements[t.index];
+  if (t === null || ms === undefined) {
+    return;
+  }
+  const at = t.kind === "point" ? ms.points[t.point] : widthHandle(ms.points, ms.width ?? 1, app.frame);
+  if (at === undefined) {
+    return;
+  }
+  const [x, y] = toScreen(at);
+  const r = (t.kind === "point" ? 8 : 9) * handleScale();
+  const ring = new Path2D();
+  if (t.kind === "point") {
+    ring.arc(x, y, r, 0, 2 * Math.PI);
+  } else {
+    ring.roundRect(x - r, y - r, 2 * r, 2 * r, 3);
+  }
+  ctx.save();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";      // a dark rim under the white, so that it shows on bright grey too
+  ctx.stroke(ring);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.stroke(ring);
+  ctx.restore();
 }
 
 /**
@@ -2171,13 +2302,13 @@ function describeContour(c) {
     return { brief: `${shape}${c.closed ? "" : ", open"}`, details: `${shape}\ncorrection factor undefined: no measures` };
   }
   const u = unitText(m.unit);
-  const length = `${c.closed ? "perimeter" : "length"} ${show(m.perimeter)} ${u}`;
-  const area = c.closed && m.vertices > 2 ? `area ${show(m.area)} ${u}²` : null;
+  const length = `${c.closed ? "perimeter" : "length"} ${lengthText(m.perimeter)} ${u}`;
+  const area = c.closed && m.vertices > 2 ? `area ${areaText(m.area, m.perimeter)} ${u}²` : null;
   const lines = [`${shape}, ${c.closed ? "closed" : "open"}`, length];
   if (area !== null) {
     lines.push(area);
   }
-  lines.push(`bounding box ${show(m.width)} × ${show(m.height)} ${u}`);
+  lines.push(`bounding box ${lengthText(m.width)} × ${lengthText(m.height)} ${u}`);
   if (m.unit === "px" && app.image !== null) {
     lines.push("(no pixel size: lengths in pixels)");
   }
@@ -2201,19 +2332,19 @@ function describeMeasurement(ms) {
     }
     const u = unitText(r.unit);
     const line = {
-      brief: `${show(r.length)} ${u} at ${r.directionDeg.toFixed(1)}°`,
-      details: `length ${show(r.length)} ${u}\nΔX ${show(r.dx)}, ΔY ${show(r.dy)} ${u}\n` +
-        `direction ${r.directionDeg.toFixed(3)}° (counter-clockwise from +X)`,
+      brief: `${lengthText(r.length)} ${u} at ${r.directionDeg.toFixed(1)}°`,
+      details: `length ${lengthText(r.length)} ${u}\nΔX ${lengthText(r.dx)}, ΔY ${lengthText(r.dy)} ${u}\n` +
+        `direction ${r.directionDeg.toFixed(3)}°`,
     };
     if (ms.kind === "ruler") {
       return line;
     }
     const g = profileGeometry(ms.points, ms.width ?? 1, app.frame);
     const at = (ms.markers ?? []).map((m) => markerPlace(ms.points, m, app.frame));
-    const markers = at.length === 2 ? `markers A, B ${show(Math.abs(at[1] - at[0]) * g.length)} ${u} apart\n` : "";
+    const markers = at.length === 2 ? `\nmarkers A, B ${lengthText(Math.abs(at[1] - at[0]) * g.length)} ${u} apart` : "";
     return {
-      brief: `${show(r.length)} ${u}, band ${show(g.width)} ${u}`,
-      details: `${line.details}\nband ${show(g.width)} ${u} wide\n${markers}P shows the profile window`,
+      brief: `${lengthText(r.length)} ${u}, band ${lengthText(g.width)} ${u}`,
+      details: `${line.details}\nband ${lengthText(g.width)} ${u} wide${markers}`,
     };
   }
   if (ms.kind === "gap") {
@@ -2221,7 +2352,7 @@ function describeMeasurement(ms) {
     if (g === null) {
       return { brief: "?", details: "no measures: the correction factor is undefined, or a line is a point" };
     }
-    const text = `${show(g.gap)} ${unitText(g.unit)}`;
+    const text = `${lengthText(g.gap)} ${unitText(g.unit)}`;
     return { brief: text, details: `gap ${text}` };
   }
   if (ms.kind === "angle") {
@@ -2311,7 +2442,7 @@ function refreshFrameNotes() {
     const k = correctionFactor(f);
     /** @type {Record<string, string>} the law of k, which the correction's menu leaves out to stay short */
     const law = { "cross-section": "1/sin θ = ", "tilted-surface": "1/cos θ = " };
-    const lines = [k === 1 ? "correction factor k = 1" : `correction factor k = ${law[f.correction] ?? ""}${k.toFixed(5)}, across the tilt axis`];
+    const lines = k === 1 ? [] : [`correction factor k = ${law[f.correction] ?? ""}${k.toFixed(5)}, across the tilt axis`];
     if (cal && cal.tiltCorrectionOn) {
       lines.push("The microscope applied its own tilt correction: keep 'none'.");
       if (f.correction !== "none") {
@@ -2480,13 +2611,10 @@ function refreshDisplay() {
   const span = sliderSpan();
   inputEl("brightness").value = String(Math.round(1000 * sliderBrightness([app.lo, app.hi], span)));
   inputEl("contrast").value = String(Math.round(1000 * sliderContrast([app.lo, app.hi], span)));
-  const rows = app.image.imageRows;
-  const bar = app.image.height - rows;
   const bins = `${h.counts.length} bins${h.wholeBins ? ` of ${h.binWidth} value${h.binWidth === 1 ? "" : "s"}` : ""}`;
   const fixed = fixedSpan(app.image.bitsPerSample);
   const over = fixed === null ? "" : ` over ${fixed[0]} to ${fixed[1]} (${app.image.bitsPerSample} bits)`;
-  el("histogram-note").textContent = `rows 0 to ${rows - 1}${bar ? ` (the ${bar}-row info bar left out)` : ""}: ` +
-    `${(h.pixels / 1e6).toFixed(2)} M pixels, values ${greyText(h.min)} to ${greyText(h.max)}, in ${bins}${over}`;
+  el("histogram-note").textContent = `values ${greyText(h.min)} to ${greyText(h.max)}, in ${bins}${over}`;
   drawHistogram();
 }
 
@@ -2994,7 +3122,7 @@ function refreshVertexWindow() {
   const c = current ?? { name: "", closed: true, points: [] };
   const m = measurementMatrix(app.frame);
   const unit = m === null ? "?" : unitText(m.unit);
-  const digits = m !== null && m.unit === "um" ? 4 : 2;
+  const digits = lengthDecimals();
   el("vertex-title").textContent = current === null ? "Vertices: no contour selected" : `Vertices of ${c.name}`;
   el("vertex-x-head").textContent = `X (${unit})`;
   el("vertex-y-head").textContent = `Y (${unit})`;
@@ -3246,22 +3374,39 @@ const profilePlot = {
   hover: -1,                         // the marker under a mouse or pen on the plot: 0 for A, 1 for B, -1 for none
 };
 
+/** P, and the window's cross: hide the profile window when it shows; else want it, to show the selected profile. */
 function toggleProfileWindow() {
-  const w = el("profile-window");
-  w.hidden = !w.hidden;
-  if (w.hidden) {
-    app.profileCursor = null;
-    render();
+  app.profileOpen = el("profile-window").hidden;
+  if (app.profileOpen && shownProfile() === null) {
+    setStatus("Select a profile: the profile window shows the one selected.");
   }
-  keepWindowsInView();
   refreshProfileWindow();
 }
 
-/** Show the profile window (of the selected profile), if it is not shown already. */
+/** Want the profile window: it shows the selected profile. */
 function openProfileWindow() {
-  el("profile-window").hidden = false;
-  keepWindowsInView();
+  app.profileOpen = true;
   refreshProfileWindow();
+}
+
+/**
+ * The profile window shows while it is wanted and a profile is selected.  While none is, it steps
+ * aside, and it comes back with the next one selected.
+ */
+function syncProfileWindow() {
+  const w = el("profile-window");
+  const wanted = app.profileOpen && shownProfile() !== null;
+  if (wanted === !w.hidden) {
+    return;
+  }
+  w.hidden = !wanted;
+  if (wanted) {
+    keepWindowsInView();
+  } else {
+    app.profileCursor = null;        // the cursor's tick on the image goes with the window
+    profilePlot.hover = -1;
+    render();
+  }
 }
 
 /** @returns {FixedMeasurement|null} the profile the window shows: the selected measurement, when it is a profile */
@@ -3332,15 +3477,16 @@ function profileMean(ms) {
   return n > 0 ? sum / n : null;
 }
 
-/** The window's title, width, notes and plot, from the selected profile. */
+/** Show the window or hide it (syncProfileWindow); then its title, width, notes and plot, from the selected profile. */
 function refreshProfileWindow() {
+  syncProfileWindow();
   if (el("profile-window").hidden) {
     return;
   }
   const ms = shownProfile();
   const data = ms === null ? null : profileData(ms);
   profilePlot.data = data;
-  el("profile-title").textContent = ms === null ? "Profile" : `Profile: ${ms.name}`;
+  el("profile-title").textContent = ms === null ? "Profile" : ms.name;
   const width = inputEl("profile-width");
   width.disabled = data === null;
   el("profile-width-unit").textContent = app.frame.pixelNm ? "µm" : "px";
@@ -3389,13 +3535,13 @@ function showMarkerReadout() {
 }
 
 /**
- * A distance along a profile as the window writes it: 4 decimals in µm, 2 in pixels.
+ * A distance along a profile as the window writes it: to about a tenth of a pixel (lengthText).
  * @param {number} s
  * @param {"um"|"px"|null} unit
  * @returns {string}
  */
 function profileDistanceText(s, unit) {
-  return Number.isFinite(s) ? `${s.toFixed(unit === "um" ? 4 : 2)}${unit === null ? "" : ` ${unitText(unit)}`}` : "?";
+  return Number.isFinite(s) ? `${lengthText(s)}${unit === null ? "" : ` ${unitText(unit)}`}` : "?";
 }
 
 /**
@@ -3412,7 +3558,7 @@ function profileNote(data) {
   /** @type {Map<string, string[]>} */
   const byContour = new Map();
   for (const c of crossings) {
-    byContour.set(c.name, [...(byContour.get(c.name) ?? []), Number.isFinite(c.distance) ? show(c.distance) : "?"]);
+    byContour.set(c.name, [...(byContour.get(c.name) ?? []), Number.isFinite(c.distance) ? lengthText(c.distance) : "?"]);
   }
   if (byContour.size > 0) {
     parts.push(`crossed by ${[...byContour].map(([name, at]) => `${name} at ${at.join(", ")}${unit}`).join("; ")}`);
@@ -3433,7 +3579,7 @@ function showProfileReadout() {
   const { profile, geometry } = data;
   const i = Math.round(t * (profile.mean.length - 1));
   const unit = geometry.unit === null ? "" : ` ${unitText(geometry.unit)}`;
-  const at = Number.isFinite(profile.distance[i]) ? `${profile.distance[i].toFixed(geometry.unit === "um" ? 4 : 2)}${unit}` : "?";
+  const at = Number.isFinite(profile.distance[i]) ? `${lengthText(profile.distance[i])}${unit}` : "?";
   const [n, across] = [profile.count[i], geometry.offsets.length];
   const spread = n > 1 ? ` ± ${String(Number(profile.spread[i].toPrecision(4)))}` : "";
   const part = n < across ? ` (${n} of ${across} values across, the rest outside the image)` : "";   // the count only when short
@@ -3488,7 +3634,11 @@ function activeMarker() {
     return { index: d.index, marker: d.point };
   }
   const onPlot = profilePlot.markerDrag?.index ?? profilePlot.hover;
-  return onPlot >= 0 && shownProfile() !== null ? { index: app.selected, marker: onPlot } : app.markerHover;
+  if (onPlot >= 0 && shownProfile() !== null) {
+    return { index: app.selected, marker: onPlot };
+  }
+  const h = app.hover;
+  return h !== null && h.kind === "marker" ? { index: h.index, marker: h.point } : null;
 }
 
 /**
@@ -4495,7 +4645,7 @@ function showCursor(x, y) {
   const parts = [`x ${x.toFixed(1)}  y ${y.toFixed(1)} px`];
   const um = app.frame.pixelNm ? toMeasurement(app.frame, x, y) : null;
   if (um !== null) {
-    parts.push(`X ${um[0].toFixed(4)}  Y ${um[1].toFixed(4)} µm`);
+    parts.push(`X ${lengthText(um[0])}  Y ${lengthText(um[1])} µm`);
   }
   const image = app.image;
   if (image !== null && insideImage(x, y)) {
@@ -4595,7 +4745,7 @@ function startDragAt(sx, sy) {
   } else {
     return false;
   }
-  app.markerHover = null;
+  app.hover = null;
   focusMeasurement(app.drag.index);
   refreshMeasurements();
   render();
@@ -5270,6 +5420,9 @@ function resizableWindow(win) {
     win.style.height = `${h}px`;
   });
   grip.addEventListener("pointerup", () => {
+    if (start !== null) {
+      rememberWindow(win);
+    }
     start = null;
   });
 }
@@ -5522,7 +5675,7 @@ canvas.addEventListener("pointermove", (e) => {
   }
   dragTo(x, y);
   pullPending([x, y]);
-  hoverMarker(app.drag === null ? markerAt(sx, sy) : null);
+  hoverTarget(app.drag === null ? dragTarget(sx, sy) : null);
   app.preview = insideImage(x, y) && !e.altKey && snapsNow() ? snapTarget(x, y) : null;
   showCursor(x, y);
   render();
@@ -5570,7 +5723,7 @@ canvas.addEventListener("pointerleave", () => {
   app.cursorScreen = null;
   pullPending(null);
   if (app.drag === null) {
-    hoverMarker(null);
+    hoverTarget(null);
   }
   render();
 });
@@ -5828,6 +5981,7 @@ window.addEventListener("drop", (e) => {
 });
 
 el("open-image").addEventListener("click", () => inputEl("image-file").click());
+el("open-image-start").addEventListener("click", () => inputEl("image-file").click());
 el("open-session").addEventListener("click", () => inputEl("session-file").click());
 el("save-session").addEventListener("click", () => saveSession());
 for (const id of ["image-file", "session-file"]) {
@@ -6034,14 +6188,55 @@ function movableWindow(win, bar) {
     win.style.bottom = "auto";
   });
   bar.addEventListener("pointerup", () => {
+    if (drag !== null) {
+      rememberWindow(win);
+    }
     drag = null;
   });
+}
+
+/**
+ * Keep where a floating window was left, and its size once resized, for the next visit (this browser).
+ * @param {HTMLElement} win
+ */
+function rememberWindow(win) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WINDOWS_KEY) ?? "{}") ?? {};
+    const box = win.getBoundingClientRect();
+    saved[win.id] = { left: Math.round(box.left), top: Math.round(box.top),
+      ...(win.style.width === "" ? {} : { width: Math.round(box.width), height: Math.round(box.height) }) };
+    localStorage.setItem(WINDOWS_KEY, JSON.stringify(saved));
+  } catch {
+    // storage refused (a private window, say): the windows open where the page puts them
+  }
+}
+
+/** Put the floating windows where they were left on an earlier visit, at their sizes; shown, they keep in view. */
+function restoreWindows() {
+  /** @type {Record<string, {left?: number, top?: number, width?: number, height?: number}>} */
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(WINDOWS_KEY) ?? "{}") ?? {};
+  } catch {
+    return;                          // storage refused, or a damaged entry
+  }
+  for (const id of ["vertex-window", "profile-window", "colour-window"]) {
+    const { left, top, width, height } = saved[id] ?? {};
+    if (typeof left === "number" && typeof top === "number") {
+      const win = el(id);
+      Object.assign(win.style, { left: `${left}px`, top: `${top}px`, right: "auto", bottom: "auto" });
+      if (typeof width === "number" && typeof height === "number") {
+        Object.assign(win.style, { width: `${width}px`, height: `${height}px` });
+      }
+    }
+  }
 }
 movableWindow(el("vertex-window"), el("vertex-bar"));
 movableWindow(el("profile-window"), el("profile-bar"));
 movableWindow(el("colour-window"), el("colour-bar"));
 resizableWindow(el("vertex-window"));
 resizableWindow(el("profile-window"));
+restoreWindows();
 el("touch-undo").addEventListener("click", () => undo());
 el("touch-redo").addEventListener("click", () => redo());
 el("touch-fit").addEventListener("click", () => fit());
@@ -6086,6 +6281,39 @@ inputEl("show-status").addEventListener("change", () => showStatusBar(inputEl("s
   }
   showStatusBar(shown, false);
 }
+
+/** A click on a section's heading folds the section, or unfolds it; the browser keeps which are folded. */
+function setUpFolding() {
+  /** @type {unknown} */
+  let saved = [];
+  try {
+    saved = JSON.parse(localStorage.getItem(FOLDED_KEY) ?? "[]");
+  } catch {
+    // storage refused, or a damaged entry: all unfolded
+  }
+  const folded = new Set(Array.isArray(saved) ? saved : []);
+  for (const button of document.querySelectorAll("#panel > section > h2 > button.fold")) {
+    const section = button.closest("section");
+    if (section === null) {
+      continue;
+    }
+    /** @param {boolean} on */
+    const fold = (on) => {
+      section.classList.toggle("folded", on);
+      button.setAttribute("aria-expanded", String(!on));
+    };
+    fold(folded.has(section.id));
+    button.addEventListener("click", () => {
+      fold(!section.classList.contains("folded"));
+      try {
+        localStorage.setItem(FOLDED_KEY, JSON.stringify([...document.querySelectorAll("#panel > section.folded")].map((x) => x.id)));
+      } catch {
+        // storage refused: folded for this visit only
+      }
+    });
+  }
+}
+setUpFolding();
 el("profile-close").addEventListener("click", () => toggleProfileWindow());
 el("profile-export").addEventListener("click", () => exportProfile());
 el("profile-png").addEventListener("click", () => exportProfilePng());

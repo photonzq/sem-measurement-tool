@@ -25,8 +25,13 @@
   #view.navigate { cursor: grab; }
   #view.panning { cursor: grabbing; }
   #view-wrap.dragover { outline: 3px dashed var(--accent); outline-offset: -6px; }
-  #drop-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #bbb;
-               font-size: 15px; pointer-events: none; text-align: center; padding: 24px; }
+  #drop-hint { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+               gap: 6px; color: #bbb; font-size: 15px; pointer-events: none; text-align: center; padding: 24px; }
+  #drop-hint p { margin: 0; max-width: 36em; }
+  #drop-hint .formats { color: #8c8c8c; font-size: 13px; }
+  #drop-hint button { pointer-events: auto; font-size: 16px; padding: 8px 24px; margin-bottom: 6px; background: var(--accent);
+                      color: #fff; border-color: var(--accent); }
+  #drop-hint button:hover { filter: brightness(1.12); }
   #busy { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.75); color: #fff;
           padding: 6px 12px; border-radius: 4px; display: none; pointer-events: none; }
   #panel { grid-row: 1; grid-column: 2; overflow-y: auto; border-left: 1px solid var(--line); padding: 8px 12px 16px; }
@@ -43,6 +48,16 @@
   #toast.shown { opacity: 1; }
   #panel h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
   #panel section:first-child h2 { margin-top: 4px; }
+  /* a section's heading folds it: a button that looks like the heading, a triangle before it pointing down, or right
+     while the section is folded */
+  #panel h2 .fold { display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; border: none; border-radius: 0;
+                    background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit;
+                    text-align: left; cursor: pointer; }
+  #panel h2 .fold::before { content: ""; flex: none; width: 8px; height: 8px; background: currentColor;
+                            clip-path: polygon(0 20%, 100% 20%, 50% 80%); transition: transform 0.12s; }
+  #panel h2 .fold:hover { color: var(--text); }
+  #panel section.folded h2 .fold::before { transform: rotate(-90deg); }
+  #panel section.folded > :not(h2) { display: none !important; }
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
   .row button { flex: 1 1 auto; }
   .row.tools { display: grid; grid-template-columns: repeat(4, 1fr); }      /* seven tools in two even rows */
@@ -59,7 +74,8 @@
   .grid .steps button { flex: 1; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   input[type=number], select { font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--text); width: 100%; }
   /* the measurement list: a row selects one; its box adds it to the selection or takes it out */
-  .list { height: 112px; overflow-y: auto; border: 1px solid var(--line); border-radius: 3px; background: #fff; }
+  .list { height: auto; min-height: 112px; max-height: 180px; overflow-y: auto; border: 1px solid var(--line); border-radius: 3px;
+          background: #fff; }      /* five rows at least, eight before it scrolls */
   .list:empty::before { content: "No measurements yet"; display: block; padding: 6px 8px; color: var(--muted); }
   .list .item { display: flex; align-items: center; gap: 6px; padding: 2px 6px; white-space: nowrap; cursor: default; }
   .list .item > span:last-child { overflow: hidden; text-overflow: ellipsis; }
@@ -122,7 +138,8 @@
   #vertex-table tr.picked td { background: #e1d8ff; }
   #vertex-table td input { width: 100%; font: inherit; text-align: right; padding: 0 2px; }
   #vertex-note { margin: 4px 8px 6px; }
-  #profile-window { top: auto; right: auto; bottom: calc(var(--status-height) + 12px); left: 12px; width: 560px; height: 380px; min-width: 300px; min-height: 260px; }
+  #profile-window { top: auto; right: auto; bottom: calc(var(--status-height) + 12px); left: 12px; width: 560px;
+                    height: clamp(260px, 45vh, 380px); min-width: 300px; min-height: 260px; }
   #profile-window .row { align-items: center; flex-wrap: wrap; }
   #profile-window .row input[type=number] { width: 96px; flex: 0 0 auto; }
   #profile-window .row button { flex: 0 0 auto; margin-left: auto; }
@@ -163,6 +180,7 @@
   body.touch .floating .row button { min-height: 40px; padding: 4px 10px; }
   body.touch .floating .grip { width: 30px; height: 30px; }
   body.touch #profile-window .row input[type=number] { min-height: 36px; }
+  body.touch #profile-window { left: 76px; max-width: calc(100% - 88px); }      /* clear of the touch bar */
   body.touch .floating input[type=checkbox], body.touch #panel-foot input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
   body.touch #panel-foot { min-height: 40px; }
   body.touch #panel button, body.touch dialog button { min-height: 38px; }
@@ -170,7 +188,7 @@
   body.touch #panel input[type=checkbox], body.touch dialog input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
   body.touch #panel label:has(> input[type=checkbox]), body.touch dialog label:has(> input[type=checkbox]) { display: block; padding: 6px 0; }
   body.touch #panel input[type=range] { height: 30px; }
-  body.touch .list { height: 200px; }
+  body.touch .list { min-height: 200px; max-height: 322px; }
   body.touch .list .swatch { width: 14px; height: 14px; }
   body.touch .slots input[type=color] { height: 36px; }
   body.touch .list .item { min-height: 40px; }
@@ -193,7 +211,11 @@
 <div id="app">
   <main id="view-wrap">
     <canvas id="view"></canvas>
-    <div id="drop-hint">Drop an SEM image here, with its .txt or .hdr metadata file when the microscope writes one (Hitachi, JEOL,<br>TESCAN), then a session or polygon file if you have one; or use "Open image".  Nothing leaves this computer.</div>
+    <div id="drop-hint">
+      <button type="button" id="open-image-start" title="Open an image (Ctrl+O); select its metadata file too (.txt, .hdr) when the microscope writes one beside it">Open image&hellip;</button>
+      <p>or drop an image here, with its metadata file (.txt, .hdr) when the microscope writes one</p>
+      <p class="formats">TIFF from Thermo Fisher (FEI), Zeiss, Hitachi, JEOL, TESCAN or Phenom; PNG, JPEG or BMP.<br>Nothing leaves this computer.</p>
+    </div>
     <div id="busy"></div>
     <div id="toast" role="status" aria-live="polite"></div>
     <section id="vertex-window" class="floating" aria-label="Vertices of the selected contour" hidden>
@@ -253,8 +275,8 @@
   </main>
 
   <aside id="panel">
-    <section>
-      <h2>Files</h2>
+    <section id="files-section">
+      <h2><button type="button" class="fold" aria-expanded="true">Files</button></h2>
       <div class="row">
         <button type="button" id="open-image" title="Open an image (Ctrl+O); select its metadata file too (.txt, .hdr) when the microscope writes one beside it.  Dropping the files on the view works too">Open image&hellip;</button>
         <button type="button" id="open-session" title="Take up a session (.json), or load the contours of a polygon file (.csv)">Open session&hellip;</button>
@@ -265,8 +287,8 @@
       <div id="image-info" class="note">No image.</div>
     </section>
 
-    <section>
-      <h2>Tools</h2>
+    <section id="tools-section">
+      <h2><button type="button" class="fold" aria-expanded="true">Tools</button></h2>
       <div class="row tools">
         <button type="button" id="tool-pan" aria-pressed="true" title="No tool: drag to pan, wheel or pinch to zoom (also: click the active tool again)">Pan <kbd>0</kbd></button>
         <button type="button" id="tool-contour" aria-pressed="false" title="Trace contours">Contour <kbd>1</kbd></button>
@@ -279,8 +301,8 @@
       <div id="tool-hint" class="note"></div>
     </section>
 
-    <section>
-      <h2>Measurements</h2>
+    <section id="measurements-section">
+      <h2><button type="button" class="fold" aria-expanded="true">Measurements</button></h2>
       <!-- a list box of its own: a native select cannot select several rows by touch -->
       <!-- [html-validate-disable-next prefer-native-element] -->
       <div id="measurement-list" class="list" role="listbox" aria-multiselectable="true" aria-label="Measurements" tabindex="0"></div>
@@ -312,11 +334,11 @@
           <button type="button" id="axis-from-ruler" title="Take the selected ruler as parallel to the stage tilt axis, such as the surface line of a cross-section">Tilt axis along ruler</button>
         </div>
       </div>
-      <div id="measurement-details" class="note"></div>
+      <div id="measurement-details" class="note" title="Lengths to about a tenth of a pixel.  ΔX and ΔY run from the first point to the second; directions are counter-clockwise from +X, in the measurement frame"></div>
     </section>
 
-    <section>
-      <h2>Snapping to edges</h2>
+    <section id="snapping-section">
+      <h2><button type="button" class="fold" aria-expanded="true">Snapping to edges</button></h2>
       <label><input type="checkbox" id="snap" checked> snap clicks to the strongest nearby edge <kbd>S</kbd></label>
       <label title="While an end of a profile moves, a magnet holds the profile square to the edge it crosses, a traced contour it crosses or else the image's edge, turning it about its other end: it catches within 5° of square and lets go beyond 8°, and ⊥ shows that it holds (Alt: as it is; E squares a profile whatever the angle)"><input type="checkbox" id="square-profiles" checked> square profiles to the edge they cross</label>
       <div class="grid">
@@ -338,8 +360,8 @@
       <label><input type="checkbox" id="show-edges"> show the edge map <kbd>G</kbd></label>
     </section>
 
-    <section>
-      <h2>Scale, tilt and rotation</h2>
+    <section id="frame-section">
+      <h2><button type="button" class="fold" aria-expanded="true">Scale, tilt and rotation</button></h2>
       <div class="grid">
         <label for="pixel-x">pixel width (nm)</label>
         <input type="number" inputmode="decimal" id="pixel-x" min="0" step="any" placeholder="unknown">
@@ -377,8 +399,8 @@
       <div id="origin-note" class="note"></div>
     </section>
 
-    <section>
-      <h2>Display</h2>
+    <section id="display-section">
+      <h2><button type="button" class="fold" aria-expanded="true">Display</button></h2>
       <canvas id="histogram" title="Histogram of the image without its info bar.  Drag the black or the white level."></canvas>
       <div class="grid">
         <label for="black-level" title="The grey value shown black">black level</label>

@@ -267,6 +267,24 @@ Typical choices are the surface line of a FIB face that was milled parallel to t
 
 Rounding thus stays below $10^{-3}$ pixel everywhere. Snapping resolves a few hundredths of a pixel (2.5), and a click a pixel or so.
 
+### 1.13 Numbers on screen
+
+The panel, the labels on the image, the list, the vertex window, the profile window and the status bar round more coarsely than the files: to what the eye can use.
+
+**Lengths.** Let $c$ be the length of one pixel width of the corrected view in the unit of the measures (6.2): $c = p_x/1000$ µm for a pixel width $p_x$ in nm, or $c = 1$ without a pixel size, lengths then being in pixels. A length is shown with
+
+$$d = \max\Big(0,\ \Big\lceil -\log_{10}\frac{c}{10}\Big\rceil\Big)$$
+
+decimals. Since $-d \le \log_{10}(c/10) < -d + 1$, the last digit's step $10^{-d}$ satisfies
+
+$$\frac{c}{100} < 10^{-d} \le \frac{c}{10}:$$
+
+between a tenth and a hundredth of a pixel. For $p_x = 1.35$ nm, $c/10 = 1.35\times10^{-4}$ µm and $d = 4$; for 18 nm, $d = 3$; without a pixel size, $d = 1$. A click is good to about a pixel and a snapped point to a few hundredths (2.6). Digits finer than a tenth of a pixel tell nothing more on screen, and make the numbers harder to read and compare.
+
+**Areas.** Move an outline of perimeter $P$ outward by $\varepsilon$. To first order, the area grows by the strip the outline sweeps, $P\varepsilon$; for a convex outline exactly by $P\varepsilon + \pi\varepsilon^2$ (Steiner's formula). With $\varepsilon = c/10$, an area is therefore shown with $\lceil -\log_{10}(Pc/10)\rceil$ decimals. A contour of perimeter 5.28 µm with pixels of 1.35 nm has $Pc/10 = 7.1\times10^{-4}$ µm², so 4 decimals: 0.7038 µm².
+
+**Angles** keep their fixed decimals: 2 on the image and in the list, 3 in the details. Grey values keep 6 significant digits. The files keep the precision of 1.12, whatever the screen shows.
+
 ## Part 2. Edge strength and snapping
 
 ### 2.1 The gradient of a smoothed image (E1)
