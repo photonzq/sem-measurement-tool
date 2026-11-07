@@ -69,7 +69,8 @@ const TOOL_HINTS = {
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   "line-angle": "Click two points on one line, then two on the other.",
   gap: "Click two points on one edge, then two on the other.",
-  profile: "Click both ends; a magnet holds it square to the edge (Alt: not).  Drag an end, the band's square, A or B.",
+  profile: "Click both ends; a magnet holds it square to the edge (Alt, or Snap off: not).  Drag an end, the band's square, " +
+    "A or B.",
 };
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = {
@@ -160,7 +161,6 @@ const app = {
   lastPointer: "mouse",
   /** @type {{id: number, start: Point, t0: number, timer: number}|null} a finger that may become a press and hold */
   hold: null,
-  exactOnce: false,                  // the next point placed or released lands exactly, without snapping
   /** @type {{text: string, at: Point, until: number, done: boolean}|null} a note beside the cursor, for a moment */
   flash: null,
   message: "",                       // the status bar's last message (not the cursor's readout)
@@ -216,7 +216,7 @@ const app = {
   /** @type {Point|null} the cursor, screen coordinates */
   cursorScreen: null,
   insertHeld: false,                 // Ctrl (or Cmd) is down: a click inserts a vertex
-  altHeld: false,                    // Alt is down: a click lands exactly, without snapping
+  altHeld: false,                    // Alt is down: a click lands where it is put, without snapping
   /** @type {number[]} vertices of the selected contour picked in the vertex window, ascending */
   picked: [],
   pickAnchor: -1,
@@ -284,6 +284,9 @@ const settings = {
   snap: () => inputEl("snap").checked,
   squareProfiles: () => inputEl("square-profiles").checked,
   snapMarkers: () => inputEl("snap-markers").checked,
+  // Snap is the one switch of the help with edges: the two options above act only while it is on
+  squares: () => settings.snap() && settings.squareProfiles(),
+  settlesMarkers: () => settings.snap() && settings.snapMarkers(),
   edgesShown: () => inputEl("show-edges").checked,
   sigma: () => numberFrom("sigma", 2),
   median: () => Number(selectEl("median").value),
@@ -659,12 +662,12 @@ async function openImageBuffer(name, buffer, metadata = null) {
 }
 
 /**
- * Compute the edge map when Snap, the squaring of profiles, the contour tool's strokes or the edge map needs it and it
- * is missing or outdated.
+ * Compute the edge map when Snap (for clicks, the squaring of profiles and the contour tool's strokes) or the edge map
+ * shown needs it, and it is missing or outdated.
  */
 async function refreshEdges() {
   const image = app.image;
-  const needed = settings.snap() || settings.squareProfiles() || settings.edgesShown() || app.tool === "contour";
+  const needed = settings.snap() || settings.edgesShown();
   if (image === null || app.edgesBusy || !needed) {
     render();
     return;
@@ -2078,9 +2081,6 @@ function setTool(tool) {
   }
   canvas.classList.toggle("navigate", tool === "pan");
   el("tool-hint").textContent = TOOL_HINTS[tool];
-  if (tool === "contour") {
-    refreshEdges();                  // its strokes need the edge map, whether or not Snap is on
-  }
   render();
 }
 
@@ -3023,6 +3023,7 @@ function loadSessionText(text, name) {
   inputEl("edge-level").value = String(s.edgeLevelPct);
   inputEl("point-spacing").value = String(s.pointSpacingPx);
   showEdgeLevel();
+  showSnapOptions();
   changeFrame(() => {
     app.frame = session.frame;
   });
@@ -3172,7 +3173,8 @@ function refreshVertexWindow() {
 
 // ------------------------------------------------------------------------- line fit window
 //
-// A straight line fitted to the vertices picked in the vertex window (linefit.js, MATH.md Part 8), in
+// A straight line fitted to the vertices picked in the vertex window, or to all of the contour's when
+// none is picked (linefit.js, MATH.md Part 8), in
 // the measurement frame, and each vertex's residual: a simple measure of line edge roughness.  The
 // window follows the vertices picked of the selected contour as they change, and while it shows, the
 // image shows the line, dashed.  Nothing is kept: picking the vertices again gives the fit again.
@@ -3195,15 +3197,16 @@ function toggleFitWindow() {
 }
 
 /**
- * The line fitted to the vertices picked of the selected contour, (L1)-(L4), in the measurement frame,
- * with the contour, the vertices in order and the unit; null with no contour, fewer than 3 vertices
- * picked, an undefined correction factor, or vertices that coincide.
+ * The line fitted to the vertices picked of the selected contour, all of them when none is picked,
+ * (L1)-(L4), in the measurement frame, with the contour, the vertices in order and the unit; null with
+ * no contour, fewer than 3 vertices, an undefined correction factor, or vertices that coincide.
  * @returns {{contour: Contour, picked: number[], fit: LineFit, unit: "um"|"px"}|null}
  */
 function currentFit() {
   const c = currentContour();
   const m = measurementMatrix(app.frame);
-  const picked = c === null ? [] : app.picked.filter((i) => i < c.points.length);
+  const chosen = c === null ? [] : app.picked.filter((i) => i < c.points.length);
+  const picked = c !== null && chosen.length === 0 ? c.points.map((_p, i) => i) : chosen;
   if (c === null || m === null || picked.length < 3) {
     return null;
   }
@@ -3251,8 +3254,8 @@ function showFitLines(data) {
   const figures = el("fit-figures");
   const note = el("fit-note");
   if (data === null) {
-    setPlotLine(figures, currentContour() === null ? "Select a contour, then pick 3 or more of its vertices."
-      : "Pick 3 or more vertices: click one, Shift+click a range, Ctrl+click more.");
+    setPlotLine(figures, currentContour() === null ? "Select a contour of 3 or more vertices."
+      : "Pick 3 or more vertices, or none for all: click one, Shift+click a range, Ctrl+click more.");
     setPlotLine(note, "");
     return;
   }
@@ -4274,8 +4277,8 @@ function pointAlong(points, t) {
 /**
  * Where a marker put at the fraction t settles (P13), on a profile whose mean is ``mean``: at the
  * steepest slope of the mean within 12 pixels of where it was put, the plot or the image, with
- * ``perPixel`` samples to a pixel there, while snapping markers is on and unless ``exact`` (Alt, or
- * the Exact latch); else, or when no slope there stands out of the noise, or when the slope places
+ * ``perPixel`` samples to a pixel there, while Snap and the snapping of markers are on, and unless
+ * ``exact`` (Alt); else, or when no slope there stands out of the noise, or when the slope places
  * the edge no better than 2 samples or 2 pixels (whichever is more, about what a click is good to),
  * at t.
  * @param {Float64Array} mean
@@ -4285,8 +4288,7 @@ function pointAlong(points, t) {
  * @returns {number}
  */
 function settledFraction(mean, t, exact, perPixel) {
-  const loose = takeExact() || exact;
-  if (loose || !settings.snapMarkers() || mean.length < 3) {
+  if (exact || !settings.settlesMarkers() || mean.length < 3) {
     return t;
   }
   const last = mean.length - 1;
@@ -4454,10 +4456,10 @@ function exportProfilePng(ms = shownProfile()) {
 // A profile is squared to the edge it crosses (MATH.md 6.6): to the normal of a traced contour it
 // crosses (the crossing nearest its middle), else of the image's strongest edge along it, whose
 // direction the structure tensor gives on the stored grid (P8), (P9), carried to the corrected view
-// (P7).  While the option is on, a magnet does so as an end of a profile moves, the second end of a
-// new one or an end dragged: it turns the profile about its other end, which stays, once the
-// profile is within 5° of square, and holds it until it is more than 8° off (P11); Alt or Exact
-// keeps it as it is.  A ⊥ mark where it crosses the edge, and the edge's direction dashed, show
+// (P7).  While Snap and the option are on, a magnet does so as an end of a profile moves, the second
+// end of a new one or an end dragged: it turns the profile about its other end, which stays, once the
+// profile is within 5° of square, and holds it until it is more than 8° off (P11); Alt keeps it as
+// it is.  A ⊥ mark where it crosses the edge, and the edge's direction dashed, show
 // that it holds, and a click or a release keeps what they show.  E squares the profile edited about
 // its crossing, whatever the turn, as an edit of its own, and a note beside the cursor tells, for a
 // moment, what was done.
@@ -4575,7 +4577,7 @@ function squareSelected() {
  */
 function magnetPull(points, keep, held) {
   const [a, b] = points.map((p) => storedToScreen(p[0], p[1]));
-  if (!settings.squareProfiles() || Math.hypot(b[0] - a[0], b[1] - a[1]) < MAGNET_MIN_PX * handleScale()) {
+  if (!settings.squares() || Math.hypot(b[0] - a[0], b[1] - a[1]) < MAGNET_MIN_PX * handleScale()) {
     return null;
   }
   const result = squareProfile(points, keep);
@@ -4585,7 +4587,7 @@ function magnetPull(points, keep, held) {
 
 /**
  * The magnet on the second end of a profile being placed, the cursor at stored ``at`` (null: off
- * the view); Alt or Exact keeps it off.
+ * the view); Alt, or Snap off, keeps it off.
  * @param {Point|null} at
  */
 function pullPending(at) {
@@ -4593,7 +4595,7 @@ function pullPending(at) {
   if (p === null || p.kind !== "profile" || p.points.length !== 1) {
     return;
   }
-  p.magnet = at === null || app.altHeld || app.exactOnce ? null : magnetPull([p.points[0], at], 0, p.magnet !== null);
+  p.magnet = at === null || app.altHeld ? null : magnetPull([p.points[0], at], 0, p.magnet !== null);
 }
 
 /**
@@ -5027,25 +5029,11 @@ function clickAt(sx, sy, exact, insert) {
   if (!insideImage(x, y) || app.tool === "pan") {
     return;
   }
-  const loose = takeExact() || exact;
   if (app.tool === "contour") {
-    addVertex(x, y, { exact: loose, insert });
+    addVertex(x, y, { exact, insert });
   } else {
-    placePoint(x, y, loose);
+    placePoint(x, y, exact);
   }
-}
-
-/**
- * Whether the Exact latch was set; it is used up by the one point it applies to.
- * @returns {boolean}
- */
-function takeExact() {
-  if (!app.exactOnce) {
-    return false;
-  }
-  app.exactOnce = false;
-  render();
-  return true;
 }
 
 /**
@@ -5065,7 +5053,7 @@ function setOriginAt(sx, sy) {
 /**
  * Move what is dragged to stored (x, y): a point, the band width of a profile, or a marker, which
  * goes where (x, y) projects onto its profile (P12).  A profile's end goes where the magnet pulls
- * it, unless Alt or Exact.
+ * it, unless Alt is down or Snap is off.
  * @param {number} x
  * @param {number} y
  */
@@ -5078,7 +5066,7 @@ function dragTo(x, y) {
     const k = app.drag.point;
     points[k] = [x, y];
     if (app.measurements[app.drag.index].kind === "profile") {
-      const magnet = app.altHeld || app.exactOnce ? null : magnetPull(points, 1 - k, app.drag.magnet !== null);
+      const magnet = app.altHeld ? null : magnetPull(points, 1 - k, app.drag.magnet !== null);
       app.drag.magnet = magnet;
       points[k] = magnet?.points[k] ?? points[k];
     }
@@ -5133,9 +5121,8 @@ function endDrag(x, y, exact, toggle) {
     return;
   }
   const ms = app.measurements[drag.index];
-  const asIs = takeExact() || exact;
-  points[drag.point] = (asIs || ms.kind === "profile" ? null : snapTarget(x, y)) ?? [x, y];
-  const pulled = ms.kind === "profile" && !asIs ? magnetPull(points, 1 - drag.point, drag.magnet !== null) : null;
+  points[drag.point] = (exact || ms.kind === "profile" ? null : snapTarget(x, y)) ?? [x, y];
+  const pulled = ms.kind === "profile" && !exact ? magnetPull(points, 1 - drag.point, drag.magnet !== null) : null;
   if (pulled !== null) {
     points[drag.point] = pulled.points[drag.point];
     setStatus(`${ms.name} squared to ${pulled.to ?? "the image's edge"}; Alt while dragging keeps it as dragged.`);
@@ -5159,12 +5146,12 @@ function cancelDrag() {
 
 /**
  * Whether a click, or the release of what is dragged, would snap now: not with no tool, nor with
- * the Exact latch set, nor for a profile's ends or its band width.
+ * Snap off, nor during a stroke, nor for a profile's ends or its band width.
  * @returns {boolean}
  */
 function snapsNow() {
   const d = app.drag;
-  if (app.exactOnce || app.stroke !== null) {
+  if (!settings.snap() || app.stroke !== null) {
     return false;
   }
   if (d === null) {
@@ -5187,7 +5174,7 @@ function draggedPoints() {
 // With the contour tool, a press where no vertex lies is a click when it ends without moving, and
 // otherwise paints along an edge (trace.js, MATH.md part 7): the points the stroke places show as it
 // goes, with the band it searches, and join the contour when it ends, as one edit.  Ctrl puts them in
-// place of the vertices along the stretch they cover, Alt (or the Exact latch) places them as drawn.
+// place of the vertices along the stretch they cover; Alt, or Snap off, places them as drawn.
 
 /** @returns {number} R: half the width of a stroke's band, view units: the snap radius, more for a finger */
 function strokeRadius() {
@@ -5326,20 +5313,20 @@ function strokeJoined(placed, inPlace) {
 }
 
 /**
- * What the stroke places as the keys are now (Alt or the Exact latch: as drawn; Ctrl: in place).  A
+ * What the stroke places as the keys and Snap are now (Alt, or Snap off: as drawn; Ctrl: in place).  A
  * stroke begun on a vertex works in place, whatever the keys.
  */
 function previewStroke() {
   const s = app.stroke;
   if (s !== null) {
-    s.join = strokePaints(s) ? strokeJoined(strokePlaces(s, app.altHeld || app.exactOnce), app.insertHeld || s.vertex >= 0)
-      : null;
+    s.join = strokePaints(s) ? strokeJoined(strokePlaces(s, app.altHeld || !settings.snap()),
+      app.insertHeld || s.vertex >= 0) : null;
   }
 }
 
 /**
  * The stroke ends.  When it painted, its points join the contour, as one edit: as drawn with ``exact``
- * (Alt, or the Exact latch), ``inPlace`` (Ctrl, or begun on a vertex) of the vertices along their stretch.
+ * (Alt) or with Snap off, ``inPlace`` (Ctrl, or begun on a vertex) of the vertices along their stretch.
  * A press that did not paint is a click with the keys it was pressed with: a vertex, exactly with Alt,
  * inserted with Ctrl; on the vertex it began on, that vertex selected.
  * @param {boolean} exact
@@ -5359,9 +5346,9 @@ function endStroke(exact, inPlace) {
     }
     return;
   }
-  const placed = strokePlaces(s, takeExact() || exact);
+  const placed = strokePlaces(s, exact || !settings.snap());
   if (placed.length === 0) {
-    const asDrawn = app.lastPointer === "touch" ? "with Exact, a stroke places its points as drawn"
+    const asDrawn = app.lastPointer === "touch" ? "with Snap off, a stroke places its points as drawn"
       : "Alt+drag places points as drawn";
     setStatus(app.edges === null ? "The edge map is not ready yet: paint again in a moment."
       : `No edge stands out under the stroke; ${asDrawn}.`);
@@ -5447,7 +5434,7 @@ function drawStroke(toScreen) {
 // ------------------------------------------------------------------------- touch tools
 //
 // For a touch screen: a toolbar on the view for what a keyboard or a right button does otherwise
-// (undo, a point being placed included, redo, fit, snapping, one exact point), larger targets for a finger, and a
+// (undo, a point being placed included, redo, fit, snapping, painting along an edge), larger targets for a finger, and a
 // press and hold on a point for its menu.  The touch layout comes with a touch screen, or with the
 // first touch.
 
@@ -5497,8 +5484,11 @@ function refreshTouchBar() {
   setBarButton("touch-redo", app.future.length === 0, null);
   setBarButton("touch-fit", app.image === null, null);
   setBarButton("touch-snap", false, settings.snap());
-  setBarButton("touch-exact", app.tool === "pan", app.exactOnce);
-  setBarButton("touch-paint", app.tool !== "contour", app.paintTouch);
+  const paint = buttonEl("touch-paint");
+  if (paint.hidden !== (app.tool !== "contour")) {
+    paint.hidden = app.tool !== "contour";          // only the contour tool paints
+  }
+  setBarButton("touch-paint", false, app.paintTouch);
 }
 
 /**
@@ -6206,7 +6196,16 @@ function snapToggled() {
   if (!settings.snap()) {
     app.preview = null;
   }
+  showSnapOptions();
+  previewStroke();
   refreshEdges();
+}
+
+/** The options under Snap act only while it is on: greyed while it is off. */
+function showSnapOptions() {
+  const off = !settings.snap();
+  inputEl("square-profiles").disabled = off;
+  inputEl("snap-markers").disabled = off;
 }
 
 const wrap = el("view-wrap");
@@ -6531,11 +6530,6 @@ el("touch-snap").addEventListener("click", () => {
   snapToggled();
   render();
 });
-el("touch-exact").addEventListener("click", () => {
-  app.exactOnce = !app.exactOnce;
-  app.preview = null;
-  render();
-});
 el("touch-paint").addEventListener("click", () => {
   app.paintTouch = !app.paintTouch;
   render();
@@ -6691,7 +6685,8 @@ for (const id of ["sigma", "median"]) {
   el(id).addEventListener("change", () => refreshEdges());
 }
 selectEl("edge-criterion").addEventListener("change", () => showEdgeLevel());
-showEdgeLevel();                     // as the browser may have kept the choice over a reload
+showEdgeLevel();                     // as the browser may have kept the choices over a reload
+showSnapOptions();
 for (const id of ["pixel-x", "pixel-y", "tilt", "correction", "custom-factor", "tilt-axis", "rotation"]) {
   el(id).addEventListener("change", () => frameInputsChanged());
 }
