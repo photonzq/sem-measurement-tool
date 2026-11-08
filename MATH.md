@@ -476,7 +476,7 @@ Clicks left of the centre snapped to the left flank, and clicks right of it to t
 Which flank marks the top or the foot of a sloped sidewall depends on the sample and the detector; the app does not decide it. To work with bright lines:
 
 - trace one flank consistently;
-- or place the point on the line's centre with Alt (no snapping).
+- or place the point on the line's centre with Shift (no snapping).
 
 A ridge detector that finds line centres would be a natural addition.
 
@@ -933,7 +933,7 @@ A profile measures an edge best when it runs square to it, along the edge's norm
 1. a traced contour the profile crosses, if there is one: of the crossings, the one nearest the profile's middle (P10);
 2. else the image's strongest edge along the profile, whose direction the structure tensor gives (P7)–(P9).
 
-While the magnet holds, a ⊥ mark sits where the profile crosses the edge, and the edge's direction is drawn dashed through it (*What the magnet shows*, below). The click that places the second end, or the release of the drag, keeps what is shown, and the squaring is part of that edit: one Ctrl+Z undoes both. Alt, held while placing or dragging, or Snap off, keeps the profile as drawn.
+While the magnet holds, a ⊥ mark sits where the profile crosses the edge, and the edge's direction is drawn dashed through it (*What the magnet shows*, below). The click that places the second end, or the release of the drag, keeps what is shown, and the squaring is part of that edit: one Ctrl+Z undoes both. Shift (or Alt), held while placing or dragging, or Snap off, keeps the profile as drawn.
 
 E turns the profile about the crossing and keeps its length and the crossing's place along it (P11). Its squaring is an edit of its own, which Ctrl+Z undoes. For 1.6 s a note beside the cursor tells what was done:
 
@@ -1263,7 +1263,7 @@ Between the two angles it keeps its state: the rule has hysteresis. While it hol
   - *Drawn square by eye.* Such a profile is off by the error of the eye and of the two clicks, typically a few degrees, and is caught. Two clicks 100 screen pixels apart, each placed to about 2 px across the line, alone turn it by about $\sqrt2 \times 2/100$ rad, 1.6°.
   - *Drawn at an angle on purpose.* In a cross-section, a horizontal profile across a sloped sidewall at a set height is $90° - \alpha$ off square for a sidewall at $\alpha$ from the horizontal. That is 20–30° for sidewalls at 60–70°, which the magnet leaves as drawn. A profile along an edge is 90° off.
 
-  Within the catch, a profile left as drawn would find the distance between two parallel edges up to 0.38 % too long, and an edge of $b = 2$ up to 3.5 % wider in a band 20 wide (P6). These are the errors the magnet removes. Since it shows where it would put the profile before the click, the catch can be narrow: a profile it does not catch is brought within 5° by eye, and a profile meant to be oblique by more than 5° stays so without Alt. E, the profile window's *Square* button and the press-and-hold menu square a profile whatever the angle.
+  Within the catch, a profile left as drawn would find the distance between two parallel edges up to 0.38 % too long, and an edge of $b = 2$ up to 3.5 % wider in a band 20 wide (P6). These are the errors the magnet removes. Since it shows where it would put the profile before the click, the catch can be narrow: a profile it does not catch is brought within 5° by eye, and a profile meant to be oblique by more than 5° stays so without Shift. E, the profile window's *Square* button and the press-and-hold menu square a profile whatever the angle.
 - **The hold, $\delta_h = 8°$, keeps the end from flickering.** A pointer at rest trembles by a pixel or so. When the end that moves is $\ell$ screen pixels from the end that stays, a move of $j$ pixels across the line turns it by
   $$\Delta\delta \approx \frac{j}{\ell}\ \text{rad}.$$
   With one border at 5°, a pointer resting near it would make the end jump between the pointer and the square position at every pixel of tremble. With the hysteresis, the line must turn by $\delta_h - \delta_c = 3° = 0.052$ rad after the catch before the magnet lets go: a move of $0.052\,\ell$ pixels across the line, 5.2 px for $\ell = 100$. A tremble of $j$ pixels stays below that for $\ell > j/0.052 \approx 19j$ pixels.
@@ -1281,7 +1281,7 @@ The angle $\delta$ is that of the line as the pointer has it, not of the line th
 
 **Limits.**
 
-- A line that crosses several edges is squared to one: the contour crossing nearest its middle, or else the image's strongest edge. In a cross-section, a profile across a rib whose two sidewalls slope differently cannot be square to both. A profile meant to run across the rib at a set height stays as drawn when it is more than 5° off square to the sidewall. Nearer to square, the magnet catches it; Alt, held while placing or dragging, keeps it as drawn.
+- A line that crosses several edges is squared to one: the contour crossing nearest its middle, or else the image's strongest edge. In a cross-section, a profile across a rib whose two sidewalls slope differently cannot be square to both. A profile meant to run across the rib at a set height stays as drawn when it is more than 5° off square to the sidewall. Nearer to square, the magnet catches it; Shift (or Alt), held while placing or dragging, keeps it as drawn.
 - As the pointer moves, the strongest edge along the line may change from one edge to another. The magnet then turns the profile to the new edge's normal, which differs when the two edges are not parallel.
 - On an edge curving with the radius $R$, the band is square to it only along its centre line. The band's outer lines meet the edge up to $\pm w/(2R)$ off square, and cross it at places that differ by up to $w^2/(8R)$, the sagitta. Keep $w \ll R$.
 - The coherence refuses corners, junctions and edges curved more tightly than about $2.4\rho$, and the threshold refuses weak edges. Such a profile stays as drawn; with a contour traced along the edge, it is squared to the contour instead.
@@ -1418,7 +1418,7 @@ $$c = \sqrt{k^2 + 2\ln N}, \qquad N = \max\Big(1, \sum_q \frac{2R+1}{\sigma_q}\B
 
 the chance is $N\operatorname{erfc}(c/\sqrt2) \approx N\sqrt{2/\pi}\,e^{-k^2/2}/(Nc) = (k/c)\operatorname{erfc}(k/\sqrt2)$: a little less than one sample's at $k$. The sum runs over the scales that have a noise level. With σ = 2 and $k = 3$, $c$ is 3.6 for a window of 2 samples, 3.9 for 8, 4.0 for 12 and 4.4 for 68. It applies to finding the edge clicked. Once that is found, the coarser scales place it with peaks $k\,\hat\sigma_s$ high, within its extent, where nothing else is searched.
 
-$N$ was measured as for (E9). On pure noise, the share of clicks whose best candidate stands $m$ noise widths out was fitted to $1 - e^{-N\operatorname{erfc}(m/\sqrt2)}$, for σ of 1 to 4 and windows of 2 to 64 samples. The fitted $N$ is 0.76 to 2.09 times the sum above, which moves $c$ by less than 0.2. Now 3 of the 237 clicks snap with a window of 12 (1.3 %), and none with a window of 60; the tests count none of 79 with either. At the small window that is still about 5 times the aim: the noise measured near the click varies from window to window, which the Gaussian tail does not count. Alt places a marker exactly. With no candidate at any scale, the marker stays where it was put.
+$N$ was measured as for (E9). On pure noise, the share of clicks whose best candidate stands $m$ noise widths out was fitted to $1 - e^{-N\operatorname{erfc}(m/\sqrt2)}$, for σ of 1 to 4 and windows of 2 to 64 samples. The fitted $N$ is 0.76 to 2.09 times the sum above, which moves $c$ by less than 0.2. Now 3 of the 237 clicks snap with a window of 12 (1.3 %), and none with a window of 60; the tests count none of 79 with either. At the small window that is still about 5 times the aim: the noise measured near the click varies from window to window, which the Gaussian tail does not count. Shift (or Alt) places a marker where it is put. With no candidate at any scale, the marker stays where it was put.
 
 Why not the edge map's own rule, $k$ times the median strength (2.3)? In two dimensions the strength of noise, $|\nabla|$, is Rayleigh distributed with the median $1.18\,\sigma$, so $3\times$ median is $3.5\,\sigma$. In one dimension $|s|$ is half normal with the median $0.67\,\sigma_s$, and $3\times$ median would be only $2.0\,\sigma_s$. That is exceeded by 4.3 % of the samples, and in noise alone most windows would snap. The scaled deviation gives $k$ the same meaning in one dimension: so many standard deviations of the noise.
 
@@ -1650,10 +1650,10 @@ The points are in the order painted, $q_1, \dots, q_m$. With $|a - b|$ distances
   - **The points, not the band.** The eye may follow a bright line while the edge found lies several pixels off it, and so do the vertices traced on it before. On the FEI test image's sidewall, at the defaults, a Ctrl+stroke along the bright line covered only 12 of the vertices on the steepest flank along its 90 px; the new points reached beyond them, and the vertices left between made the contour zigzag. The band's round ends also reach $R$ beyond the stroke's ends, and take corners: a Ctrl+stroke along one side of a rectangle 14 px wide, ending 6 px from a corner, took 9 vertices with the band, the corner and 3 of the next side among them, where the stretch of its points takes 4.
   - **The nearest run, not the longest.** Along a narrow feature the other side may lie within $R_0$. The longest covered run could then be the other side, and the points would cross the feature. With the longest run, a Ctrl+stroke along one side of a line 10 px wide, its other side traced more densely, took 17 vertices of the other side and none of its own. In the test, along one long side of a rectangle 8 px wide with vertices 5 px apart, both sides are covered between the points' ends, and the nearer takes them: 5 vertices of that side, the other side and the corners unchanged.
 - **Either way the points face their neighbours.** With $v_\text{before}$ and $v_\text{after}$ the vertices on either side of where they go, the order is the one that makes $|v_\text{before} - q_\text{first}| + |q_\text{last} - v_\text{after}|$ the smaller (a missing neighbour counts 0). A run that wraps round a closed contour's end is replaced with the points first: the contour then starts with them.
-- **Alt, or Snap off: as drawn.** The stations of (T1) themselves become the points, without the edge, and join in the same way. Snap is the one switch of all the help with edges: off, no stroke follows one.
+- **Shift (or Alt), or Snap off: as drawn.** The stations of (T1) themselves become the points, without the edge, and join in the same way. Snap is the one switch of all the help with edges: off, no stroke follows one.
 - **Starting on a vertex.** A plain drag that starts on a vertex moves the vertex. With Ctrl, or by a finger with *Edge* on, it paints in place from there once it has moved farther than a click: redoing a contour starts on the contour, among vertices 5 px apart, within a click's reach of one of them almost anywhere (8 screen pixels for the mouse, 22 for a finger). Until then the vertex stays put, so that a Ctrl+click or a tap on it still selects it.
 
-While the stroke is painted, the band shows in faint magenta, the points it will place as magenta dots with the contour's segments that will join them dashed, and the vertices they will replace crossed out. What shows is what the release does, with Ctrl and Alt as they are then, for a finger too when a keyboard is at hand. One pointer paints a stroke: a mouse that moves while a finger paints leaves it alone.
+While the stroke is painted, the band shows in faint magenta, the points it will place as magenta dots with the contour's segments that will join them dashed, and the vertices they will replace crossed out. What shows is what the release does, with Ctrl and Shift (or Alt) as they are then, for a finger too when a keyboard is at hand. One pointer paints a stroke: a mouse that moves while a finger paints leaves it alone.
 
 ### 7.9 Cost
 
@@ -1690,13 +1690,13 @@ The result is that of placing the whole stroke afresh, bit for bit; a test compa
 - **The work kept between moves**: the points of a fresh placing at every move of a growing stroke.
 - **A disc**: the points on its circle, in turn.
 - **An edge broken off for 30 px, and an info bar**: no point in the break nor on the bar, the points clear of the break on the edge; a stroke off the image places none.
-- **Joining**: 12 cases: extending from the nearer end, a new contour, in place of a covered run facing the vertices around it, the nearer of two runs, round a closed contour's end, into the nearest segment, all, none; the stretch covered, within $R_0$ of the points and not beyond their ends by more than $h/2$, in the view; Alt's stations and its end. One side of a narrow rectangle redone, the other side and the corners kept.
+- **Joining**: 12 cases: extending from the nearer end, a new contour, in place of a covered run facing the vertices around it, the nearer of two runs, round a closed contour's end, into the nearest segment, all, none; the stretch covered, within $R_0$ of the points and not beyond their ends by more than $h/2$, in the view; a stroke's stations as drawn (Shift or Alt) and its end. One side of a narrow rectangle redone, the other side and the corners kept.
 
 A probe in Chromium (headless Edge) drove the page with pointer events on the FEI test image:
 
 - strokes along the rib's sidewall, one painted back up toward the last vertex;
 - undo, also while a stroke is held; a click without moving, one that slid 5 screen pixels, and a stroke shorter than a spacing, all clicks; Alt released before the button;
-- Ctrl and Alt strokes; Ctrl+drag from a vertex, which paints in place, and Ctrl+click on one, which selects it; Escape, also with Ctrl held;
+- Ctrl and Alt strokes (Shift reads as Alt); Ctrl+drag from a vertex, which paints in place, and Ctrl+click on one, which selects it; Escape, also with Ctrl held;
 - each criterion; a session saved and loaded with other settings;
 - a finger with *Edge* off (it pans) and on (it paints): resting before it moves, from a vertex, with Ctrl held on a keyboard, and with a mouse hovering meanwhile.
 

@@ -61,12 +61,12 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 - **Contour.**
   - A click adds a vertex at the end of the selected contour, which is marked by a light halo and white vertices, its first vertex larger.
   - With no contour selected, the first click starts a new one: *contour 1*, *contour 2* and so on. There is never an empty contour waiting. N is done with the selected contour, so that the next click starts a new one; it also takes up the contour tool. C closes or opens the selected contour.
-  - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or exact with Alt. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
+  - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or where clicked with Shift. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
   - **Painting along an edge.** A drag that starts where no vertex lies paints along an edge. A faint magenta band, twice the search radius wide, follows the pointer, and the points the stroke will place show on the edge as it goes, with dashed lines to the vertices they join. On release they join the selected contour after its last vertex, the end of the stroke nearest it first, as one edit; with no contour selected they start a new one. A stroke may thus go either way along the edge, and several strokes and clicks make up one contour.
     - The stroke keeps to one edge: the two flanks of a bright line are never mixed, and of two edges in the band the one nearer its middle stays unless the other is far stronger. Where no edge stands out of the noise, as for a snap, or where the edge runs across the stroke rather than along it, no point is placed. A stroke that turns back places points only up to where it turns. Escape gives a stroke up.
     - *stroke points at*, under *Snapping to edges*, chooses where on the edge each point goes, on a profile across the edge averaged along it over the point spacing: the **steepest slope** (the default, as clicks snap); a **threshold**, a level between the grey levels on either side (50 % unless set, higher toward the bright side); or the **crest of a bright line** beside the edge, such as the bloom at a sidewall. *point spacing* sets how far apart they are: 5 pixels of the corrected view by default.
     - **Ctrl+drag** puts the points in place of the vertices along the stretch they cover, crossed out while it paints: it redoes part of a rough or loaded outline. Of two runs of vertices there, such as the two sides of a narrow line, the nearer goes. With no vertex there, the points go into the nearest segment. It paints even when it starts on a vertex, as redoing a contour starts on it; a Ctrl+click on a vertex still selects it.
-    - **Alt+drag**, or any stroke while Snap is off, places the points along the stroke as drawn, without the edge.
+    - **Shift+drag**, or any stroke while Snap is off, places the points along the stroke as drawn, without the edge.
     - A press that moves less than 6 screen pixels, or less than a point spacing, is a click, with the keys it was pressed with; its vertex lands when the button is released. A plain drag that starts on a vertex moves it: start a plain stroke beside the vertices, or use Ctrl.
   - A drag moves a vertex, a right click deletes one, and Backspace deletes the last. A click on a vertex, without dragging, selects it for the vertex window; Shift+click adds or removes it. Touching another contour's vertex selects that contour.
   - A selected contour shows its measures under *Measurements*: its perimeter (or length, when open), its area and its bounding box, taken in the turned frame. Its *closed* switch and its GDS layer and datatype (1/0 unless set) are there as well.
@@ -86,7 +86,7 @@ The **points of a measurement** handle as follows:
 - the pointer shows what a press would drag: over a point or a vertex it turns into four arrows, and a light ring marks the point; over a profile's band square, or a marker's tick, a two-way arrow shows the way it moves;
 - right-click a point to delete its measurement;
 - Esc, or a right click, cancels a measurement being placed, and Backspace or Ctrl+Z removes its last point;
-- Alt with any click or release places a point where it is put, without snapping; with Snap off, every point is.
+- Shift with any click or release places a point where it is put, without snapping; with Snap off, every point is. Alt does the same, as it did before Shift; in Firefox on Windows, though, Alt let go by itself opens the menu bar (see *Limits*).
 
 ## Measurements
 
@@ -160,7 +160,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - when the profile is shorter than 16 screen pixels (26 after touch), too short for its direction to mean much.
 
   How to keep or redo it:
-  - Alt, held while placing or dragging, turns the magnet off: the profile stays as drawn or as dragged. On a touch screen, turn *Snap* off for the same.
+  - Shift, held while placing or dragging, turns the magnet off: the profile stays as drawn or as dragged. On a touch screen, turn *Snap* off for the same.
   - On a touch screen nothing shows the magnet before a tap. A tap it pulls shows "⊥ edge" beside it for a moment, or the contour's name for a contour.
   - Ctrl+Z undoes the drag, or removes the new profile.
   - E squares the profile edited whatever the angle. It turns about the crossing, and keeps the profile's length and the crossing's place along it. For a moment a note beside the cursor shows what was done and the angle turned: "⊥ edge, 4.2°", or the contour's name. When there is nothing to square to, it shows "not squared", with the reason in the status bar.
@@ -190,7 +190,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
     - Of two edges in reach, such as a bright line's flanks, the nearer is taken.
     - A marker snaps only where the slope stands out of the noise by more than the edge map's *min. edge strength*. As for a click on the image, the threshold rises with the search, so that a click on flat noise rarely snaps: about 4 times the noise at the default 3. The noise is measured near the click, leaving out stretches clipped to black or white and the edges there. A profile that runs mostly through a dark, quiet region thus does not lower the threshold for a noisier part, nor does a strong edge nearby raise it.
     - It also stays where it was put when the steepest point is poorly placed: when no scale places it better than 2 samples, or 2 pixels of the plot or the screen, about what a click is good to. A long ramp of nearly constant slope has no steepest point to snap to.
-    - Alt places or lets go of one where it is put. MATH.md 6.7 derives all this.
+    - Shift places or lets go of one where it is put. MATH.md 6.7 derives all this.
   - A marker is kept as a point of the image, and its place along the line is where it projects onto it. When the profile is moved, the markers therefore stay on their features of the image. After squaring, a marker on a straight edge lies on the edge where the turned profile crosses it.
 - **Export CSV**, in the window or under *Download*, writes the profile's samples: distance, mean, spread, number of values and position. Its header gives the line, the band, the crossings, and the markers with the distance between them.
 - **Export PNG**, in the window or under *Download*, writes the plot as an image of 1200 × 750 pixels at twice that resolution, its markers included. A title above it names the profile and the image and gives its length and band width.
@@ -269,13 +269,13 @@ The view draws the stored image through the same map, so a change of calibration
 - profiles are squared, and markers settle on the steepest slope, as their options say: *square profiles to the edge they cross*, just under it, and *snap A, B to the steepest slope*, in the profile window;
 - strokes of the contour tool follow the edge.
 
-Off, everything stays where it is put, strokes are drawn as they go, and the two options are greyed. Alt does the same as Snap off for one click, release or stroke. The method is in MATH.md, Part 2:
+Off, everything stays where it is put, strokes are drawn as they go, and the two options are greyed. Shift (or Alt) does the same as Snap off for one click, release or stroke. The method is in MATH.md, Part 2:
 
 - **Edge strength.** The gradient of a Gaussian-smoothed image, after an optional 3 × 3 or 5 × 5 median filter: *smoothing σ*, in pixels of the stored image. Larger σ resists noise better, but merges edges closer than about 2σ.
 - **Threshold.** Pure noise exceeds $c$ times the median gradient with the probability $2^{-c^2}$ per independent pixel. A click searches many pixels, though, so candidates must be $\sqrt{k^2 + \log_2 N}$ times the median, $k$ being the *min. edge strength* and $N$ about the number of independent pixels in the search. A click on flat noise then snaps about as rarely as one pixel exceeds $k$ times the median: $2^{-k^2}$, 0.2 % at the default 3. At the default radius that asks for 4.0 times the median, and 4.3 for a finger. Pixels on constant stretches, such as regions clipped to black or white, are left out of the median.
 - **Candidates and choice.** Candidates are the crest pixels within the *search radius*, measured in pixels of the corrected view. The choice weighs strength against distance, and a parabola places the point between pixels, to within 0.05 px for a crest one pixel wide. The point may slide a pixel or two **along** the edge.
 - **Where the map is computed.** The edge map is computed on the stored image, without the info bar, once per σ and median setting. The noise is independent pixel to pixel there and the probe round, so this is also the matched filter.
-- **Bright lines.** Many SEM edges appear as bright lines, which have two flanks. A click snaps to the flank nearest to it, so trace one flank consistently, or use Alt to place points on the line's centre. A stroke of the contour tool with *stroke points at: bright line* places its points on the line's crest.
+- **Bright lines.** Many SEM edges appear as bright lines, which have two flanks. A click snaps to the flank nearest to it, so trace one flank consistently, or use Shift to place points on the line's centre. A stroke of the contour tool with *stroke points at: bright line* places its points on the line's crest.
 - **Strokes along an edge** (see *Tools*, *Contour*) follow the edge through their band on the edge map, and place each point on a profile across the edge by the criterion chosen. A point needs the edge to stand out by $\sqrt{k^2 + \log_2 N}$ times the median, $N$ about the number of independent pixels in its stretch of the band: 3.7 at the defaults. The threshold's levels are the medians of that profile beyond half the search radius from the edge, so a wide edge needs a wide band. MATH.md, Part 7, derives the path and the criteria.
 - **Profiles** are not snapped. While *Snap* and *square profiles to the edge they cross* are on, a magnet holds a profile square to the edge it crosses as an end moves (see *Line profiles*). The image's edge must reach *min. edge strength* times the median gradient: squaring looks along a line, not over a disc.
 
@@ -412,14 +412,14 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | click | contour: add a vertex to the selected contour, or start a new one; other tools: place the next point (snapped with Snap on, except a profile's ends) |
 | Ctrl+click | contour: insert a vertex into the nearest segment; 2 lines: line 2's last point where the line is parallel to line 1 (not snapped) |
 | drag along an edge | contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; a plain drag from a vertex moves it instead |
-| Ctrl+drag, Alt+drag | contour: the points in place of the vertices along the stretch they cover (or into the nearest segment), also from a vertex; along the stroke as drawn, as every stroke is with Snap off |
+| Ctrl+drag, Shift+drag | contour: the points in place of the vertices along the stretch they cover (or into the nearest segment), also from a vertex; along the stroke as drawn, as every stroke is with Snap off |
 | hold Ctrl | contour: show the segment that will receive the vertex and where it will land |
 | click, Shift+click a vertex | contour: select it in the vertex window; add or remove it |
-| Alt+click | place the point where clicked, without snapping, as every one is while Snap is off |
-| drag a point | move a vertex or a measurement point; it snaps when released (Alt: not). A profile's end never snaps; the magnet holds the profile square about its other end instead (Alt: not). A point of 2 lines dragged with Ctrl keeps its line parallel to the other, and does not snap |
+| Shift+click | place the point where clicked, without snapping, as every one is while Snap is off; Alt does the same |
+| drag a point | move a vertex or a measurement point; it snaps when released (Shift: not). A profile's end never snaps; the magnet holds the profile square about its other end instead (Shift: not). A point of 2 lines dragged with Ctrl keeps its line parallel to the other, and does not snap |
 | drag the white square | widen or narrow the band of the selected profile |
-| click on the profile plot | place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap and that option are on (Alt: as clicked) |
-| drag a marker, on the plot or by its tick on the image | move it along the profile; it snaps when let go (Alt: not); on the plot, a drag that starts elsewhere reads values |
+| click on the profile plot | place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap and that option are on (Shift: as clicked) |
+| drag a marker, on the plot or by its tick on the image | move it along the profile; it snaps when let go (Shift: not); on the plot, a drag that starts elsewhere reads values |
 | right click | contour: delete the vertex; other tools: delete the measurement, or cancel the one being placed |
 | wheel, touchpad pinch | zoom about the cursor |
 | middle drag, Space+drag; drag with no tool | pan |
@@ -435,7 +435,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | T | show or hide the vertex window of the selected contour |
 | L | show or hide the line fit window: a straight line fitted to the selected vertices, with their residuals |
 | P | show or hide the profile window, which shows the selected profile and steps aside while none is selected; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
-| E | square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5° of square while *Snap* and its option for profiles are on (Alt: not) |
+| E | square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5° of square while *Snap* and its option for profiles are on (Shift: not) |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements |
 | Delete | delete the selected vertices, else the selected measurements, contours included |
@@ -580,7 +580,7 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - A step with a bloom inside its top: the threshold where the profile crosses its 50 % level, the bright line at the bloom's crest.
   - Two steps of one sign 9 px apart: a stroke along the first keeps to it, and one midway follows one of them all along.
   - Flat noise: no point in 580 stations. A disc: the points on its circle, in turn. An edge broken off, and an info bar: no point in the break or on the bar.
-  - Joining: after the last vertex from the nearer end, a new contour, in place of the vertices along the stretch the points cover, the nearer of two runs, round a closed contour's end, into the nearest segment; one side of a narrow rectangle redone, the other side and the corners kept; Alt's stations and its end.
+  - Joining: after the last vertex from the nearer end, a new contour, in place of the vertices along the stretch the points cover, the nearer of two runs, round a closed contour's end, into the nearest segment; one side of a narrow rectangle redone, the other side and the corners kept; a stroke's stations as drawn (Shift or Alt) and its end.
   - A stroke across an edge places nothing; one down a bright line and back up stops at the turn; strokes of one or two stations follow the lone-station rule.
   - The work kept between pointer moves gives, at every move of a growing stroke, the points of a fresh placing, bit for bit.
 - **Line fit.**
@@ -629,7 +629,7 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - The window shows the selected profile only.
   - The plot's y axis spans 0 to the full scale of the file's sample format, not of the detector: 12-bit values stored in 16 bits fill a sixteenth of it, and a profile over a small part of the range plots nearly flat. *Export CSV* has the values in full.
   - Crossings are those of contours with the centre line; other measurements are not marked.
-  - Squaring turns a profile to one edge: the contour crossing nearest its middle, else the strongest edge. A profile meant to cross a feature at a set angle stays as drawn when it is more than 5° off square. One nearer to square, such as a horizontal profile across a sidewall steeper than 85°, is caught by the magnet; Alt, held while placing or dragging, keeps it as drawn.
+  - Squaring turns a profile to one edge: the contour crossing nearest its middle, else the strongest edge. A profile meant to cross a feature at a set angle stays as drawn when it is more than 5° off square. One nearer to square, such as a horizontal profile across a sidewall steeper than 85°, is caught by the magnet; Shift, held while placing or dragging, keeps it as drawn.
 - **Tilt correction.**
   - It is exact only in the chosen plane.
   - It assumes an orthographic projection, which holds to a fraction of a pixel at usual magnifications (MATH.md, 1.2).
@@ -641,7 +641,7 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - The app writes GDS files but does not read them.
 - **The image with the measurements.** A label near the picture's border is cut where it runs past it. A large image, magnified for its correction or turned, may pass the browser's canvas limits (below), and is then not saved.
 - **Firefox.**
-  - On Windows, Alt pressed and released by itself opens Firefox's menu bar, and a page cannot prevent it. A click while Alt is down keeps the menu closed, so Alt+click and Alt+drag are fine; Alt pressed in the middle of a drag may open it, and the next key then goes to the menu. Setting `ui.key.menuAccessKeyFocuses` to `false` in `about:config` stops it.
+  - On Windows, Alt pressed and released by itself opens Firefox's menu bar, and a page cannot prevent it. Shift, which does the same as Alt here, has no such effect: use it in Firefox. Alt pressed in the middle of a drag may open the menu, and the next key then goes to it; setting `ui.key.menuAccessKeyFocuses` to `false` in `about:config` stops that.
   - Browsers that block reading a canvas back, for privacy, cannot open PNG, JPEG or BMP files: Firefox forks with "resist fingerprinting", such as LibreWolf, the Tor Browser and the Mullvad Browser. TIFF files are read by the app itself and are not affected. A Firefox private window read a PNG exactly.
 - **Size and responsiveness.** The edge map blocks the page for seconds on large images. Browsers limit canvas sizes, to 32 767 px per side in Chromium, and very large images exceed the memory budget (MATH.md, 3.4).
 

@@ -20,7 +20,8 @@
   html, body { margin: 0; height: 100%; }
   body { font: 13px/1.4 Bahnschrift, Arial, "Helvetica Neue", Helvetica, system-ui, sans-serif; color: var(--text); background: var(--panel); }
   #app { display: grid; grid-template-columns: 1fr var(--panel-width); grid-template-rows: 1fr auto; height: 100vh; }
-  #view-wrap { position: relative; background: var(--view); overflow: hidden; min-width: 0; }
+  #view-wrap { position: relative; background: var(--view); overflow: hidden; min-width: 0;
+               -webkit-user-select: none; user-select: none; }     /* Shift+click there extends no text selection */
   #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
   #view.navigate { cursor: grab; }
   #view.panning { cursor: grabbing; }
@@ -270,7 +271,7 @@
         <button type="button" id="profile-square" title="Turn the profile square to the edge it crosses (E)">&perp; Square</button>
       </div>
       <div class="row">
-        <label class="inline" title="With Snap on, a marker placed on the plot, or let go there or on the image, settles on the steepest slope of the profile nearby, unless Alt is held. It stays where it was put when no slope there stands out of the noise, or when the slope places the edge no better than the click"><input type="checkbox" id="snap-markers" checked> snap A, B to the steepest slope</label>
+        <label class="inline" title="With Snap on, a marker placed on the plot, or let go there or on the image, settles on the steepest slope of the profile nearby, unless Shift (or Alt) is held. It stays where it was put when no slope there stands out of the noise, or when the slope places the edge no better than the click"><input type="checkbox" id="snap-markers" checked> snap A, B to the steepest slope</label>
         <button type="button" id="clear-markers" title="Remove the markers A and B (Ctrl+Z brings them back)" disabled>Clear A, B</button>
       </div>
       <canvas id="profile-plot"></canvas>
@@ -367,8 +368,8 @@
 
     <section id="snapping-section">
       <h2><button type="button" class="fold" aria-expanded="true">Snapping to edges</button></h2>
-      <label title="The one switch of the help with edges: a click, or a point let go, lands on the strongest edge nearby; a profile's end is squared to the edge it crosses (the option below); markers A and B settle on the steepest slope (the option in the profile window); a stroke of the contour tool places its points on the edge. Off, everything stays where it is put, and a stroke's points are as drawn. Alt does the same for one action"><input type="checkbox" id="snap" checked> snap to edges <kbd>S</kbd></label>
-      <label class="sub" title="With Snap on: while an end of a profile moves, a magnet holds the profile square to the edge it crosses, a traced contour it crosses or else the image's edge, turning it about its other end: it catches within 5° of square and lets go beyond 8°, and ⊥ shows that it holds (Alt: as it is; E squares a profile whatever the angle)"><input type="checkbox" id="square-profiles" checked> square profiles to the edge they cross</label>
+      <label title="The one switch of the help with edges: a click, or a point let go, lands on the strongest edge nearby; a profile's end is squared to the edge it crosses (the option below); markers A and B settle on the steepest slope (the option in the profile window); a stroke of the contour tool places its points on the edge. Off, everything stays where it is put, and a stroke's points are as drawn. Shift (or Alt) does the same for one action"><input type="checkbox" id="snap" checked> snap to edges <kbd>S</kbd></label>
+      <label class="sub" title="With Snap on: while an end of a profile moves, a magnet holds the profile square to the edge it crosses, a traced contour it crosses or else the image's edge, turning it about its other end: it catches within 5° of square and lets go beyond 8°, and ⊥ shows that it holds (Shift: as it is; E squares a profile whatever the angle)"><input type="checkbox" id="square-profiles" checked> square profiles to the edge they cross</label>
       <div class="grid">
         <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
         <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
@@ -474,10 +475,10 @@
           <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>tools: contour, ruler, angle (3 clicks), 2 lines: their gap, angle or both (4 clicks), line profile</td></tr>
           <tr><td>click</td><td>contour: add a vertex to the selected contour, or start a new one when no contour is selected; other tools: place the next point (snapped when Snap is on)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands. 2 lines: line 2's last point where the line is parallel to line 1, not snapped</td></tr>
-          <tr><td>drag along an edge</td><td>contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; <kbd>Ctrl</kbd>: in place of the vertices along the stretch they cover, or into the nearest segment, also when it starts on a vertex; <kbd>Alt</kbd>, or Snap off: along the stroke as drawn. A plain drag from a vertex moves it</td></tr>
+          <tr><td>drag along an edge</td><td>contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; <kbd>Ctrl</kbd>: in place of the vertices along the stretch they cover, or into the nearest segment, also when it starts on a vertex; <kbd>Shift</kbd>, or Snap off: along the stroke as drawn. A plain drag from a vertex moves it</td></tr>
           <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>
-          <tr><td><kbd>Alt</kbd>+click</td><td>place the point where clicked, without snapping, as every one is while Snap is off</td></tr>
-          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not); a profile's end does not snap, but the magnet holds the profile square about its other end (<kbd>Alt</kbd>: not); a point of 2 lines dragged with <kbd>Ctrl</kbd> keeps its line parallel to the other, not snapped</td></tr>
+          <tr><td><kbd>Shift</kbd>+click</td><td>place the point where clicked, without snapping, as every one is while Snap is off; <kbd>Alt</kbd> does the same, but in Firefox on Windows a release of <kbd>Alt</kbd> alone opens its menu bar</td></tr>
+          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Shift</kbd>: not); a profile's end does not snap, but the magnet holds the profile square about its other end (<kbd>Shift</kbd>: not); a point of 2 lines dragged with <kbd>Ctrl</kbd> keeps its line parallel to the other, not snapped</td></tr>
           <tr><td>right click</td><td>contour: delete the vertex under the cursor; other tools: delete the measurement under the cursor, or cancel the one being placed</td></tr>
           <tr><td>wheel, touchpad pinch</td><td>zoom about the cursor</td></tr>
           <tr><td>middle drag, <kbd>Space</kbd>+drag; drag with no tool</td><td>pan</td></tr>
@@ -492,9 +493,9 @@
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window (the selected contour)</td></tr>
           <tr><td><kbd>L</kbd></td><td>show or hide the line fit window: a straight line fitted to the selected vertices, with their residuals</td></tr>
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
-          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5&deg; of square while Snap and its option for profiles are on (<kbd>Alt</kbd>: not)</td></tr>
+          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5&deg; of square while Snap and its option for profiles are on (<kbd>Shift</kbd>: not)</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
-          <tr><td>click on the profile plot</td><td>place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap and that option are on (<kbd>Alt</kbd>: as clicked); drag a marker to move it, on the plot or by its tick on the image</td></tr>
+          <tr><td>click on the profile plot</td><td>place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap and that option are on (<kbd>Shift</kbd>: as clicked); drag a marker to move it, on the plot or by its tick on the image</td></tr>
           <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot or square to edge (a profile)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements</td></tr>

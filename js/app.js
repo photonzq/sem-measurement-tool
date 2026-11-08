@@ -72,7 +72,7 @@ const TOOL_HINTS = {
   ruler: "Click both ends of a distance.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   lines: "Click two points on one line, then two on the other; Ctrl holds the line parallel to the other.",
-  profile: "Click both ends; a magnet holds it square to the edge (Alt, or Snap off: not).  Drag an end, the band's square, " +
+  profile: "Click both ends; a magnet holds it square to the edge (Shift, or Snap off: not).  Drag an end, the band's square, " +
     "A or B.",
 };
 /** @type {Record<MeasureKind, string>} */
@@ -200,7 +200,7 @@ const app = {
    * @type {{points: Point[], start: Point, last: Point, exact: boolean, insert: boolean, vertex: number, id: number,
    *   radius: number, moved: boolean, join: Joined|null, memo: TraceMemo}|null} a stroke of the contour tool
    *   (trace.js): the pointer's stored points, where it was pressed and where it was last taken (screen), with which
-   *   keys it was pressed (Alt: exact, Ctrl: insert, for a click), the vertex of the selected contour it began on
+   *   keys it was pressed (Shift or Alt: as put, Ctrl: insert, for a click), the vertex of the selected contour it began on
    *   (-1: none), the pointer that paints it, its band's half width (view units, set as it begins), whether it moved
    *   farther than a click, the contour with the points it places as the pointer and the keys have it now, and the
    *   work kept for its next placing
@@ -224,7 +224,7 @@ const app = {
   /** @type {Point|null} the cursor, screen coordinates */
   cursorScreen: null,
   insertHeld: false,                 // Ctrl (or Cmd) is down: a click inserts a vertex
-  altHeld: false,                    // Alt is down: a click lands where it is put, without snapping
+  asPutHeld: false,                  // Shift or Alt is down: a click lands where it is put, without snapping
   /** @type {number[]} vertices of the selected contour picked in the vertex window, ascending */
   picked: [],
   pickAnchor: -1,
@@ -980,7 +980,7 @@ function drawPicked(toScreen) {
 
 /**
  * Where a click inserts a vertex now: the edge a-b of the selected contour that receives it and the
- * point p it lands on, exactly as addVertex places it (snapped unless Alt is down); null when a
+ * point p it lands on, exactly as addVertex places it (snapped unless Shift or Alt is down); null when a
  * click would not insert (Ctrl up, another tool, a vertex under the cursor, fewer than 2 vertices).
  * @returns {{a: Point, b: Point, p: Point}|null}
  */
@@ -1000,7 +1000,7 @@ function insertTarget() {
     return null;                   // the click would move that vertex instead
   }
   /** @type {Point} */
-  const p = (app.altHeld ? null : snapTarget(cursor[0], cursor[1])) ?? [cursor[0], cursor[1]];
+  const p = (app.asPutHeld ? null : snapTarget(cursor[0], cursor[1])) ?? [cursor[0], cursor[1]];
   const i = insertionIndex(c, p[0], p[1]);
   return { a: c.points[i - 1], b: c.points[i % n], p };
 }
@@ -1035,19 +1035,32 @@ function drawInsertPreview(toScreen) {
 }
 
 /**
- * Note Ctrl (or Cmd) and Alt from any event, and redraw when the insert preview, the snap preview,
+ * Whether the key that places a point where it is put is down: Shift, or Alt as well.  Firefox on
+ * Windows opens its menu bar when Alt is let go by itself, which a page cannot prevent; Shift has
+ * no such effect.  It keeps a click, a release, a stroke or a profile's end, and a marker, off the
+ * help with edges, as Snap off does for all of them.
+ * @param {KeyboardEvent|PointerEvent|MouseEvent} e
+ * @returns {boolean}
+ */
+function asPutKey(e) {
+  return e.shiftKey || e.altKey;
+}
+
+/**
+ * Note Ctrl (or Cmd), and Shift or Alt, from any event, and redraw when the insert preview, the snap preview,
  * the magnet or what a stroke places may change.
  * @param {KeyboardEvent|PointerEvent} e
  */
 function trackModifiers(e) {
   const insert = e.ctrlKey || e.metaKey;
-  if (insert !== app.insertHeld || e.altKey !== app.altHeld) {
+  const asPut = asPutKey(e);
+  if (insert !== app.insertHeld || asPut !== app.asPutHeld) {
     app.insertHeld = insert;
-    app.altHeld = e.altKey;
+    app.asPutHeld = asPut;
     previewStroke();
     const c = app.cursor;
-    if (c !== null && app.lastPointer !== "touch") {   // they follow Alt at once, not at the next move
-      app.preview = landingPreview(c[0], c[1], app.altHeld);
+    if (c !== null && app.lastPointer !== "touch") {   // they follow the keys at once, not at the next move
+      app.preview = landingPreview(c[0], c[1], app.asPutHeld);
       if (app.drag !== null && app.drag.moved) {
         dragTo(c[0], c[1]);
       }
@@ -2336,7 +2349,7 @@ function placePoint(x, y, exact, parallel = false) {
     selectOnly(app.measurements.length - 1);
     app.pending = null;
     if (pulled !== null) {
-      setStatus(`${ms.name} squared to ${pulled.to ?? "the image's edge"}; Alt+click places a profile as drawn.`);
+      setStatus(`${ms.name} squared to ${pulled.to ?? "the image's edge"}; Shift+click places a profile as drawn.`);
       if (app.lastPointer === "touch") {
         flashNote(`⊥ ${pulled.to ?? "edge"}`, storedToScreen(x, y), true);   // a finger had no ⊥ to see before
       }
@@ -4503,7 +4516,7 @@ function pointAlong(points, t) {
  * Where a marker put at the fraction t settles (P13), on a profile whose mean is ``mean``: at the
  * steepest slope of the mean within 12 pixels of where it was put, the plot or the image, with
  * ``perPixel`` samples to a pixel there, while Snap and the snapping of markers are on, and unless
- * ``exact`` (Alt); else, or when no slope there stands out of the noise, or when the slope places
+ * ``exact`` (Shift or Alt); else, or when no slope there stands out of the noise, or when the slope places
  * the edge no better than 2 samples or 2 pixels (whichever is more, about what a click is good to),
  * at t.
  * @param {Float64Array} mean
@@ -4683,7 +4696,7 @@ function exportProfilePng(ms = shownProfile()) {
 // direction the structure tensor gives on the stored grid (P8), (P9), carried to the corrected view
 // (P7).  While Snap and the option are on, a magnet does so as an end of a profile moves, the second
 // end of a new one or an end dragged: it turns the profile about its other end, which stays, once the
-// profile is within 5° of square, and holds it until it is more than 8° off (P11); Alt keeps it as
+// profile is within 5° of square, and holds it until it is more than 8° off (P11); Shift or Alt keeps it as
 // it is.  A ⊥ mark where it crosses the edge, and the edge's direction dashed, show
 // that it holds, and a click or a release keeps what they show.  E squares the profile edited about
 // its crossing, whatever the turn, as an edit of its own, and a note beside the cursor tells, for a
@@ -4812,7 +4825,7 @@ function magnetPull(points, keep, held) {
 
 /**
  * The magnet on the second end of a profile being placed, the cursor at stored ``at`` (null: off
- * the view); Alt, or Snap off, keeps it off.
+ * the view); Shift or Alt, or Snap off, keeps it off.
  * @param {Point|null} at
  */
 function pullPending(at) {
@@ -4820,7 +4833,7 @@ function pullPending(at) {
   if (p === null || p.kind !== "profile" || p.points.length !== 1) {
     return;
   }
-  p.magnet = at === null || app.altHeld ? null : magnetPull([p.points[0], at], 0, p.magnet !== null);
+  p.magnet = at === null || app.asPutHeld ? null : magnetPull([p.points[0], at], 0, p.magnet !== null);
 }
 
 /**
@@ -5389,7 +5402,7 @@ function setOriginAt(sx, sy) {
 /**
  * Move what is dragged to stored (x, y): a point, the band width of a profile, or a marker, which
  * goes where (x, y) projects onto its profile (P12).  A profile's end goes where the magnet pulls
- * it, unless Alt is down or Snap is off.  A point of two lines, while Ctrl is down, goes where its
+ * it, unless Shift or Alt is down or Snap is off.  A point of two lines, while Ctrl is down, goes where its
  * line is parallel to the other (G20).
  * @param {number} x
  * @param {number} y
@@ -5404,7 +5417,7 @@ function dragTo(x, y) {
     const kind = app.measurements[app.drag.index].kind;
     points[k] = [x, y];
     if (kind === "profile") {
-      const magnet = app.altHeld ? null : magnetPull(points, 1 - k, app.drag.magnet !== null);
+      const magnet = app.asPutHeld ? null : magnetPull(points, 1 - k, app.drag.magnet !== null);
       app.drag.magnet = magnet;
       points[k] = magnet?.points[k] ?? points[k];
     } else if (kind === "lines" && app.insertHeld) {
@@ -5467,7 +5480,7 @@ function endDrag(x, y, exact, toggle) {
   const pulled = ms.kind === "profile" && !exact ? magnetPull(points, 1 - drag.point, drag.magnet !== null) : null;
   if (pulled !== null) {
     points[drag.point] = pulled.points[drag.point];
-    setStatus(`${ms.name} squared to ${pulled.to ?? "the image's edge"}; Alt while dragging keeps it as dragged.`);
+    setStatus(`${ms.name} squared to ${pulled.to ?? "the image's edge"}; Shift while dragging keeps it as dragged.`);
   }
   refreshMeasurements();
   render();
@@ -5490,13 +5503,13 @@ function cancelDrag() {
  * Where a click, or the release of what is dragged, would land now, for the magenta ring: with
  * Ctrl, the last point of two lines being placed where its line is parallel to the first (G20); a
  * point of two lines dragged with Ctrl is held parallel where it is, and not snapped; else the snap
- * target when a click would snap; null when nothing moves it (``alt``: Alt is down).
+ * target when a click would snap; null when nothing moves it (``asPut``: Shift or Alt is down).
  * @param {number} x
  * @param {number} y
- * @param {boolean} alt
+ * @param {boolean} asPut
  * @returns {Point|null}
  */
-function landingPreview(x, y, alt) {
+function landingPreview(x, y, asPut) {
   const p = app.pending;
   const d = app.drag;
   if (app.insertHeld && d === null && p !== null && p.kind === "lines" && p.points.length === 3) {
@@ -5505,7 +5518,7 @@ function landingPreview(x, y, alt) {
   if (app.insertHeld && d !== null && d.kind === "point" && app.measurements[d.index]?.kind === "lines") {
     return null;
   }
-  return insideImage(x, y) && !alt && snapsNow() ? snapTarget(x, y) : null;
+  return insideImage(x, y) && !asPut && snapsNow() ? snapTarget(x, y) : null;
 }
 
 /**
@@ -5538,7 +5551,7 @@ function draggedPoints() {
 // With the contour tool, a press where no vertex lies is a click when it ends without moving, and
 // otherwise paints along an edge (trace.js, MATH.md part 7): the points the stroke places show as it
 // goes, with the band it searches, and join the contour when it ends, as one edit.  Ctrl puts them in
-// place of the vertices along the stretch they cover; Alt, or Snap off, places them as drawn.
+// place of the vertices along the stretch they cover; Shift or Alt, or Snap off, places them as drawn.
 
 /** @returns {number} R: half the width of a stroke's band, view units: the snap radius, more for a finger */
 function strokeRadius() {
@@ -5547,7 +5560,7 @@ function strokeRadius() {
 
 /**
  * Begin a stroke by pointer ``id`` where it was pressed, a screen point, when that lies on the image
- * and no other pointer paints.  ``exact`` (Alt) and ``insert`` (Ctrl), the keys of the press, make it
+ * and no other pointer paints.  ``exact`` (Shift or Alt) and ``insert`` (Ctrl), the keys of the press, make it
  * an exact or an inserted vertex should it turn out a click, as a click places its vertex with the
  * keys it was pressed with; a stroke begun on ``vertex`` of the selected contour selects that vertex
  * instead.  Its band is as wide as the pointer's snap reach when it begins.
@@ -5677,21 +5690,21 @@ function strokeJoined(placed, inPlace) {
 }
 
 /**
- * What the stroke places as the keys and Snap are now (Alt, or Snap off: as drawn; Ctrl: in place).  A
+ * What the stroke places as the keys and Snap are now (Shift or Alt, or Snap off: as drawn; Ctrl: in place).  A
  * stroke begun on a vertex works in place, whatever the keys.
  */
 function previewStroke() {
   const s = app.stroke;
   if (s !== null) {
-    s.join = strokePaints(s) ? strokeJoined(strokePlaces(s, app.altHeld || !settings.snap()),
+    s.join = strokePaints(s) ? strokeJoined(strokePlaces(s, app.asPutHeld || !settings.snap()),
       app.insertHeld || s.vertex >= 0) : null;
   }
 }
 
 /**
  * The stroke ends.  When it painted, its points join the contour, as one edit: as drawn with ``exact``
- * (Alt) or with Snap off, ``inPlace`` (Ctrl, or begun on a vertex) of the vertices along their stretch.
- * A press that did not paint is a click with the keys it was pressed with: a vertex, exactly with Alt,
+ * (Shift or Alt) or with Snap off, ``inPlace`` (Ctrl, or begun on a vertex) of the vertices along their stretch.
+ * A press that did not paint is a click with the keys it was pressed with: a vertex, where it is put with Shift or Alt,
  * inserted with Ctrl; on the vertex it began on, that vertex selected.
  * @param {boolean} exact
  * @param {boolean} inPlace
@@ -5713,7 +5726,7 @@ function endStroke(exact, inPlace) {
   const placed = strokePlaces(s, exact || !settings.snap());
   if (placed.length === 0) {
     const asDrawn = app.lastPointer === "touch" ? "with Snap off, a stroke places its points as drawn"
-      : "Alt+drag places points as drawn";
+      : "Shift+drag places points as drawn";
     setStatus(app.edges === null ? "The edge map is not ready yet: paint again in a moment."
       : `No edge stands out under the stroke; ${asDrawn}.`);
     render();
@@ -6192,7 +6205,7 @@ function touchUp(e, cancelled) {
     if (cancelled) {
       cancelStroke();
     } else {
-      endStroke(app.altHeld, app.insertHeld);          // as the preview had them, a keyboard beside the screen
+      endStroke(app.asPutHeld, app.insertHeld);          // as the preview had them, a keyboard beside the screen
     }
   } else if (g.kind === "drag") {
     if (cancelled) {
@@ -6200,14 +6213,14 @@ function touchUp(e, cancelled) {
     } else {
       const [sx, sy] = eventPoint(e);
       const [x, y] = screenToStored(sx, sy);
-      endDrag(x, y, false, false);
+      endDrag(x, y, app.asPutHeld, false);
     }
   } else if (g.kind === "tap" && !cancelled) {
     if (app.originMode) {
       setOriginAt(g.start[0], g.start[1]);
     } else {
       // Ctrl from a keyboard beside the screen holds two lines parallel, as the ring showed
-      clickAt(g.start[0], g.start[1], false, app.tool === "lines" && app.insertHeld);
+      clickAt(g.start[0], g.start[1], app.asPutHeld, app.tool === "lines" && app.insertHeld);
     }
   }
   render();
@@ -6245,8 +6258,8 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   if (e.button === 0 && !startDragAt(sx, sy)
-      && !(app.tool === "contour" && beginStroke(sx, sy, e.altKey, e.ctrlKey || e.metaKey, -1, e.pointerId))) {
-    clickAt(sx, sy, e.altKey, e.ctrlKey || e.metaKey);     // with the contour tool, the stroke's end decides
+      && !(app.tool === "contour" && beginStroke(sx, sy, asPutKey(e), e.ctrlKey || e.metaKey, -1, e.pointerId))) {
+    clickAt(sx, sy, asPutKey(e), e.ctrlKey || e.metaKey);   // with the contour tool, the stroke's end decides
   }
 });
 
@@ -6292,7 +6305,7 @@ canvas.addEventListener("pointermove", (e) => {
   dragTo(x, y);
   pullPending([x, y]);
   hoverTarget(app.drag === null ? dragTarget(sx, sy) : null);
-  app.preview = landingPreview(x, y, e.altKey);
+  app.preview = landingPreview(x, y, asPutKey(e));
   showCursor(x, y);
   render();
 });
@@ -6311,12 +6324,12 @@ canvas.addEventListener("pointerup", (e) => {
     return;
   }
   if (app.stroke !== null) {
-    endStroke(e.altKey, e.ctrlKey || e.metaKey);
+    endStroke(asPutKey(e), e.ctrlKey || e.metaKey);
     return;
   }
   const [sx, sy] = eventPoint(e);
   const [x, y] = screenToStored(sx, sy);
-  endDrag(x, y, e.altKey, e.shiftKey);
+  endDrag(x, y, asPutKey(e), e.shiftKey);     // Shift: as put when it moved, else the vertex picked
 });
 
 canvas.addEventListener("pointercancel", (e) => {
@@ -6347,8 +6360,10 @@ canvas.addEventListener("pointerleave", () => {
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   const [sx, sy] = eventPoint(e);
-  // pixels; Firefox reports lines (deltaMode 1) for some mice, and pages are possible (2)
-  const dy = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 800 : 1);
+  // pixels; Firefox reports lines (deltaMode 1) for some mice, and pages are possible (2); with Shift down,
+  // Chromium reports the wheel's turn as a sideways scroll, still a zoom here
+  const turn = e.deltaY === 0 && e.shiftKey ? e.deltaX : e.deltaY;
+  const dy = turn * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 800 : 1);
   zoomAt(Math.pow(1.25, -Math.sign(dy) * Math.min(3, Math.abs(dy) / 100 || 1)), sx, sy);
 }, { passive: false });
 
@@ -6505,7 +6520,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape" && app.stroke !== null) {
     e.preventDefault();
-    cancelStroke();                  // with Ctrl or Alt held too, as a stroke may be painted with them
+    cancelStroke();                  // with Ctrl, Shift or Alt held too, as a stroke may be painted with them
     return;
   }
   const target = e.target;
@@ -6537,7 +6552,7 @@ window.addEventListener("keyup", (e) => {
 
 window.addEventListener("blur", () => {            // a key released elsewhere is never seen
   app.insertHeld = false;
-  app.altHeld = false;
+  app.asPutHeld = false;
   app.space = false;
   app.stroke = null;
   render();
@@ -7013,9 +7028,9 @@ profileCanvas.addEventListener("pointerup", (e) => {
   profilePlot.press = null;
   const [ms, data] = [shownProfile(), profilePlot.data];
   if (drag !== null && drag.moved && ms !== null && data !== null) {   // a press without moving changed nothing
-    settleMarker(ms, drag.index, e.altKey, data.profile.mean, plotPerPixel(data));
+    settleMarker(ms, drag.index, asPutKey(e), data.profile.mean, plotPerPixel(data));
   } else if (press !== null) {
-    placeMarker(plotFraction(e), e.altKey);
+    placeMarker(plotFraction(e), asPutKey(e));
   }
 });
 profileCanvas.addEventListener("pointercancel", () => {
