@@ -11,7 +11,7 @@ This document derives what the app computes from an image:
 - **Part 7:** painted edges: the contour tool's stroke along an edge, the path it follows, the criteria that place its points, and how they join the contour.
 - **Part 8:** line edge roughness: a straight line fitted to vertices of a contour, their residuals and the figures.
 
-Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16), (G18) and (G19) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) (T1)–(T8) in `js/trace.js` and (L1)–(L4) in `js/linefit.js`.
+Equation numbers match the comments in the code: (G1)–(G15), (G17) and (G20) in `js/transform.js`, (G16), (G18) and (G19) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) (T1)–(T8) in `js/trace.js` and (L1)–(L4) in `js/linefit.js`.
 
 ## Part 1. Geometry
 
@@ -247,6 +247,15 @@ With $\Delta u$ the stored difference of two points:
   - **The gap** is $|t_2 - t_1|$, the length of the common normal between the lines at $m$. Its components from line 1 to line 2 are $(t_2 - t_1)\,\hat n$. The feet $m + t_i\hat n$, mapped back by $A^{-1}$, are where the drawing puts the arrow heads.
   - **Parallel or not.** For parallel lines, $t_2 - t_1 = (c_2 - c_1)\cdot\hat n$, their distance, wherever the points were clicked. Lines at an angle $\delta$ to each other draw apart by about $\delta$ per unit of length along them, so the gap is the one at $m$, where the measurement sits.
   - **Checks.** In the tests' tilted, turned frame with 2 × 3 nm pixels, lines parallel in micrometres and 0.7 µm apart measure 0.7 to $10^{-12}$. They measure the same when the frame turns by 33°. Lines 2° apart match the gap solved apart by Cramer's rule to $10^{-9}$.
+- **Parallel lines (G20).** With Ctrl, a point of two lines is placed or dragged so that its line is parallel to the other. Let $q$ be its partner, the other point of its own line, and $d = b - a$ the direction of the other line, all in stored coordinates; $A$ is the matrix of the map (G8).
+  - **The line it goes on** is $q + t\,d$: through the partner, along the other line. An affine map keeps parallels, so the two lines are parallel in micrometres as they are in the image.
+  - **Where on it.** The point is the foot of the perpendicular from the pointer $p$, taken in the measurement frame, where right angles are true. Its squared distance from the pointer there is
+    $$|A(p - q) - t\,Ad|^2 = |A(p - q)|^2 - 2t\,A(p - q)\cdot Ad + t^2\,|Ad|^2,$$
+    a parabola in $t$ whose derivative, $-2\,A(p - q)\cdot Ad + 2t\,|Ad|^2$, vanishes at
+    $$t = \frac{A(p - q)\cdot Ad}{|Ad|^2}. \qquad \text{(G20)}$$
+    $A$ is linear, so $A(q + t\,d) = Aq + t\,Ad$: the stored point $q + t\,d$ maps onto that foot, and it is computed in stored coordinates with no map back. Where the correction is undefined, the foot is taken in stored pixels.
+  - **Not snapped.** Snapping would move the point off the parallel. The line's place is set by its partner, which snaps as usual; along parallel lines the gap is the same wherever the points lie (G17).
+  - **Checks.** In the tests' tilted, turned frame, a line placed so comes out parallel to the other to $4\times10^{-15}$ degrees, the pointer's offset square to it to a cosine of $10^{-16}$; a point of line 1 dragged so turns line 1 parallel to line 2 to $7\times10^{-15}$ degrees.
 - **Contours.** The perimeter is $\sum_i |A\Delta u_i|$, with the closing segment when the contour is closed. The area is (G9). The bounding box is that of the mapped points, so it turns with $\varphi$.
 
 ### 1.11 Levelling (G13) and the tilt axis along a line (G14)

@@ -1,8 +1,8 @@
 "use strict";
 /* exported CORRECTIONS, correctionFactor, correctionFactorOrNull, matMul, matInverse, matDet, matApply,
    rotationMatrix, tiltMatrix, measurementMatrix, viewMatrix, toMeasurement, fromMeasurement, normalizeDegrees,
-   lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, measureGap, levelRotation,
-   axisFromLine, viewStepToStored */
+   lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, measureGap, parallelPoint,
+   levelRotation, axisFromLine, viewStepToStored */
 /*
  * Geometry: one affine map from the pixels of the image as stored to the measurement frame, the
  * view drawn through the same map, and the measures taken in that frame.  MATH.md, part 1,
@@ -90,6 +90,15 @@
  * delta per unit of length along them, so the gap is that at m, the place of the measurement.  The
  * map is affine: parallel lines stay parallel, but a right angle in the image is not one in the
  * frame when the correction stretches one way, so the normal is taken in the frame.
+ *
+ * Parallel lines (G20).  A point of two lines placed or dragged with Ctrl goes on the line through
+ * its partner q, the other point of its line, along the other line's direction d = b - a: at
+ * q + t d, the foot of the perpendicular from the pointer p in the measurement frame, where
+ *
+ *     t = (A (p - q)) . (A d) / |A d|^2,
+ *
+ * A the matrix of the map.  A is linear, so q + t d is that foot in stored coordinates as well, and
+ * the two lines are parallel in the frame as in the image, an affine map keeping parallels.
  *
  * Levelling (G13).  Before the rotation the line p1 -> p2 has the direction beta of
  * K D F (p2 - p1).  It turns horizontal for phi = -beta + 180 n and vertical for
@@ -546,6 +555,37 @@ function measureGap(points, frame) {
     gap: Math.abs(t2 - t1), dx: g[0], dy: g[1], directionDeg: directionOf(g), angleDeg: angleBetween(u1, u2),
     feet: [foot(t1), foot(t2)], unit: m.unit,
   };
+}
+
+/**
+ * (G20): where point ``k`` of two lines goes, for the pointer at ``p``, to make its line parallel
+ * to the other: on the line through its partner (the other point of its line) along the other line,
+ * at the foot of the perpendicular from p in the measurement frame (in stored pixels when the
+ * correction is undefined).  Null when the partner or the other line is not placed yet, or the other
+ * line is a point.
+ * @param {Point[]} points    line 1 from, to; line 2 from, to; as many as are placed
+ * @param {number} k          0 to 3
+ * @param {Point} p
+ * @param {Frame} frame
+ * @returns {Point|null}
+ */
+function parallelPoint(points, k, p, frame) {
+  const q = points[k ^ 1];
+  const [a, b] = k < 2 ? [points[2], points[3]] : [points[0], points[1]];
+  if (q === undefined || a === undefined || b === undefined) {
+    return null;
+  }
+  /** @type {Mat2} */
+  const m = measurementMatrix(frame)?.matrix ?? [1, 0, 0, 1];
+  const d = [b[0] - a[0], b[1] - a[1]];
+  const ad = matApply(m, d[0], d[1]);
+  const dd = ad[0] * ad[0] + ad[1] * ad[1];
+  if (!(dd > 0)) {
+    return null;
+  }
+  const ap = matApply(m, p[0] - q[0], p[1] - q[1]);
+  const t = (ap[0] * ad[0] + ap[1] * ad[1]) / dd;
+  return [q[0] + t * d[0], q[1] + t * d[1]];
 }
 
 /**

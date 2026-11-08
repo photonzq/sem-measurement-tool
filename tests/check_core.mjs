@@ -84,6 +84,7 @@ function loadApi() {
   return vm.runInContext(`({ decodeSEMImage, describeCalibration, EdgeMap, gaussianKernels, correctionFactor, matMul,
     matInverse, matDet, matApply, tiltMatrix, measurementMatrix, viewMatrix, toMeasurement, fromMeasurement,
     normalizeDegrees, lineIntersection, measureContour, measureRuler, measureAngle, measureLineAngle, measureGap,
+    parallelPoint,
     levelRotation,
     axisFromLine, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, formatSession,
     parseSession, viewStepToStored, gdsReal, gdsRealValue, gdsName, formatGds, moveSelected, dropSelected, makeFirst,
@@ -1639,6 +1640,34 @@ function checkGap() {
     "show kept and three refused, an earlier file's gap and angle between lines read as two lines");
 }
 
+/**
+ * Parallel lines (G20), in the tests' tilted, turned frame of 2 x 3 nm pixels: line 2's last point placed with Ctrl
+ * makes it parallel to line 1 in the measurement frame, at the foot of the perpendicular from the pointer; line 1's
+ * first point dragged with Ctrl turns line 1 parallel to line 2; nothing is held while the other line is not placed
+ * or is a point.
+ */
+function checkParallel() {
+  const A = api.measurementMatrix(SLANTED).matrix;
+  const flat = (a) => Math.min(a, 180 - a);                    // 0 for parallel lines, either way round
+  const line = [[100, 50], [400, 90], [150, 210]];
+  const pointer = [380, 300];
+  const r = api.parallelPoint(line, 3, pointer, SLANTED);
+  const placed = api.measureLineAngle([...line, r], SLANTED).angleDeg;
+  // the pointer's offset from the point, in the frame, square to the lines
+  const off = api.matApply(A, pointer[0] - r[0], pointer[1] - r[1]);
+  const d = api.matApply(A, line[1][0] - line[0][0], line[1][1] - line[0][1]);
+  const cosine = Math.abs(off[0] * d[0] + off[1] * d[1]) / (Math.hypot(off[0], off[1]) * Math.hypot(d[0], d[1]));
+  const four = [[90, 40], [400, 90], [150, 210], [420, 260]];
+  const q = api.parallelPoint(four, 0, [95, 35], SLANTED);
+  const dragged = api.measureLineAngle([q, four[1], four[2], four[3]], SLANTED).angleDeg;
+  const none = [api.parallelPoint([[0, 0], [1, 0]], 1, [5, 5], SLANTED), api.parallelPoint(line, 2, [5, 5], SLANTED),
+    api.parallelPoint([[0, 0], [0, 0], [2, 2]], 3, [5, 5], SLANTED)];
+  check(flat(placed) < 1e-9 && cosine < 1e-12 && flat(dragged) < 1e-9 && none.every((n) => n === null),
+    `parallel lines (G20) in a tilted, turned frame: line 2 placed with Ctrl at ${flat(placed).toExponential(1)} deg ` +
+    `from parallel, the pointer square to it (cosine ${cosine.toExponential(1)}); line 1 dragged by its first point, ` +
+    `${flat(dragged).toExponential(1)} deg; none for line 1's end, line 2's start, or a line that is a point`);
+}
+
 /** The angle between two lines, whatever their sense: 0 to 90 degrees, by atan2 to keep small angles exact (1.10). */
 function lineAngle(a, b) {
   return Math.atan2(Math.abs(a[0] * b[1] - a[1] * b[0]), Math.abs(a[0] * b[0] + a[1] * b[1])) / DEG;
@@ -2356,6 +2385,7 @@ checkGeometry();
 checkPolygonFile();
 checkMeasurementFile();
 checkGap();
+checkParallel();
 checkSession();
 checkGdsReals();
 checkGdsFile();

@@ -14,7 +14,7 @@
     --warn: #9e403d;
     --view: #1e1e1e;
     --panel-width: 360px;
-    --status-height: 22px;
+    --status-height: 20px;           /* one line of 12 px text, and its border */
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -36,8 +36,10 @@
           padding: 6px 12px; border-radius: 4px; display: none; pointer-events: none; }
   #panel { grid-row: 1; grid-column: 2; overflow-y: auto; border-left: 1px solid var(--line); padding: 8px 12px 16px; }
   /* the status bar's switch, pinned at the bottom right; the bar itself is hidden unless switched on */
-  #panel-foot { grid-row: 2; grid-column: 2; display: flex; align-items: center; justify-content: flex-end; padding: 2px 12px;
-                border-top: 1px solid var(--line); border-left: 1px solid var(--line); font-size: 12px; min-height: var(--status-height); }
+  #panel-foot { grid-row: 2; grid-column: 2; display: flex; align-items: center; justify-content: flex-end; padding: 0 12px;
+                border-top: 1px solid var(--line); border-left: 1px solid var(--line); font-size: 12px; line-height: 19px;
+                height: 20px; }      /* one line, as the status bar, whether that is shown or not, by mouse or touch */
+  #panel-foot input[type=checkbox] { width: 13px; height: 13px; margin: 0 4px 0 0; vertical-align: -2px; }
   #app.no-status { --status-height: 0px; }
   #app.no-status #status { display: none; }
   #app.no-status #view-wrap { grid-row: 1 / 3; }
@@ -105,6 +107,9 @@
                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #download-menu button:hover:enabled { background: #e8edf6; }
   #download-menu [role="separator"] { border-top: 1px solid var(--line); margin: 2px 0; }
+  /* the image's line: the first of the metadata below it, in one box with them */
+  #image-size { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
+  #image-size:not([hidden]) + pre { margin-top: 0; border-top: none; padding-top: 0; }
   pre { font: 11px/1.35 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; margin: 4px 0; max-height: 320px; overflow: auto;
         background: #fff; border: 1px solid var(--line); padding: 4px 6px; }
   details summary { cursor: pointer; color: var(--muted); margin: 10px 0 4px; }
@@ -112,7 +117,7 @@
   table.keys { border-collapse: collapse; width: 100%; }
   table.keys td { padding: 2px 4px; vertical-align: top; border-bottom: 1px solid var(--line); }
   table.keys td:first-child { width: 36%; }
-  #status { grid-column: 1; font: 12px ui-monospace, Consolas, monospace; padding: 3px 8px; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: var(--status-height); }
+  #status { grid-column: 1; font: 12px/19px ui-monospace, Consolas, monospace; padding: 0 8px; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: var(--status-height); }
   .pair { display: flex; gap: 4px; }
   #histogram { display: block; width: 100%; height: 96px; background: #fff; border: 1px solid var(--line); border-radius: 3px;
                cursor: ew-resize; touch-action: none; }
@@ -191,8 +196,7 @@
   body.touch .floating .grip { width: 30px; height: 30px; }
   body.touch #profile-window .row input[type=number] { min-height: 36px; }
   body.touch #profile-window { left: 76px; max-width: calc(100% - 88px); }      /* clear of the touch bar */
-  body.touch .floating input[type=checkbox], body.touch #panel-foot input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
-  body.touch #panel-foot { min-height: 40px; }
+  body.touch .floating input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
   body.touch #panel button, body.touch dialog button { min-height: 38px; }
   body.touch #panel input[type=number], body.touch #panel select, body.touch dialog input:not([type=checkbox]) { min-height: 34px; }
   body.touch #panel input[type=checkbox], body.touch dialog input[type=checkbox] { width: 20px; height: 20px; vertical-align: -5px; }
@@ -458,6 +462,7 @@
     <section>
       <details id="metadata-details">
         <summary>Metadata</summary>
+        <pre id="image-size" hidden></pre>
         <pre id="metadata-summary">(no image)</pre>
         <details><summary>full text from the file</summary><pre id="metadata-raw"></pre></details>
       </details>
@@ -468,11 +473,11 @@
           <tr><td><kbd>0</kbd></td><td>no tool: drag to pan, wheel to zoom (or click the active tool's button again)</td></tr>
           <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>tools: contour, ruler, angle (3 clicks), 2 lines: their gap, angle or both (4 clicks), line profile</td></tr>
           <tr><td>click</td><td>contour: add a vertex to the selected contour, or start a new one when no contour is selected; other tools: place the next point (snapped when Snap is on)</td></tr>
-          <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands. 2 lines: line 2's last point where the line is parallel to line 1, not snapped</td></tr>
           <tr><td>drag along an edge</td><td>contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; <kbd>Ctrl</kbd>: in place of the vertices along the stretch they cover, or into the nearest segment, also when it starts on a vertex; <kbd>Alt</kbd>, or Snap off: along the stroke as drawn. A plain drag from a vertex moves it</td></tr>
           <tr><td>click, <kbd>Shift</kbd>+click a vertex</td><td>contour: select it in the vertex window; add or remove it</td></tr>
           <tr><td><kbd>Alt</kbd>+click</td><td>place the point where clicked, without snapping, as every one is while Snap is off</td></tr>
-          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not); a profile's end does not snap, but the magnet holds the profile square about its other end (<kbd>Alt</kbd>: not)</td></tr>
+          <tr><td>drag a point</td><td>move a vertex or a measurement's point; with Snap on it snaps when released (<kbd>Alt</kbd>: not); a profile's end does not snap, but the magnet holds the profile square about its other end (<kbd>Alt</kbd>: not); a point of 2 lines dragged with <kbd>Ctrl</kbd> keeps its line parallel to the other, not snapped</td></tr>
           <tr><td>right click</td><td>contour: delete the vertex under the cursor; other tools: delete the measurement under the cursor, or cancel the one being placed</td></tr>
           <tr><td>wheel, touchpad pinch</td><td>zoom about the cursor</td></tr>
           <tr><td>middle drag, <kbd>Space</kbd>+drag; drag with no tool</td><td>pan</td></tr>

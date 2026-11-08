@@ -28,7 +28,7 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
 ## Working with it
 
-1. **Open an image**: *Open image…*, in the panel or in the middle of the empty view, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, and Hitachi TIFFs with their pixel size. Where the microscope writes its metadata to a file beside the image (Hitachi's and JEOL's `.txt`, TESCAN's `.hdr`), select or drop both files together; that file is then used, for an image of any format, JPEG included. The panel shows the metadata under *Metadata*. The image opens with automatic contrast; *Display*, at the bottom of the panel, shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
+1. **Open an image**: *Open image…*, in the panel or in the middle of the empty view, Ctrl+O, or drop the file onto the view. TIFF files from FEI / Thermo Fisher or Zeiss come with their pixel size and stage tilt, and Hitachi TIFFs with their pixel size. Where the microscope writes its metadata to a file beside the image (Hitachi's and JEOL's `.txt`, TESCAN's `.hdr`), select or drop both files together; that file is then used, for an image of any format, JPEG included. *Files* names the image; *Metadata*, near the foot of the panel, gives its size, sample type and info bar, then the metadata. The image opens with automatic contrast; *Display*, at the bottom of the panel, shows its histogram and sets the levels by hand. No tool is selected at first: drag to pan and use the wheel, or two fingers, to zoom.
 2. **Check the calibration** under *Scale, tilt and rotation*. Choose the tilt correction:
    - *cross-section* for a FIB face;
    - *tilted surface* for features in a tilted surface;
@@ -53,7 +53,7 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 
 **Numbers on screen** give lengths to about a tenth of a pixel: 4 decimals in micrometres for pixels of 1.35 nm, 3 for 18 nm, 1 in pixels. Areas are given to what moving the outline by a tenth of a pixel changes. The files keep their full precision (MATH.md 1.12, 1.13).
 
-**The status bar** under the view is hidden at first. The *status bar* switch, pinned at the bottom right under the panel, shows it, and the browser keeps the choice. It gives the cursor's position in pixels and micrometres, the grey value there and the edge strength, and the app's messages: a file opened or saved, why a profile was not squared, what to select first. While it is hidden, each message shows for a few seconds in a box at the bottom of the view.
+**The status bar**, one line under the view, is hidden at first. The *status bar* switch, pinned at the bottom right under the panel, shows it, and the browser keeps the choice. It gives the cursor's position in pixels and micrometres, the grey value there and the edge strength, and the app's messages: a file opened or saved, why a profile was not squared, what to select first. While it is hidden, each message shows for a few seconds in a box at the bottom of the view.
 
 ## Tools
 
@@ -74,8 +74,9 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 - **Angle.** Three clicks: the end of one arm, the vertex, the end of the other arm. It gives the angle at the vertex, 0–180°.
 - **2 lines.** Four clicks, two on each line, give the gap between the two lines and the angle between them. *show*, under the tools while this tool is in hand or two lines are selected, chooses what they show: the **gap**, the **angle**, or **both**. It sets the selected two lines, and the next ones too; the browser keeps the choice. The measurements file always has both.
   - **The gap** is measured in micrometres, where right angles are true, along the normal of the lines' mean direction, midway between their middles. For parallel lines that is their distance, wherever the points are (MATH.md 1.10, (G17)): a waveguide's width, a layer's thickness. The normal is drawn between the lines with arrow heads, and a line is dashed out to it when it lies beyond the points.
-  - **The angle** is the one from line 1 to line 2 as clicked, 0–180°; the details give its supplement. The lines are extended, dashed, to where they cross, and an arc there shows which of the two angles it is. This suits corners that are rounded, such as a sidewall meeting a substrate. Near-parallel lines clicked the same way give a small angle; clicked opposite ways, one near 180°.
-  - **Both** draws the arrow and the arc, each with its label. Lines that cross far away, beyond 20 times their span, have no arc, and then one label beside the arrow gives the gap and the angle.
+  - **The angle** is the one from line 1 to line 2 as clicked, 0–180°; the details give its supplement. The lines are extended, dashed, to where they cross, and an arc there shows which of the two angles it is, when the crossing is in sight: on screen, and within 20 times the lines' span. Otherwise nothing runs out of sight, and the angle is given where the gap's label goes, beside the middle between the lines. This suits corners that are rounded, such as a sidewall meeting a substrate. Near-parallel lines clicked the same way give a small angle; clicked opposite ways, one near 180°.
+  - **Both** draws the arrow and the arc, each with its label; without the arc, one label beside the arrow gives the gap and the angle.
+  - **Ctrl holds a line parallel to the other.** Ctrl+click places line 2's last point on the parallel to line 1 through line 2's first point, at the foot of the perpendicular from the pointer, in micrometres; a magenta ring shows beforehand where it lands. Ctrl while dragging any point keeps its line parallel to the other in the same way. Such a point does not snap: the line's place is set by its other point, which does (MATH.md 1.10, (G20)).
   - The points snap as a ruler's do. Sessions of earlier versions open with their gaps as two lines that show the gap, and their angles between two lines as two lines that show the angle.
 - **Profile.** Two clicks give a line profile: the grey values along the line, averaged across a band around it. See *Line profiles* below.
 
@@ -409,13 +410,13 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | 0 | no tool: drag to pan, wheel to zoom (also a click on the active tool's button) |
 | 1 2 3 4 5 | tools: contour, ruler, angle (3 clicks), 2 lines: their gap, angle or both (4 clicks), line profile |
 | click | contour: add a vertex to the selected contour, or start a new one; other tools: place the next point (snapped with Snap on, except a profile's ends) |
-| Ctrl+click | contour: insert a vertex into the nearest segment |
+| Ctrl+click | contour: insert a vertex into the nearest segment; 2 lines: line 2's last point where the line is parallel to line 1 (not snapped) |
 | drag along an edge | contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; a plain drag from a vertex moves it instead |
 | Ctrl+drag, Alt+drag | contour: the points in place of the vertices along the stretch they cover (or into the nearest segment), also from a vertex; along the stroke as drawn, as every stroke is with Snap off |
 | hold Ctrl | contour: show the segment that will receive the vertex and where it will land |
 | click, Shift+click a vertex | contour: select it in the vertex window; add or remove it |
 | Alt+click | place the point where clicked, without snapping, as every one is while Snap is off |
-| drag a point | move a vertex or a measurement point; it snaps when released (Alt: not). A profile's end never snaps; the magnet holds the profile square about its other end instead (Alt: not) |
+| drag a point | move a vertex or a measurement point; it snaps when released (Alt: not). A profile's end never snaps; the magnet holds the profile square about its other end instead (Alt: not). A point of 2 lines dragged with Ctrl keeps its line parallel to the other, and does not snap |
 | drag the white square | widen or narrow the band of the selected profile |
 | click on the profile plot | place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap and that option are on (Alt: as clicked) |
 | drag a marker, on the plot or by its tick on the image | move it along the profile; it snaps when let go (Alt: not); on the plot, a drag that starts elsewhere reads values |
@@ -468,7 +469,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `js/metadata.js` | FEI, Zeiss, Hitachi, JEOL, TESCAN and Thermo Fisher XML metadata: pixel size, data bar, tilt, beam, detector |
 | `js/tiff.js` | TIFF decoding with UTIF.js into grey values and calibration; metadata in tags and in files beside the image; the Zeiss info zone and the Hitachi data bar, (Z1) and (H1) in the header |
 | `js/edges.js` | edge strength, crests, snapping and the structure tensor; derivations (E1)–(E9) in the header |
-| `js/transform.js` | the affine map, measures, levelling, the arrow-key step, the gap between two lines; derivations (G1)–(G15) and (G17) in the header |
+| `js/transform.js` | the affine map, measures, levelling, the arrow-key step, the gap between two lines, parallel lines; derivations (G1)–(G15), (G17) and (G20) in the header |
 | `js/polygons.js` | the polygon, measurements and profile files (CSV) |
 | `js/session.js` | the session file (JSON) |
 | `js/gds.js` | the GDSII writer: records, units, eight-byte reals; derivations (S1)–(S2) in the header |

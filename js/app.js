@@ -2,7 +2,7 @@
 /* global decodeSEMImage, emptyCalibration, describeCalibration, EdgeMap, correctionFactor,
    matApply, matInverse, matDet, viewMatrix, toMeasurement, fromMeasurement, normalizeDegrees, measureContour, fitLine,
    formatLineFitFile,
-   measureRuler, measureAngle, measureLineAngle, measureGap, levelRotation, axisFromLine, lineIntersection,
+   measureRuler, measureAngle, measureLineAngle, measureGap, parallelPoint, levelRotation, axisFromLine, lineIntersection,
    measurementMatrix,
    viewStepToStored, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, MEASURE_POINTS, LINES_SHOW,
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
@@ -71,7 +71,7 @@ const TOOL_HINTS = {
   contour: "Click: add a vertex (N: done); Ctrl+click inserts one.  Drag along an edge: points on it (Ctrl: in place).",
   ruler: "Click both ends of a distance.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
-  lines: "Click two points on one line, then two on the other.",
+  lines: "Click two points on one line, then two on the other; Ctrl holds the line parallel to the other.",
   profile: "Click both ends; a magnet holds it square to the edge (Alt, or Snap off: not).  Drag an end, the band's square, " +
     "A or B.",
 };
@@ -274,6 +274,8 @@ function buttonEl(id) {
 const canvas = /** @type {HTMLCanvasElement} */ (el("view"));
 /** Where the overlay draws: the view, or for a while the canvas of a download (drawMeasurementsOn). */
 let ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
+/** The width and height of what ``ctx`` draws on, in the overlay's CSS pixels. @type {[number, number]} */
+let drawArea = [0, 0];
 
 /**
  * A positive number from an input, or ``fallback``.
@@ -836,6 +838,7 @@ function draw() {
     canvas.width = w;
     canvas.height = h;
   }
+  drawArea = [rect.width, rect.height];
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#1e1e1e";
   ctx.fillRect(0, 0, w, h);
@@ -993,7 +996,7 @@ function trackModifiers(e) {
     previewStroke();
     const c = app.cursor;
     if (c !== null && app.lastPointer !== "touch") {   // they follow Alt at once, not at the next move
-      app.preview = insideImage(c[0], c[1]) && !app.altHeld && snapsNow() ? snapTarget(c[0], c[1]) : null;
+      app.preview = landingPreview(c[0], c[1], app.altHeld);
       if (app.drag !== null && app.drag.moved) {
         dragTo(c[0], c[1]);
       }
@@ -1290,9 +1293,9 @@ function addRuler(path, pts) {
 /**
  * Two lines as clicked, added to ``solid``, with what they show (``show``, both when absent): the
  * gap's normal (addGap), the crossing and its arc (addCrossing), or both.  Returns their labels and
- * where they go: the gap's beside its normal, the angle's beyond its arc, or among the points when
- * the lines cross far away or not at all; with both and no arc, gap and angle in one label beside the
- * normal, which keeps the angle's label off the middle of near-parallel lines.
+ * where they go: the gap's beside its normal, the angle's beyond its arc.  When the lines cross out
+ * of sight or not at all, there is no arc, and the angle goes where the gap's label goes: alone
+ * (the normal not drawn), or with the gap in one label.
  * @param {Path2D} solid
  * @param {Path2D} dashed
  * @param {FixedMeasurement} ms     two lines with their 4 points
@@ -1307,8 +1310,13 @@ function addLines(solid, dashed, ms, pts, toScreen) {
   const [p1, p2, p3, p4] = ms.points;
   const arc = shown === "gap" ? null : addCrossing(solid, dashed, pts, lineIntersection(p1, p2, p3, p4), toScreen);
   if (shown === "angle") {
+    const angle = angleLabel(ms);
+    if (arc !== null) {
+      return [[angle, arc]];
+    }
+    // the place of the gap's label, the normal itself not drawn; among the points when there is no gap
     const among = /** @type {Point} */ (pts.reduce((acc, p) => [acc[0] + p[0] / 4, acc[1] + p[1] / 4], [0, 0]));
-    return [[angleLabel(ms), arc ?? among]];
+    return [[angle, addGap(new Path2D(), new Path2D(), ms.points, pts, toScreen, angle) ?? among]];
   }
   const text = shown === "both" && arc === null ? `${gapLabel(ms)}, ${angleLabel(ms)}` : gapLabel(ms);
   /** @type {Array<[string, Point|null]>} */
@@ -1320,10 +1328,10 @@ function addLines(solid, dashed, ms, pts, toScreen) {
 }
 
 /**
- * Where two lines cross, when that is near them: their extensions to it, added to ``dashed``, and
- * the arc between their directions there, added to ``solid``.  Returns where the angle's label goes,
- * beyond the arc; null when the lines cross far away (beyond 20 times their span) or not at all, or
- * when the arc has no bisector.
+ * Where two lines cross, when that is near them and in sight: their extensions to it, added to
+ * ``dashed``, and the arc between their directions there, added to ``solid``.  Returns where the
+ * angle's label goes, beyond the arc; null when the lines cross off the area drawn (the view, or the
+ * image downloaded), beyond 20 times their span, or not at all, or when the arc has no bisector.
  * @param {Path2D} solid
  * @param {Path2D} dashed
  * @param {Point[]} pts      screen, 4 points
@@ -1334,8 +1342,9 @@ function addLines(solid, dashed, ms, pts, toScreen) {
 function addCrossing(solid, dashed, pts, crossing, toScreen) {
   const span = Math.max(...pts.map((p) => Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1])), 1);
   const c = crossing === null ? null : toScreen(crossing);
-  if (c === null || Math.hypot(c[0] - pts[0][0], c[1] - pts[0][1]) >= 20 * span) {
-    return null;
+  if (c === null || Math.hypot(c[0] - pts[0][0], c[1] - pts[0][1]) >= 20 * span
+      || !(c[0] >= 0 && c[0] <= drawArea[0] && c[1] >= 0 && c[1] <= drawArea[1])) {
+    return null;                     // no dashes running out of sight to it
   }
   for (const [p, q] of [[pts[0], pts[1]], [pts[2], pts[3]]]) {
     addSegment(dashed, Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(q[0] - c[0], q[1] - c[1]) ? p : q, c);
@@ -2243,13 +2252,15 @@ function newMeasureName(kind) {
 /**
  * Place the next point of the measurement of the current tool at stored (x, y), snapped unless
  * ``exact``.  A profile's ends never snap, since a profile runs across edges, not along them; its
- * second end goes where the magnet pulls it, as the cursor showed, unless ``exact``.  The measurement
- * is complete with its last point.
+ * second end goes where the magnet pulls it, as the cursor showed, unless ``exact``.  With
+ * ``parallel`` (Ctrl), the last point of two lines goes where its line is parallel to the first
+ * (G20), unsnapped.  The measurement is complete with its last point.
  * @param {number} x
  * @param {number} y
  * @param {boolean} exact
+ * @param {boolean} [parallel]
  */
-function placePoint(x, y, exact) {
+function placePoint(x, y, exact, parallel = false) {
   if (app.tool === "contour" || app.tool === "pan") {
     return;
   }
@@ -2257,7 +2268,8 @@ function placePoint(x, y, exact) {
   const pending = app.pending ?? { kind, points: [], magnet: null };
   const second = kind === "profile" && pending.points.length === 1;
   const pulled = second && !exact ? magnetPull([pending.points[0], [x, y]], 0, pending.magnet !== null) : null;
-  pending.points.push(pulled?.points[1] ?? (exact || kind === "profile" ? null : snapTarget(x, y)) ?? [x, y]);
+  const along = kind === "lines" && parallel ? parallelPoint(pending.points, pending.points.length, [x, y], app.frame) : null;
+  pending.points.push(along ?? pulled?.points[1] ?? (exact || kind === "profile" ? null : snapTarget(x, y)) ?? [x, y]);
   app.pending = pending;
   if (pending.points.length === MEASURE_POINTS[kind]) {
     pushHistory();
@@ -2373,20 +2385,24 @@ function axisFromSelected() {
 
 // ------------------------------------------------------------------------- panel
 
+/** The image under Files: its file name alone; its size and sample type are the first line of the Metadata. */
 function showImageInfo() {
   const image = app.image;
   buttonEl("save-session").disabled = image === null;
   const info = el("image-info");
+  const size = el("image-size");
+  size.hidden = image === null;
   if (image === null) {
     info.textContent = "No image.";
-    info.title = "";
+    size.textContent = "";
     return;
   }
+  fillParts(info, [{ file: image.name }]);
   const rows = image.height - image.imageRows;
-  fillParts(info, [{ file: image.name }, `\n${image.width} x ${image.height} pixels (${image.sampleType})` +
-    `${rows > 0 ? `, info bar ${rows} pixels` : ""}`]);
+  size.textContent = `image: ${image.width} x ${image.height} pixels (${image.sampleType})` +
+    `${rows > 0 ? `, info bar ${rows} pixels` : ""}`;
   // what the bar means, on hovering: the line itself gives only its height
-  info.title = rows > 0 ? `The info bar, the bottom ${rows} rows below the dashed line, is left out of the histogram, ` +
+  size.title = rows > 0 ? `The info bar, the bottom ${rows} rows below the dashed line, is left out of the histogram, ` +
     "the auto contrast and the edge detection." : "";
 }
 
@@ -5062,10 +5078,12 @@ function leastStretch(m) {
  * @param {CanvasRenderingContext2D} target    its transform set to the overlay's CSS pixels
  * @param {Measurement[]} list
  * @param {(p: Point) => Point} toPixels      stored points to those pixels
+ * @param {[number, number]} area             the target's width and height in those pixels
  */
-function drawMeasurementsOn(target, list, toPixels) {
-  const [view, boxes] = [ctx, app.labelBoxes];
+function drawMeasurementsOn(target, list, toPixels, area) {
+  const [view, boxes, viewArea] = [ctx, app.labelBoxes, drawArea];
   ctx = target;
+  drawArea = area;
   app.labelBoxes = [];
   app.exporting = true;
   try {
@@ -5081,6 +5099,7 @@ function drawMeasurementsOn(target, list, toPixels) {
     }
   } finally {
     ctx = view;
+    drawArea = viewArea;
     app.labelBoxes = boxes;
     app.exporting = false;
   }
@@ -5127,7 +5146,7 @@ function exportImagePng(list, name) {
   drawMeasurementsOn(g, list, (p) => {
     const q = matApply(m, p[0] + 0.5, p[1] + 0.5);
     return [(q[0] - x0) / k, (q[1] - y0) / k];
-  });
+  }, [w / k, h / k]);
   c.toBlob((blob) => {
     if (blob === null) {
       setStatus(`The image is too large for this browser to save: ${w} × ${h} pixels.`);
@@ -5298,7 +5317,7 @@ function clickAt(sx, sy, exact, insert) {
   if (app.tool === "contour") {
     addVertex(x, y, { exact, insert });
   } else {
-    placePoint(x, y, exact);
+    placePoint(x, y, exact, insert);
   }
 }
 
@@ -5319,7 +5338,8 @@ function setOriginAt(sx, sy) {
 /**
  * Move what is dragged to stored (x, y): a point, the band width of a profile, or a marker, which
  * goes where (x, y) projects onto its profile (P12).  A profile's end goes where the magnet pulls
- * it, unless Alt is down or Snap is off.
+ * it, unless Alt is down or Snap is off.  A point of two lines, while Ctrl is down, goes where its
+ * line is parallel to the other (G20).
  * @param {number} x
  * @param {number} y
  */
@@ -5330,11 +5350,14 @@ function dragTo(x, y) {
   }
   if (points !== null && app.drag !== null) {
     const k = app.drag.point;
+    const kind = app.measurements[app.drag.index].kind;
     points[k] = [x, y];
-    if (app.measurements[app.drag.index].kind === "profile") {
+    if (kind === "profile") {
       const magnet = app.altHeld ? null : magnetPull(points, 1 - k, app.drag.magnet !== null);
       app.drag.magnet = magnet;
       points[k] = magnet?.points[k] ?? points[k];
+    } else if (kind === "lines" && app.insertHeld) {
+      points[k] = parallelPoint(points, k, [x, y], app.frame) ?? points[k];
     }
     app.drag.moved = true;
   } else if (app.drag !== null && app.drag.kind === "width") {
@@ -5356,7 +5379,8 @@ function dragTo(x, y) {
 
 /**
  * Release what is dragged at stored (x, y).  A point snaps unless ``exact``; a profile's end never
- * does, but stays where the magnet pulls it, as the drag showed, unless ``exact``.  A vertex let go
+ * does, but stays where the magnet pulls it, as the drag showed, unless ``exact``; a point of two
+ * lines let go with Ctrl stays where its line is parallel to the other (G20).  A vertex let go
  * without moving is selected in the vertex window (added or removed with ``toggle``).
  * @param {number} x
  * @param {number} y
@@ -5387,7 +5411,8 @@ function endDrag(x, y, exact, toggle) {
     return;
   }
   const ms = app.measurements[drag.index];
-  points[drag.point] = (exact || ms.kind === "profile" ? null : snapTarget(x, y)) ?? [x, y];
+  const along = ms.kind === "lines" && app.insertHeld ? parallelPoint(points, drag.point, [x, y], app.frame) : null;
+  points[drag.point] = along ?? (exact || ms.kind === "profile" ? null : snapTarget(x, y)) ?? [x, y];
   const pulled = ms.kind === "profile" && !exact ? magnetPull(points, 1 - drag.point, drag.magnet !== null) : null;
   if (pulled !== null) {
     points[drag.point] = pulled.points[drag.point];
@@ -5408,6 +5433,28 @@ function cancelDrag() {
     app.history.pop();
     restore(drag.before);
   }
+}
+
+/**
+ * Where a click, or the release of what is dragged, would land now, for the magenta ring: with
+ * Ctrl, the last point of two lines being placed where its line is parallel to the first (G20); a
+ * point of two lines dragged with Ctrl is held parallel where it is, and not snapped; else the snap
+ * target when a click would snap; null when nothing moves it (``alt``: Alt is down).
+ * @param {number} x
+ * @param {number} y
+ * @param {boolean} alt
+ * @returns {Point|null}
+ */
+function landingPreview(x, y, alt) {
+  const p = app.pending;
+  const d = app.drag;
+  if (app.insertHeld && d === null && p !== null && p.kind === "lines" && p.points.length === 3) {
+    return parallelPoint(p.points, 3, [x, y], app.frame);
+  }
+  if (app.insertHeld && d !== null && d.kind === "point" && app.measurements[d.index]?.kind === "lines") {
+    return null;
+  }
+  return insideImage(x, y) && !alt && snapsNow() ? snapTarget(x, y) : null;
 }
 
 /**
@@ -6054,7 +6101,7 @@ function touchMove(e) {
   } else if (g.kind === "drag") {
     const [x, y] = screenToStored(p[0], p[1]);
     dragTo(x, y);
-    app.preview = insideImage(x, y) && snapsNow() ? snapTarget(x, y) : null;
+    app.preview = landingPreview(x, y, false);
     showCursor(x, y);
     render();
   }
@@ -6108,7 +6155,8 @@ function touchUp(e, cancelled) {
     if (app.originMode) {
       setOriginAt(g.start[0], g.start[1]);
     } else {
-      clickAt(g.start[0], g.start[1], false, false);
+      // Ctrl from a keyboard beside the screen holds two lines parallel, as the ring showed
+      clickAt(g.start[0], g.start[1], false, app.tool === "lines" && app.insertHeld);
     }
   }
   render();
@@ -6193,7 +6241,7 @@ canvas.addEventListener("pointermove", (e) => {
   dragTo(x, y);
   pullPending([x, y]);
   hoverTarget(app.drag === null ? dragTarget(sx, sy) : null);
-  app.preview = insideImage(x, y) && !e.altKey && snapsNow() ? snapTarget(x, y) : null;
+  app.preview = landingPreview(x, y, e.altKey);
   showCursor(x, y);
   render();
 });
