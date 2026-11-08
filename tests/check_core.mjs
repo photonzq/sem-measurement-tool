@@ -800,7 +800,7 @@ function checkMeasurementFile() {
   const measurements = [
     { name: "rib width", kind: "ruler", points: [[100, 50], [400, 50]] },
     { name: "foot, left", kind: "angle", points: [[0, 100], [100, 100], [100, 0]] },
-    { name: "sidewall", kind: "line-angle", points: [[0, 0], [10, 0], [0, 0], [10, -10]] },
+    { name: "sidewall", kind: "lines", show: "angle", points: [[0, 0], [10, 0], [0, 0], [10, -10]] },
     { name: "profile 1", kind: "profile", points: [[100, 60], [400, 60]], width: 5 },
     { name: "rib", kind: "contour", closed: true, points: [[100, 100], [400, 100], [400, 200], [100, 200]] },
     { name: "slab", kind: "contour", closed: false, points: [[0, 300], [500, 300]] },
@@ -809,19 +809,30 @@ function checkMeasurementFile() {
   const rows = text.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
   const slant = (Math.atan(k) / DEG).toFixed(3);
   const h = 0.2 * k;                 // the rectangle's height: 100 rows of 2 nm, stretched by k
-  const gap = ",".repeat(14);        // a contour's empty fields, from dx to mean_grey
-  check(text.startsWith("# sem-measurement-tool measurements 1\n") && text.includes("\n# unit: um\n") && rows.length === 7
-    && rows[0] === "name,kind,value,unit,dx,dy,direction_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px,width,mean_grey," +
-      "closed,vertices,area,bbox_width,bbox_height"
-    && rows[1] === `rib width,ruler,0.600000,um,0.600000,0.000000,0.000,100.000,50.000,400.000,50.000${",".repeat(11)}`
-    && rows[2].startsWith('"foot, left",angle,90.000,deg,,,,0.000,100.000,')
-    && rows[3].startsWith(`sidewall,line-angle,${slant},deg,,,,`)
-    && rows[4] === "profile 1,profile,0.600000,um,0.600000,0.000000,0.000,100.000,60.000,400.000,60.000,,,,,0.010000,1234.5,,,,,"
+  const gap = ",".repeat(15);        // a contour's empty fields, from dx to mean_grey
+  // two lines that show their angle: the file has their gap as well, and the angle after the gap's direction
+  const sidewall = rows[3].split(",");
+  const g = api.measureGap(measurements[2].points, frame);
+  check(text.startsWith("# sem-measurement-tool measurements 2\n") && text.includes("\n# unit: um\n") && rows.length === 7
+    && rows[0] === "name,kind,value,unit,dx,dy,direction_deg,angle_deg,x1_px,y1_px,x2_px,y2_px,x3_px,y3_px,x4_px,y4_px," +
+      "width,mean_grey,closed,vertices,area,bbox_width,bbox_height"
+    && rows[1] === `rib width,ruler,0.600000,um,0.600000,0.000000,0.000,,100.000,50.000,400.000,50.000${",".repeat(11)}`
+    && rows[2].startsWith('"foot, left",angle,90.000,deg,,,,,0.000,100.000,')
+    && sidewall.length === 23 && sidewall[1] === "lines" && Math.abs(Number(sidewall[2]) - g.gap) < 1e-6
+    && sidewall[3] === "um" && Math.abs(Number(sidewall[6]) - g.directionDeg) < 1e-3 && sidewall[7] === slant
+    && sidewall.slice(8, 16).join() === "0.000,0.000,10.000,0.000,0.000,0.000,10.000,-10.000"
+    && rows[4] === "profile 1,profile,0.600000,um,0.600000,0.000000,0.000,,100.000,60.000,400.000,60.000,,,,,0.010000,1234.5,,,,,"
     && rows[5] === `rib,contour,${(2 * (0.6 + h)).toFixed(6)},um${gap}1,4,${(0.6 * h).toFixed(6)},0.600000,${h.toFixed(6)}`
     && rows[6] === `slab,contour,1.000000,um${gap}0,2,,1.000000,0.000000`,
-  `measurements file: a ruler of 0.6 um, a right angle, two lines at atan k = ${slant} deg, a profile of 0.6 um with ` +
-    "its band of 5 view pixels (0.01 um) and its mean grey, a closed contour (perimeter, vertices, area, bounding box) " +
-    "and an open one (its length, no area)");
+  `measurements file: a ruler of 0.6 um, a right angle, two lines at atan k = ${slant} deg (with their gap, though ` +
+    "they show the angle), a profile of 0.6 um with its band of 5 view pixels (0.01 um) and its mean grey, a closed " +
+    "contour (perimeter, vertices, area, bounding box) and an open one (its length, no area)");
+}
+
+/** The kinds read back from the session file, and what two lines show, in the file and read back; nothing of it for a ruler. */
+function kindsKept(text, ms) {
+  return ms.map((m) => m.kind).join() === "contour,ruler,contour,angle,lines,profile" && ms[4].show === "angle"
+    && ms[1].show === undefined && text.includes('"show": "angle"');
 }
 
 /** A stroke's settings in the session file, and the defaults when it has none (an older file). */
@@ -842,7 +853,7 @@ function checkSession() {
       { name: "ruler 1", kind: "ruler", color: 1, points: [[1, 2], [3, 4]] },
       { name: 'slab "top", left', kind: "contour", color: 9, closed: false, points: [[100, 965], [2972, 965]] },
       { name: "angle 1", kind: "angle", points: [[1, 2], [3, 4], [5, 7]] },
-      { name: "line angle 1", kind: "line-angle", points: [[0, 0], [1, 0], [0, 1], [1, 2]] },
+      { name: "lines 1", kind: "lines", show: "angle", points: [[0, 0], [1, 0], [0, 1], [1, 2]] },
       { name: "profile 1", kind: "profile", points: [[10, 20], [30, 25]], width: 7.25, markers: [[14.123456, 21], [26, 24]] }],
     selected: 2,
     display: [1520, 61200.5],
@@ -860,7 +871,7 @@ function checkSession() {
   const squaredByDefault = olderSnap.squareProfiles === true;
   checkSessionMarkers(text, ms, olderSnap);
   check(JSON.stringify(back.frame) === JSON.stringify(session.frame) && JSON.stringify(back.snap) === JSON.stringify(session.snap)
-    && ms.map((m) => m.kind).join() === "contour,ruler,contour,angle,line-angle,profile"
+    && kindsKept(text, ms)
     && worstOf(ms[0].points[0], [933.7961, 853.6115]) === 0 && ms[2].name === 'slab "top", left' && ms[0].closed && !ms[2].closed
     && JSON.stringify([ms[0].layer, ms[2].layer]) === "[[2,5],[1,0]]" && ms[1].closed === undefined
     && ms[5].width === 7.25 && ms[1].width === undefined && text.includes('"width_px": 7.25')
@@ -873,7 +884,8 @@ function checkSession() {
   "session round trip: frame, snap settings (squaring profiles: absent, on; strokes' points: absent, the steepest " +
     "slope, 50 %, 5 px), the measurements in " +
     "their order with contours among them (points to 1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band " +
-    "width, colours (absent: the place in the list), the selected one (none: -1), display levels (absent: Auto)");
+    "width, what two lines show, colours (absent: the place in the list), the selected one (none: -1), display levels " +
+    "(absent: Auto)");
   const good = JSON.parse(text);
   const bad = [
     "{ not json",
@@ -895,6 +907,8 @@ function checkSession() {
     { ...good, snap: { ...good.snap, edge_level_pct: 99.5 } },
     { ...good, snap: { ...good.snap, edge_level_pct: 0.5 } },
     { ...good, snap: { ...good.snap, point_spacing_px: 0.1 } },
+    { ...good, measurements: [{ name: "l", kind: "lines", show: "width", points_px: [[0, 0], [1, 0], [0, 1], [1, 1]] }] },
+    { ...good, measurements: [{ name: "g", kind: "gap", points_px: [[0, 0], [1, 0], [0, 1]] }] },
   ];
   let refused = 0;
   for (const b of bad) {
@@ -907,7 +921,7 @@ function checkSession() {
   check(refused === bad.length, `bad session files are refused (${refused} of ${bad.length}: not JSON, format, version, ` +
     "no list, point count, kind, a name used twice across kinds, correction, number, GDS layer, display levels, band width, " +
     "colour, three markers, a marker not a pair of numbers, a stroke's criterion, its level above 99 % or below 1 %, " +
-    "its spacing below 0.5 px)");
+    "its spacing below 0.5 px, two lines that show neither gap, angle nor both, an earlier file's gap of three points)");
 }
 
 /**
@@ -1550,15 +1564,17 @@ function gapCases() {
 }
 
 /**
- * A gap in the files: its row of the measurements file, for two rows of a 52 deg cross-section 100 rows apart with
- * 2 nm pixels, stretched by k; and a session that keeps a gap of four points and refuses one of three.
- * @returns {{rowRight: boolean, kept: boolean, refused: boolean}}
+ * Two lines in the files: their row of the measurements file, the gap and the angle, for two rows of a 52 deg
+ * cross-section 100 rows apart with 2 nm pixels, stretched by k; a session that keeps them, four points and what they
+ * show, and refuses three points; and an earlier file's gap and angle between two lines, read as two lines that show
+ * the gap and the angle.
+ * @returns {{rowRight: boolean, kept: boolean, refused: boolean, earlier: boolean}}
  */
 function gapFiles() {
   const frame = { pixelNm: [2, 2], tiltDeg: 52, correction: "cross-section", customFactor: 1, axisDeg: 0, rotationDeg: 0,
     originPx: [0, 0] };
   const k = api.correctionFactor(frame);
-  const ms = { name: "gap 1", kind: "gap", color: 2, points: [[100, 50], [400, 50], [150, 150], [350, 150]] };
+  const ms = { name: "gap 1", kind: "lines", show: "gap", color: 2, points: [[100, 50], [400, 50], [150, 150], [350, 150]] };
   const row = api.formatMeasurementFile(IMAGE, frame, [ms]).split("\n").filter((line) => line !== "" && !line.startsWith("#"))[1];
   const session = { image: IMAGE, frame, snap: { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3,
     squareProfiles: true, snapMarkers: true }, measurements: [ms], selected: 0, display: null };
@@ -1572,10 +1588,16 @@ function gapFiles() {
   } catch {
     refused = true;
   }
+  const earlier = JSON.parse(text);
+  earlier.measurements = [{ name: "gap 1", kind: "gap", color: 2, points_px: ms.points },
+    { name: "line angle 1", kind: "line-angle", color: 3, points_px: ms.points }];
+  const read = api.parseSession(JSON.stringify(earlier)).measurements;
   return {
-    rowRight: row === `gap 1,gap,${(0.2 * k).toFixed(6)},um,0.000000,${(-0.2 * k).toFixed(6)},-90.000,100.000,50.000,` +
-      "400.000,50.000,150.000,150.000,350.000,150.000,,,,,,,",
-    kept: back.kind === "gap" && JSON.stringify(back.points) === JSON.stringify(ms.points), refused,
+    rowRight: row === `gap 1,lines,${(0.2 * k).toFixed(6)},um,0.000000,${(-0.2 * k).toFixed(6)},-90.000,0.000,100.000,` +
+      "50.000,400.000,50.000,150.000,150.000,350.000,150.000,,,,,,,",
+    kept: back.kind === "lines" && back.show === "gap" && JSON.stringify(back.points) === JSON.stringify(ms.points), refused,
+    earlier: read.map((m) => `${m.kind} ${m.show}`).join() === "lines gap,lines angle"
+      && JSON.stringify(read[1].points) === JSON.stringify(ms.points),
   };
 }
 
@@ -1608,12 +1630,13 @@ function checkGap() {
   const cases = gapCases();
   const { g, turned, t, expected } = cases;
   const files = gapFiles();
-  check(gapRight(cases) && files.rowRight && files.kept && files.refused,
+  check(gapRight(cases) && files.rowRight && files.kept && files.refused && files.earlier,
     `gap between two lines (G17) in a tilted, turned frame: parallel lines 0.7 um apart give ${g?.gap.toFixed(12)}, ` +
     `direction ${g?.directionDeg.toFixed(6)} deg, feet on the lines; turned 33 deg, ${turned?.gap.toFixed(12)} and ` +
     `${turned?.directionDeg.toFixed(6)} deg; lines 2 deg apart, ${t?.gap.toFixed(9)} um where ${expected.toFixed(9)} ` +
     `is expected, ${t?.angleDeg.toFixed(9)} deg from parallel; the lines swapped, the gap reversed; a line that is a ` +
-    "point, none; the measurements file's row, the session's four points kept and three refused");
+    "point, none; the measurements file's row with the gap and the angle, the session's four points and what they " +
+    "show kept and three refused, an earlier file's gap and angle between lines read as two lines");
 }
 
 /** The angle between two lines, whatever their sense: 0 to 90 degrees, by atan2 to keep small angles exact (1.10). */

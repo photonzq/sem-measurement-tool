@@ -4,7 +4,7 @@
    formatLineFitFile,
    measureRuler, measureAngle, measureLineAngle, measureGap, levelRotation, axisFromLine, lineIntersection,
    measurementMatrix,
-   viewStepToStored, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, MEASURE_POINTS,
+   viewStepToStored, formatPolygonFile, parsePolygonFile, frameFromMeta, formatMeasurementFile, MEASURE_POINTS, LINES_SHOW,
    formatSession, parseSession, formatGds, gdsName, moveSelected, dropSelected, makeFirst, reverseContour,
    selectionRange, valueRange, fixedSpan, fullScale, histogramOf, autoLevels, greyMap, sliderBrightness, sliderContrast,
    centreOfBrightness, widthOfContrast, profileGeometry, sampleProfile, profileCrossings, widthHandle,
@@ -56,26 +56,28 @@ const ARC_PX = 22;                   // radius of the angle arcs
 const HISTORY = 500;
 const LABEL_FONT = "12px Bahnschrift, Arial, 'Helvetica Neue', Helvetica, system-ui, sans-serif";   // as the page's
 const FILE_FONT = "12px ui-monospace, Consolas, monospace";      // file names, as on the page (.file)
-const LABEL_HEIGHT = 18;             // of the dark chip a label sits on, CSS pixels
+const LABEL_HEIGHT = 16;             // of the dark chip a label sits on, CSS pixels
+const LABEL_PAD = 6;                 // the chip's width beyond its text, half on either side, CSS pixels
+const LINE_PX = 1.5;                 // the lines of a measurement, selected or not, CSS pixels at any zoom
+const OUTLINE_PX = 0.5;              // the outline of a line, in the grey that sets its colour off, past each side
+const HALO_PX = 1;                   // the light halo of a selected line, past each side of its outline
 
 /** "pan" is no tool: the mouse, one finger or two only move and zoom the view. @typedef {"pan"|MeasureKind} Tool */
 /** @type {Tool[]} */
-const TOOLS = ["pan", "contour", "ruler", "angle", "line-angle", "profile", "gap"];
+const TOOLS = ["pan", "contour", "ruler", "angle", "lines", "profile"];
 /** @type {Record<Tool, string>} */
 const TOOL_HINTS = {
-  pan: "No tool: drag to pan, wheel to zoom.  Choose a tool, or press 1 to 6; click it again, or press 0, to come back.",
+  pan: "No tool: drag to pan, wheel to zoom.  Choose a tool, or press 1 to 5; click it again, or press 0, to come back.",
   contour: "Click: add a vertex (N: done); Ctrl+click inserts one.  Drag along an edge: points on it (Ctrl: in place).",
   ruler: "Click both ends of a distance.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
-  "line-angle": "Click two points on one line, then two on the other.",
-  gap: "Click two points on one edge, then two on the other.",
+  lines: "Click two points on one line, then two on the other.",
   profile: "Click both ends; a magnet holds it square to the edge (Alt, or Snap off: not).  Drag an end, the band's square, " +
     "A or B.",
 };
 /** @type {Record<MeasureKind, string>} */
-const MEASURE_NAMES = {
-  contour: "contour", ruler: "ruler", angle: "angle", "line-angle": "line angle", gap: "gap", profile: "profile",
-};
+const MEASURE_NAMES = { contour: "contour", ruler: "ruler", angle: "angle", lines: "lines", profile: "profile" };
+const LINES_SHOW_KEY = "sem-measurement-tool lines show";   // what new two lines show (localStorage)
 const PLOT_COLOR = "#385c9e";        // the profile's mean in its window
 const MARKER_COLOR = "#272727";      // the markers A and B on the profile plot
 const TAP_PX = 10;                   // a touch that moves less than this is a tap
@@ -203,6 +205,9 @@ const app = {
   stroke: null,
   paintTouch: false,                 // touch: with the contour tool, a finger drawn on the view paints along an edge
   profileWidth: 1,                   // band width of new profiles, pixel widths of the corrected view
+  /** @type {LinesShow} what new two lines show: the last choice */
+  linesShow: "both",
+  exporting: false,                  // drawing measurements for a download: no hover marks, points at their mouse size
   /** @type {number|null} where the cursor is on the profile plot: 0 at the start of the line, 1 at its end */
   profileCursor: null,
   /** @type {{x: number, y: number}|null} */
@@ -267,7 +272,8 @@ function buttonEl(id) {
 }
 
 const canvas = /** @type {HTMLCanvasElement} */ (el("view"));
-const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
+/** Where the overlay draws: the view, or for a while the canvas of a download (drawMeasurementsOn). */
+let ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
 
 /**
  * A positive number from an input, or ``fallback``.
@@ -729,7 +735,7 @@ function hitPx() {
 
 /** @returns {number} how much larger points and handles are drawn after touch input */
 function handleScale() {
-  return app.lastPointer === "touch" ? 1.6 : 1;
+  return app.lastPointer === "touch" && !app.exporting ? 1.6 : 1;
 }
 
 // ------------------------------------------------------------------------- view
@@ -740,19 +746,42 @@ function fit() {
     return;
   }
   const rect = canvas.getBoundingClientRect();
-  const v = viewMatrix(app.frame);
-  /** @type {Mat2} */
-  const fv = [v[0], v[1], -v[2], -v[3]];          // F V: the view at zoom 1
-  const corners = [[0, 0], [image.width, 0], [0, image.height], [image.width, image.height]]
-    .map(([x, y]) => matApply(fv, x, y));
-  const xs = corners.map((p) => p[0]);
-  const ys = corners.map((p) => p[1]);
-  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-  const s = Math.min(rect.width / (x1 - x0), rect.height / (y1 - y0)) * 0.98;
-  app.view.s = Number.isFinite(s) && s > 0 ? s : 1;
+  const [x0, x1, y0, y1] = pictureBox(image, viewAtOne());
+  app.view.s = fitZoom(image);
   app.view.tx = (rect.width - app.view.s * (x0 + x1)) / 2;
   app.view.ty = (rect.height - app.view.s * (y0 + y1)) / 2;
   render();
+}
+
+/** @returns {Mat2} F V: the view at zoom 1, from canvas units (stored pixel edges at integers) to CSS pixels */
+function viewAtOne() {
+  const v = viewMatrix(app.frame);
+  return [v[0], v[1], -v[2], -v[3]];
+}
+
+/**
+ * Where the picture's corners go under ``m``: their least and greatest x, then y.
+ * @param {SEMImage} image
+ * @param {Mat2} m
+ * @returns {[number, number, number, number]}
+ */
+function pictureBox(image, m) {
+  const corners = [[0, 0], [image.width, 0], [0, image.height], [image.width, image.height]]
+    .map(([x, y]) => matApply(m, x, y));
+  const xs = corners.map((p) => p[0]);
+  const ys = corners.map((p) => p[1]);
+  return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+}
+
+/**
+ * @param {SEMImage} image
+ * @returns {number} the zoom at which the whole picture fits the view, with a margin
+ */
+function fitZoom(image) {
+  const rect = canvas.getBoundingClientRect();
+  const [x0, x1, y0, y1] = pictureBox(image, viewAtOne());
+  const s = Math.min(rect.width / (x1 - x0), rect.height / (y1 - y0)) * 0.98;
+  return Number.isFinite(s) && s > 0 ? s : 1;
 }
 
 /**
@@ -1046,24 +1075,26 @@ function casingOf(color) {
 
 /**
  * Stroke a path of the overlay: a light halo under a selected one, the casing of its colour, then
- * the colour.
+ * the colour.  A line is LINE_PX wide unless ``width`` says otherwise, selected or not: a selected
+ * one is told by its halo, HALO_PX past each side of the casing (``halo`` sets another), and by its
+ * white points.
  * @param {Path2D} path
  * @param {string} color
- * @param {{selected?: boolean, dash?: number[], width?: number}} [how]
+ * @param {{selected?: boolean, dash?: number[], width?: number, halo?: number}} [how]
  */
 function strokeOverlay(path, color, how = {}) {
-  const width = how.width ?? (how.selected ? 2.6 : 1.6);
+  const width = how.width ?? LINE_PX;
   ctx.save();
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   if (how.selected) {
     ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
-    ctx.lineWidth = width + 8;
+    ctx.lineWidth = width + 2 * (OUTLINE_PX + (how.halo ?? HALO_PX));
     ctx.stroke(path);
   }
   ctx.setLineDash(how.dash ?? []);
   ctx.strokeStyle = casingOf(color);
-  ctx.lineWidth = width + 2;         // a pixel of outline on either side
+  ctx.lineWidth = width + 2 * OUTLINE_PX;
   ctx.stroke(path);
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
@@ -1106,13 +1137,13 @@ function drawPoints(pts, color, selected, first = 1) {
 function drawLabel(text, at, color, selected = false, apart = true) {
   ctx.save();
   ctx.font = LABEL_FONT;
-  const w = ctx.measureText(text).width + 10;
+  const w = ctx.measureText(text).width + LABEL_PAD;
   const [x, y] = apart ? clearSpot(at, w, LABEL_HEIGHT) : at;
   ctx.beginPath();
-  ctx.roundRect(x - w / 2, y - LABEL_HEIGHT / 2, w, LABEL_HEIGHT, 4);
+  ctx.roundRect(x - w / 2, y - LABEL_HEIGHT / 2, w, LABEL_HEIGHT, 3);
   ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
   ctx.fill();
-  ctx.lineWidth = selected ? 2.2 : 1.4;
+  ctx.lineWidth = selected ? 1.6 : 1;
   ctx.strokeStyle = color;
   ctx.stroke();
   ctx.fillStyle = "#ffffff";
@@ -1174,7 +1205,7 @@ function addArc(path, centre, u, v) {
 }
 
 /**
- * A contour in its colour: when selected thicker, with a halo and white vertices; the first vertex
+ * A contour in its colour: when selected, with a halo and white vertices; the first vertex
  * of the one edited larger.
  * @param {Contour} c
  * @param {string} color
@@ -1198,7 +1229,9 @@ function drawContour(c, color, how, toScreen) {
 }
 
 /**
- * The value of a measurement as its label shows it; "?" when the correction is undefined.
+ * The value of a measurement as its label shows it; "?" when the correction is undefined.  Two
+ * lines show their gap, their angle, or both (in one label, as when no arc gives the angle a place
+ * of its own: addLines).
  * @param {FixedMeasurement} ms
  * @returns {string}
  */
@@ -1207,13 +1240,30 @@ function measurementLabel(ms) {
     const r = measureRuler(ms.points, app.frame);
     return r === null ? "?" : `${lengthText(r.length)} ${unitText(r.unit)}`;
   }
-  if (ms.kind === "gap") {
-    const g = measureGap(ms.points, app.frame);
-    return g === null ? "?" : `${lengthText(g.gap)} ${unitText(g.unit)}`;
+  if (ms.kind === "lines") {
+    const shown = ms.show ?? "both";
+    return shown === "both" ? `${gapLabel(ms)}, ${angleLabel(ms)}` : shown === "gap" ? gapLabel(ms) : angleLabel(ms);
   }
-  const angle = ms.kind === "angle" ? measureAngle(ms.points, app.frame)
-    : (measureLineAngle(ms.points, app.frame)?.angleDeg ?? null);
+  const angle = measureAngle(ms.points, app.frame);
   return angle === null ? "?" : `${angle.toFixed(2)}°`;
+}
+
+/**
+ * @param {FixedMeasurement} ms     two lines
+ * @returns {string} their gap (G17) as a label shows it; "?" when it has none
+ */
+function gapLabel(ms) {
+  const g = measureGap(ms.points, app.frame);
+  return g === null ? "?" : `${lengthText(g.gap)} ${unitText(g.unit)}`;
+}
+
+/**
+ * @param {FixedMeasurement} ms     two lines
+ * @returns {string} the angle from line 1 to line 2, as clicked, as a label shows it; "?" when the correction is undefined
+ */
+function angleLabel(ms) {
+  const a = measureLineAngle(ms.points, app.frame);
+  return a === null ? "?" : `${a.angleDeg.toFixed(2)}°`;
 }
 
 /**
@@ -1238,9 +1288,42 @@ function addRuler(path, pts) {
 }
 
 /**
- * Two lines, added to ``solid``, and their extensions to where they cross, added to ``dashed``,
- * with the arc between their directions there.  Returns where the label goes: beyond the arc, or
- * among the points when the lines cross far away or not at all; null when the arc has no bisector.
+ * Two lines as clicked, added to ``solid``, with what they show (``show``, both when absent): the
+ * gap's normal (addGap), the crossing and its arc (addCrossing), or both.  Returns their labels and
+ * where they go: the gap's beside its normal, the angle's beyond its arc, or among the points when
+ * the lines cross far away or not at all; with both and no arc, gap and angle in one label beside the
+ * normal, which keeps the angle's label off the middle of near-parallel lines.
+ * @param {Path2D} solid
+ * @param {Path2D} dashed
+ * @param {FixedMeasurement} ms     two lines with their 4 points
+ * @param {Point[]} pts      the same on screen
+ * @param {(p: Point) => Point} toScreen
+ * @returns {Array<[string, Point|null]>}
+ */
+function addLines(solid, dashed, ms, pts, toScreen) {
+  addSegment(solid, pts[0], pts[1]);
+  addSegment(solid, pts[2], pts[3]);
+  const shown = ms.show ?? "both";
+  const [p1, p2, p3, p4] = ms.points;
+  const arc = shown === "gap" ? null : addCrossing(solid, dashed, pts, lineIntersection(p1, p2, p3, p4), toScreen);
+  if (shown === "angle") {
+    const among = /** @type {Point} */ (pts.reduce((acc, p) => [acc[0] + p[0] / 4, acc[1] + p[1] / 4], [0, 0]));
+    return [[angleLabel(ms), arc ?? among]];
+  }
+  const text = shown === "both" && arc === null ? `${gapLabel(ms)}, ${angleLabel(ms)}` : gapLabel(ms);
+  /** @type {Array<[string, Point|null]>} */
+  const labels = [[text, addGap(solid, dashed, ms.points, pts, toScreen, text)]];
+  if (shown === "both" && arc !== null) {
+    labels.push([angleLabel(ms), arc]);
+  }
+  return labels;
+}
+
+/**
+ * Where two lines cross, when that is near them: their extensions to it, added to ``dashed``, and
+ * the arc between their directions there, added to ``solid``.  Returns where the angle's label goes,
+ * beyond the arc; null when the lines cross far away (beyond 20 times their span) or not at all, or
+ * when the arc has no bisector.
  * @param {Path2D} solid
  * @param {Path2D} dashed
  * @param {Point[]} pts      screen, 4 points
@@ -1248,36 +1331,33 @@ function addRuler(path, pts) {
  * @param {(p: Point) => Point} toScreen
  * @returns {Point|null}
  */
-function addLineAngle(solid, dashed, pts, crossing, toScreen) {
-  addSegment(solid, pts[0], pts[1]);
-  addSegment(solid, pts[2], pts[3]);
+function addCrossing(solid, dashed, pts, crossing, toScreen) {
   const span = Math.max(...pts.map((p) => Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1])), 1);
   const c = crossing === null ? null : toScreen(crossing);
-  if (c !== null && Math.hypot(c[0] - pts[0][0], c[1] - pts[0][1]) < 20 * span) {
-    for (const [p, q] of [[pts[0], pts[1]], [pts[2], pts[3]]]) {
-      addSegment(dashed, Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(q[0] - c[0], q[1] - c[1]) ? p : q, c);
-    }
-    const bisector = addArc(solid, c, [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]], [pts[3][0] - pts[2][0], pts[3][1] - pts[2][1]]);
-    return bisector === null ? null : [c[0] + (ARC_PX + 16) * bisector[0], c[1] + (ARC_PX + 16) * bisector[1]];
+  if (c === null || Math.hypot(c[0] - pts[0][0], c[1] - pts[0][1]) >= 20 * span) {
+    return null;
   }
-  return /** @type {Point} */ (pts.reduce((acc, p) => [acc[0] + p[0] / 4, acc[1] + p[1] / 4], [0, 0]));
+  for (const [p, q] of [[pts[0], pts[1]], [pts[2], pts[3]]]) {
+    addSegment(dashed, Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(q[0] - c[0], q[1] - c[1]) ? p : q, c);
+  }
+  const bisector = addArc(solid, c, [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]], [pts[3][0] - pts[2][0], pts[3][1] - pts[2][1]]);
+  return bisector === null ? null : [c[0] + (ARC_PX + 16) * bisector[0], c[1] + (ARC_PX + 16) * bisector[1]];
 }
 
 /**
- * The gap between two lines (G17), added to the paths: the lines as clicked (``solid``), the common
- * normal between them with arrow heads, and dashed out from each line's nearer end to where the
- * normal meets it when that is beyond the points.  Returns where the label goes: beside the middle
- * of the normal; null when the gap has no measures (the correction undefined, or a line a point).
+ * The gap between two lines (G17), added to the paths: the common normal between them with arrow
+ * heads (``solid``), and dashed out from each line's nearer end to where the normal meets it when
+ * that is beyond the points.  Returns where the label ``text`` goes: beside the middle of the normal,
+ * clear of it; null when the gap has no measures (the correction undefined, or a line a point).
  * @param {Path2D} solid
  * @param {Path2D} dashed
  * @param {Point[]} stored    4 points
  * @param {Point[]} pts       the same on screen
  * @param {(p: Point) => Point} toScreen
+ * @param {string} text       the label
  * @returns {Point|null}
  */
-function addGap(solid, dashed, stored, pts, toScreen) {
-  addSegment(solid, pts[0], pts[1]);
-  addSegment(solid, pts[2], pts[3]);
+function addGap(solid, dashed, stored, pts, toScreen, text) {
   const g = measureGap(stored, app.frame);
   if (g === null) {
     return null;
@@ -1312,7 +1392,7 @@ function addGap(solid, dashed, stored, pts, toScreen) {
   // as far out as the label's box reaches that way, half its width or height, and a margin: clear of the arrow
   ctx.save();
   ctx.font = LABEL_FONT;
-  const half = (ctx.measureText(`${lengthText(g.gap)} ${unitText(g.unit)}`).width + 10) / 2;
+  const half = (ctx.measureText(text).width + LABEL_PAD) / 2;
   ctx.restore();
   const reach = half * Math.abs(side[0]) + (LABEL_HEIGHT / 2) * Math.abs(side[1]) + 6;
   return [(f1[0] + f2[0]) / 2 + reach * side[0], (f1[1] + f2[1]) / 2 + reach * side[1]];
@@ -1356,7 +1436,7 @@ function drawProfileBand(ms, pts, toScreen, color, label) {
   /** @type {Point} away from the handle; across the line when the band has no width */
   const u = reach > 1e-6 ? [(mx - hx) / reach, (my - hy) / reach] : [(pts[1][1] - pts[0][1]) / line, -(pts[1][0] - pts[0][0]) / line];
   ctx.font = LABEL_FONT;
-  const r = reach + 8 + (ctx.measureText(label).width / 2 + 5) * Math.abs(u[0]) + (LABEL_HEIGHT / 2) * Math.abs(u[1]);
+  const r = reach + 8 + (ctx.measureText(label).width / 2 + LABEL_PAD / 2) * Math.abs(u[0]) + (LABEL_HEIGHT / 2) * Math.abs(u[1]);
   return [mx + r * u[0], my + r * u[1]];
 }
 
@@ -1450,7 +1530,7 @@ function drawProfileMarkers(ms, toScreen, color) {
   });
   strokeOverlay(plain, color, { width: 1 });
   if (lit >= 0) {
-    strokeOverlay(halo, color, { width: 1, selected: true });
+    strokeOverlay(halo, color, { width: 1, selected: true, halo: 3.5 });   // a hover cue: wider than a selection's
   }
   ctx.save();
   ctx.font = `600 ${LABEL_FONT}`;
@@ -1470,7 +1550,7 @@ function drawProfileMarkers(ms, toScreen, color) {
 
 /**
  * A measurement other than a contour, complete or being placed (``pending``, dashed), possibly with
- * fewer points than its kind: selected, thicker with a halo and white points; the profile edited
+ * fewer points than its kind: selected, with a halo and white points; the profile edited
  * (``handle``) with the square that sets its width.
  * @param {FixedMeasurement} ms
  * @param {string} color
@@ -1479,11 +1559,15 @@ function drawProfileMarkers(ms, toScreen, color) {
  */
 function drawMeasurement(ms, color, toScreen, how) {
   const pts = ms.points.map(toScreen);
-  const label = ms.points.length === MEASURE_POINTS[ms.kind] ? measurementLabel(ms) : null;
+  const complete = ms.points.length === MEASURE_POINTS[ms.kind];
+  const lines = complete && ms.kind === "lines";
+  const label = complete && !lines ? measurementLabel(ms) : null;
   const selected = how.selected === true;
   const solid = new Path2D();
   const dashed = new Path2D();
-  const labelAt = addShape(ms, { solid, dashed }, pts, toScreen, () => drawProfileBand(ms, pts, toScreen, color, label));
+  /** @type {Array<[string|null, Point|null]>} */
+  const labels = lines ? addLines(solid, dashed, ms, pts, toScreen)
+    : [[label, addShape(ms, solid, pts, () => drawProfileBand(ms, pts, toScreen, color, label))]];
   strokeOverlay(solid, color, { selected, dash: how.pending ? [5, 4] : [] });
   strokeOverlay(dashed, color, { dash: [3, 4], width: 1.2 });
   if (ms.kind === "profile" && !how.pending && pts.length >= 2) {
@@ -1492,24 +1576,25 @@ function drawMeasurement(ms, color, toScreen, how) {
   if (ms.kind === "profile" && how.handle && !how.pending && pts.length >= 2) {
     drawWidthHandle(ms, toScreen, color);
   }
-  if (label !== null && labelAt !== null) {
-    drawLabel(label, labelAt, color, selected);
+  for (const [text, at] of labels) {
+    if (text !== null && at !== null) {
+      drawLabel(text, at, color, selected);
+    }
   }
   drawPoints(pts, color, selected);
 }
 
 /**
- * A measurement's shape as far as its points go, added to the paths; returns where its label goes,
- * or null.  ``band`` draws a profile's band and tells where a profile's label goes.
+ * A measurement's shape as far as its points go, added to ``solid``; returns where its label goes,
+ * or null.  ``band`` draws a profile's band and tells where a profile's label goes.  Two lines with
+ * their four points are drawn by addLines.
  * @param {FixedMeasurement} ms
- * @param {{solid: Path2D, dashed: Path2D}} paths
+ * @param {Path2D} solid
  * @param {Point[]} pts      screen
- * @param {(p: Point) => Point} toScreen
  * @param {() => Point|null} band
  * @returns {Point|null}
  */
-function addShape(ms, paths, pts, toScreen, band) {
-  const { solid, dashed } = paths;
+function addShape(ms, solid, pts, band) {
   if (pts.length < 2) {
     return null;
   }
@@ -1531,12 +1616,8 @@ function addShape(ms, paths, pts, toScreen, band) {
     const bisector = addArc(solid, v, [pts[0][0] - v[0], pts[0][1] - v[1]], [pts[2][0] - v[0], pts[2][1] - v[1]]);
     return bisector === null ? null : [v[0] + (ARC_PX + 16) * bisector[0], v[1] + (ARC_PX + 16) * bisector[1]];
   }
-  if (pts.length < 4) {                              // two lines, the first so far
-    addSegment(solid, pts[0], pts[1]);
-    return null;
-  }
-  return ms.kind === "gap" ? addGap(solid, dashed, ms.points, pts, toScreen)
-    : addLineAngle(solid, dashed, pts, lineIntersection(ms.points[0], ms.points[1], ms.points[2], ms.points[3]), toScreen);
+  addSegment(solid, pts[0], pts[1]);                 // two lines being placed, the first so far (addLines: all four points)
+  return null;
 }
 
 /**
@@ -1551,7 +1632,8 @@ function drawPending(toScreen) {
   }
   const tip = p.magnet?.points[1] ?? app.preview ?? app.cursor;
   /** @type {FixedMeasurement} */
-  const ms = { name: "", kind: p.kind, color: nextColorIndex(), points: tip === null ? p.points : [...p.points, tip] };
+  const ms = { name: "", kind: p.kind, color: nextColorIndex(), points: tip === null ? p.points : [...p.points, tip],
+    ...(p.kind === "lines" ? { show: app.linesShow } : {}) };      // two lines show as they will
   drawMeasurement(ms, colorOf(ms), toScreen, { pending: true });
 }
 
@@ -2081,7 +2163,68 @@ function setTool(tool) {
   }
   canvas.classList.toggle("navigate", tool === "pan");
   el("tool-hint").textContent = TOOL_HINTS[tool];
+  refreshLinesShow();
   render();
+}
+
+/**
+ * What two lines show: their gap, the angle between them, or both.  It sets the selected ones, as
+ * one edit, and new ones from now on; the browser keeps the choice.
+ * @param {LinesShow} choice
+ */
+function setLinesShow(choice) {
+  app.linesShow = choice;
+  try {
+    localStorage.setItem(LINES_SHOW_KEY, choice);
+  } catch {
+    // no storage: the choice lasts as long as the page
+  }
+  const changed = selectedLines().filter((ms) => (ms.show ?? "both") !== choice);
+  if (changed.length > 0) {
+    pushHistory();
+    for (const ms of changed) {
+      ms.show = choice;
+    }
+    refreshMeasurements();
+  } else {
+    refreshLinesShow();
+  }
+  render();
+}
+
+/** Take up what new two lines show, as the browser kept it. */
+function loadLinesShow() {
+  try {
+    const saved = localStorage.getItem(LINES_SHOW_KEY);
+    app.linesShow = LINES_SHOW.find((s) => s === saved) ?? app.linesShow;
+  } catch {
+    // no storage (blocked, or a private window): both
+  }
+}
+
+/** @returns {FixedMeasurement[]} the two lines among the selected measurements */
+function selectedLines() {
+  return app.checked.flatMap((i) => {
+    const ms = app.measurements[i];
+    return ms !== undefined && ms.kind === "lines" ? [ms] : [];
+  });
+}
+
+/**
+ * The switch of what two lines show: there while their tool is in hand or two lines are selected,
+ * and pressed at what the one edited shows (else the first selected, else new ones).
+ */
+function refreshLinesShow() {
+  const chosen = selectedLines();
+  el("lines-show").hidden = app.tool !== "lines" && chosen.length === 0;
+  const edited = app.measurements[app.selected];
+  const by = edited !== undefined && edited.kind === "lines" ? edited : chosen[0];
+  const shown = by === undefined ? app.linesShow : by.show ?? "both";
+  for (const s of LINES_SHOW) {
+    const b = buttonEl(`show-${s}`);
+    b.classList.toggle("active", s === shown);
+    b.setAttribute("aria-pressed", String(s === shown));
+  }
 }
 
 /**
@@ -2122,6 +2265,9 @@ function placePoint(x, y, exact) {
     const ms = { name: newMeasureName(kind), kind, color: nextColorIndex(), points: pending.points };
     if (kind === "profile") {
       ms.width = app.profileWidth;
+    }
+    if (kind === "lines") {
+      ms.show = app.linesShow;
     }
     app.measurements.push(ms);
     selectOnly(app.measurements.length - 1);
@@ -2361,27 +2507,35 @@ function describeMeasurement(ms) {
       details: `${line.details}\nband ${lengthText(g.width)} ${u} wide${markers}`,
     };
   }
-  if (ms.kind === "gap") {
-    const g = measureGap(ms.points, app.frame);
-    if (g === null) {
-      return { brief: "?", details: "no measures: the correction factor is undefined, or a line is a point" };
-    }
-    const text = `${lengthText(g.gap)} ${unitText(g.unit)}`;
-    return { brief: text, details: `gap ${text}` };
-  }
   if (ms.kind === "angle") {
     const a = measureAngle(ms.points, app.frame);
     return a === null ? undefinedFactor : { brief: `${a.toFixed(2)}°`, details: `angle ${a.toFixed(3)}°` };
   }
+  return describeLines(ms);
+}
+
+/**
+ * The measures of two lines for the panel, as they show them: their gap (G17), the angle from line 1
+ * to line 2 as clicked with its supplement, or both.
+ * @param {FixedMeasurement} ms
+ * @returns {{brief: string, details: string}}
+ */
+function describeLines(ms) {
+  const g = measureGap(ms.points, app.frame);
   const la = measureLineAngle(ms.points, app.frame);
-  if (la === null) {
-    return undefinedFactor;
+  if (g === null || la === null) {
+    return { brief: "?", details: "no measures: the correction factor is undefined, or a line is a point" };
   }
-  return {
+  const length = `${lengthText(g.gap)} ${unitText(g.unit)}`;
+  const gap = { brief: length, details: `gap ${length}` };
+  const angle = {
     brief: `${la.angleDeg.toFixed(2)}°`,
     details: `angle ${la.angleDeg.toFixed(3)}° from line 1 to line 2, as clicked (supplement ` +
       `${(180 - la.angleDeg).toFixed(3)}°)`,
   };
+  const shown = ms.show ?? "both";
+  return shown === "gap" ? gap : shown === "angle" ? angle
+    : { brief: `${gap.brief}, ${angle.brief}`, details: `${gap.details}\n${angle.details}` };
 }
 
 /** The list, the details and the controls of the selection, and the windows that follow it. */
@@ -2396,6 +2550,7 @@ function refreshMeasurements() {
   const count = app.checked.length;
   el("measurement-details").textContent = selectionText(ms, count, n);
   el("ruler-controls").hidden = !(ms !== undefined && ms.kind === "ruler");   // they act on the ruler edited
+  refreshLinesShow();
   buttonEl("rename-measurement").disabled = count !== 1;
   buttonEl("delete-measurement").disabled = count === 0;
   buttonEl("download").disabled = n === 0;
@@ -3893,6 +4048,9 @@ function drawProfilePlot() {
  * @returns {{index: number, marker: number}|null}   index: the profile's in the list; marker: 0 for A, 1 for B
  */
 function activeMarker() {
+  if (app.exporting) {
+    return null;                     // a download draws no hover
+  }
   const d = app.drag;
   if (d !== null && d.kind === "marker") {
     return { index: d.index, marker: d.point };
@@ -4670,7 +4828,7 @@ function drawFlash() {
   }
   ctx.save();
   ctx.font = LABEL_FONT;
-  const half = ctx.measureText(f.text).width / 2 + 5;
+  const half = ctx.measureText(f.text).width / 2 + LABEL_PAD / 2;
   ctx.globalAlpha = Math.min(1, left / 500);
   drawLabel(f.text, [f.at[0] + 16 + half, f.at[1] - 20], f.done ? PREVIEW_COLOR : "#9a9a9a", true);
   ctx.restore();
@@ -4775,7 +4933,8 @@ function exportGds() {
 // contour alone: its vertices (a polygon file) or a GDS file.  A profile alone: its samples (a
 // profile file) or its plot (PNG).  Another measurement alone: its row of the measurements file.
 // Several: one row each, and the vertices and a GDS file of the contours among them.  Then the
-// same for all the measurements.
+// same for all the measurements.  Each with the image as well: the picture with them drawn over it
+// (PNG).
 
 /** @typedef {{label: string, act: () => void, disabled?: boolean}} MenuItem */
 
@@ -4800,7 +4959,8 @@ function downloadItems() {
     } else {
       items.push({ label: `${ms.name} (CSV)`, act: () => exportMeasurements([ms], `${base}.csv`) });
     }
-    items.push(null);
+    items.push({ label: `Image with ${ms.name} (PNG)`, disabled: app.image === null,
+      act: () => exportImagePng([ms], `${stem()}_with_${fileSafe(ms.name)}.png`) }, null);
   } else if (picked.length > 1) {
     items.push(...downloadsOfSeveral(picked, true), null);
   }
@@ -4809,8 +4969,8 @@ function downloadItems() {
 }
 
 /**
- * The downloads of several measurements, the selected ones or all: one row each, and the vertices
- * and a GDS file of the contours among them (those with vertices).
+ * The downloads of several measurements, the selected ones or all: one row each, the vertices and a
+ * GDS file of the contours among them (those with vertices), and the picture with them drawn over it.
  * @param {Measurement[]} list
  * @param {boolean} selected
  * @returns {MenuItem[]}
@@ -4824,6 +4984,9 @@ function downloadsOfSeveral(list, selected) {
       disabled: list.length === 0, act: () => exportMeasurements(list, `${stem()}_measurements.csv`) },
     { label: `${these}: vertices (CSV)`, disabled: k === 0, act: () => exportPolygons(contours, `${stem()}_polygons.csv`) },
     { label: `${these}: GDS...`, disabled: k === 0, act: () => openGdsDialog(contours, `${stem()}.gds`) },
+    { label: selected ? `Image with the ${list.length} selected (PNG)` : `Image with all ${list.length} measurements (PNG)`,
+      disabled: list.length === 0 || app.image === null,
+      act: () => exportImagePng(list, `${stem()}_with_${selected ? "selected" : "measurements"}.png`) },
   ];
 }
 
@@ -4869,6 +5032,109 @@ function closeDownloadMenu() {
   if (focused) {
     el("download").focus();          // the keyboard comes back to the button
   }
+}
+
+// ------------------------------------------------------------------------- the image with its measurements
+//
+// A PNG of the picture as the view shows it (levels, correction, rotation, the info bar), at the
+// image's own resolution, with measurements drawn over it as on screen, none selected (FORMAT.md,
+// MATH.md 1.14).  The picture is magnified until no direction loses pixels (G18): pixel for pixel
+// when it is neither stretched nor turned.  The overlay keeps the size it has when the whole picture
+// fits the view, never smaller than on screen (G19), so that it reads where the image is shown whole.
+
+/**
+ * (G18): the least that ``m`` stretches any direction, its smaller singular value |det m| / sigma_1,
+ * where sigma_1^2 = (t + sqrt(t^2 - 4 det^2)) / 2 is the larger eigenvalue of m^T m and t its trace,
+ * the sum of the squares of m's entries.
+ * @param {Mat2} m
+ * @returns {number}
+ */
+function leastStretch(m) {
+  const t = m[0] ** 2 + m[1] ** 2 + m[2] ** 2 + m[3] ** 2;
+  const d = Math.abs(matDet(m));
+  const most = Math.sqrt((t + Math.sqrt(Math.max(t * t - 4 * d * d, 0))) / 2);
+  return most > 0 ? d / most : 0;
+}
+
+/**
+ * Draw ``list`` onto another canvas with the view's own pieces: the contours first, then the other
+ * measurements, none selected, with no hover marks, handles, cursor or previews.
+ * @param {CanvasRenderingContext2D} target    its transform set to the overlay's CSS pixels
+ * @param {Measurement[]} list
+ * @param {(p: Point) => Point} toPixels      stored points to those pixels
+ */
+function drawMeasurementsOn(target, list, toPixels) {
+  const [view, boxes] = [ctx, app.labelBoxes];
+  ctx = target;
+  app.labelBoxes = [];
+  app.exporting = true;
+  try {
+    for (const ms of list) {
+      if (ms.kind === "contour") {
+        drawContour(ms, colorOf(ms), { selected: false, edited: false }, toPixels);
+      }
+    }
+    for (const ms of list) {
+      if (ms.kind !== "contour") {
+        drawMeasurement(ms, colorOf(ms), toPixels, {});
+      }
+    }
+  } finally {
+    ctx = view;
+    app.labelBoxes = boxes;
+    app.exporting = false;
+  }
+}
+
+/**
+ * Download the picture with ``list`` drawn over it as the PNG image ``name``: magnified by (G18),
+ * the overlay scaled by (G19).  Where a turned picture leaves the corners of its box, they are clear.
+ * @param {Measurement[]} list
+ * @param {string} name
+ */
+function exportImagePng(list, name) {
+  const image = app.image;
+  const picture = app.picture;
+  if (image === null || picture === null) {
+    return;
+  }
+  if (app.levelsChanged) {
+    app.levelsChanged = false;
+    paintPicture();
+  }
+  const fv = viewAtOne();
+  const s = 1 / leastStretch(fv);                                      // (G18)
+  /** @type {Mat2} */
+  const m = [s * fv[0], s * fv[1], s * fv[2], s * fv[3]];
+  const [x0, x1, y0, y1] = pictureBox(image, m);
+  const [w, h] = [Math.max(1, Math.ceil(x1 - x0 - 1e-6)), Math.max(1, Math.ceil(y1 - y0 - 1e-6))];
+  const k = Math.max(1, s / fitZoom(image));                           // (G19)
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d");
+  if (g === null) {
+    setStatus(`The image is too large for this browser to draw: ${w} × ${h} pixels.`);
+    return;
+  }
+  // pixel for pixel, unsmoothed, when the picture is neither stretched nor turned
+  const same = Math.abs(m[0] - 1) + Math.abs(m[1]) + Math.abs(m[2]) + Math.abs(m[3] - 1) < 1e-9;
+  g.setTransform(m[0], m[2], m[1], m[3], -x0, -y0);
+  g.imageSmoothingEnabled = !same;
+  g.imageSmoothingQuality = "high";
+  g.drawImage(picture.canvas, 0, 0);
+  g.setTransform(k, 0, 0, k, 0, 0);
+  drawMeasurementsOn(g, list, (p) => {
+    const q = matApply(m, p[0] + 0.5, p[1] + 0.5);
+    return [(q[0] - x0) / k, (q[1] - y0) / k];
+  });
+  c.toBlob((blob) => {
+    if (blob === null) {
+      setStatus(`The image is too large for this browser to save: ${w} × ${h} pixels.`);
+      return;
+    }
+    download(blob, name, "image/png");
+  }, "image/png");
 }
 
 /**
@@ -6066,9 +6332,8 @@ const KEY_ACTIONS = {
   1: () => setTool("contour"),
   2: () => setTool("ruler"),
   3: () => setTool("angle"),
-  4: () => setTool("line-angle"),
+  4: () => setTool("lines"),
   5: () => setTool("profile"),
-  6: () => setTool("gap"),
   p: () => toggleProfileWindow(),
   e: () => squareSelected(),
   n: () => finishContour(),
@@ -6258,6 +6523,9 @@ for (const id of ["image-file", "session-file"]) {
 for (const tool of TOOLS) {
   // a click on the active tool puts it down: no tool
   el(`tool-${tool}`).addEventListener("click", () => setTool(app.tool === tool ? "pan" : tool));
+}
+for (const choice of LINES_SHOW) {
+  el(`show-${choice}`).addEventListener("click", () => setLinesShow(choice));
 }
 el("new-contour").addEventListener("click", () => finishContour());
 inputEl("closed").addEventListener("change", () => setClosed(inputEl("closed").checked));
@@ -6770,6 +7038,7 @@ el("reset-origin").addEventListener("click", () => {
 });
 
 loadColours();
+loadLinesShow();
 selectEl("palette").value = colours.palette;
 refreshFrameInputs();
 refreshMeasurements();
@@ -6786,6 +7055,7 @@ Object.assign(window, {
     gdsFile, setLevels, brightnessMoved, contrastMoved, drawHistogram, paintPicture, toggleProfileWindow,
     refreshProfileWindow, shownProfile, profileData, profileMean, setProfileWidth, exportProfile, exportProfilePng,
     profilePlot, selectOnly, toggleChecked, checkRange, checkAll, deleteMeasurements, downloadItems, refreshMeasurements,
-    squareProfile, squareSelected, magnetPull, toggleFitWindow, currentFit, exportFit,
+    squareProfile, squareSelected, magnetPull, toggleFitWindow, currentFit, exportFit, exportImagePng, setLinesShow,
+    fitZoom, leastStretch,
   },
 });

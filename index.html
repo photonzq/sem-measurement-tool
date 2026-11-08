@@ -60,7 +60,9 @@
   #panel section.folded > :not(h2) { display: none !important; }
   .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
   .row button { flex: 1 1 auto; }
-  .row.tools { display: grid; grid-template-columns: repeat(4, 1fr); }      /* seven tools in two even rows */
+  .row.tools { display: grid; grid-template-columns: repeat(3, 1fr); }      /* six tools in two even rows */
+  #lines-show { align-items: center; }
+  #lines-show span { color: var(--muted); }
   .row.tools button { padding: 4px 4px; white-space: nowrap; }   /* each name on one line, in any font */
   .row.tools button kbd { display: block; width: max-content; margin: 2px auto 0; }   /* the key under the name, however wide the panel */
   button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--text); cursor: pointer; }
@@ -311,11 +313,16 @@
         <button type="button" id="tool-contour" aria-pressed="false" title="Trace contours">Contour <kbd>1</kbd></button>
         <button type="button" id="tool-ruler" aria-pressed="false" title="Measure a distance: two clicks">Ruler <kbd>2</kbd></button>
         <button type="button" id="tool-angle" aria-pressed="false" title="Angle at a vertex: three clicks">Angle <kbd>3</kbd></button>
-        <button type="button" id="tool-line-angle" aria-pressed="false" title="Angle between two lines: four clicks">2 lines <kbd>4</kbd></button>
+        <button type="button" id="tool-lines" aria-pressed="false" title="Two lines, two clicks on each: their gap, the angle between them, or both">2 lines <kbd>4</kbd></button>
         <button type="button" id="tool-profile" aria-pressed="false" title="Line profile, averaged across a band of adjustable width: two clicks">Profile <kbd>5</kbd></button>
-        <button type="button" id="tool-gap" aria-pressed="false" title="Gap between two parallel lines: two clicks on each">Gap <kbd>6</kbd></button>
       </div>
       <div id="tool-hint" class="note"></div>
+      <div id="lines-show" class="row" role="group" aria-label="What two lines show" title="What the selected two lines show, and new ones: their gap, the angle between them, or both.  The measurements file holds both" hidden>
+        <span>show</span>
+        <button type="button" id="show-gap" aria-pressed="false" title="The gap, along the normal of the lines' mean direction, midway between their middles">gap</button>
+        <button type="button" id="show-angle" aria-pressed="false" title="The angle from line 1 to line 2, as clicked; the arc where they cross shows which">angle</button>
+        <button type="button" id="show-both" aria-pressed="true" title="The gap and the angle">both</button>
+      </div>
     </section>
 
     <section id="measurements-section">
@@ -459,7 +466,7 @@
         <table class="keys">
           <tbody>
           <tr><td><kbd>0</kbd></td><td>no tool: drag to pan, wheel to zoom (or click the active tool's button again)</td></tr>
-          <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd> <kbd>6</kbd></td><td>tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile, gap between 2 parallel lines (4 clicks)</td></tr>
+          <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>tools: contour, ruler, angle (3 clicks), 2 lines: their gap, angle or both (4 clicks), line profile</td></tr>
           <tr><td>click</td><td>contour: add a vertex to the selected contour, or start a new one when no contour is selected; other tools: place the next point (snapped when Snap is on)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+click</td><td>contour: insert a vertex into the nearest segment; holding <kbd>Ctrl</kbd> shows that segment and where the vertex lands</td></tr>
           <tr><td>drag along an edge</td><td>contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; <kbd>Ctrl</kbd>: in place of the vertices along the stretch they cover, or into the nearest segment, also when it starts on a vertex; <kbd>Alt</kbd>, or Snap off: along the stroke as drawn. A plain drag from a vertex moves it</td></tr>

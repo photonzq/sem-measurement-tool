@@ -11,7 +11,7 @@ This document derives what the app computes from an image:
 - **Part 7:** painted edges: the contour tool's stroke along an edge, the path it follows, the criteria that place its points, and how they join the contour.
 - **Part 8:** line edge roughness: a straight line fitted to vertices of a contour, their residuals and the figures.
 
-Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) (T1)–(T8) in `js/trace.js` and (L1)–(L4) in `js/linefit.js`.
+Equation numbers match the comments in the code: (G1)–(G15) and (G17) in `js/transform.js`, (G16), (G18) and (G19) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) (T1)–(T8) in `js/trace.js` and (L1)–(L4) in `js/linefit.js`.
 
 ## Part 1. Geometry
 
@@ -230,7 +230,7 @@ With $\Delta u$ the stored difference of two points:
 - **Ruler.** Length $|A\Delta u|$; components $(A\Delta u)_X$ and $(A\Delta u)_Y$; direction $\operatorname{atan2}\big((A\Delta u)_Y, (A\Delta u)_X\big)$, counter-clockwise from $+X$.
 - **Angle between two vectors $a$ and $b$.** It is computed as $\operatorname{atan2}(|a\times b|,\ a\cdot b) \in [0°, 180°]$. The alternative, $\arccos\big(a\cdot b/(|a||b|)\big)$, loses accuracy near 0° and 180°: there a rounding error $\varepsilon$ in the cosine becomes an error $\sqrt{2\varepsilon}$ in the angle, $10^{-8}$ rad for $\varepsilon = 10^{-16}$. atan2 keeps the relative accuracy of its arguments at every angle.
 - **Three-point angle.** The angle at the vertex $v$ between $A(a - v)$ and $A(b - v)$.
-- **Angle between two lines.** The angle between the directions $A(p_2 - p_1)$ and $A(p_4 - p_3)$, as clicked; its supplement is the angle with one line reversed.
+- **Angle between two lines.** The angle between the directions $A(p_2 - p_1)$ and $A(p_4 - p_3)$, as clicked; its supplement is the angle with one line reversed. The measurement *two lines* takes this angle and the gap below (G17) from the same four points. Which of the two it shows is a matter of display; the measurements file has both.
 - **Where two lines cross.** Write $p_1 + s\,e_1 = p_3 + t\,e_2$ with $e_1 = p_2 - p_1$ and $e_2 = p_4 - p_3$. Taking the cross product of both sides with $e_2$ removes $t$:
 
   $$s = \frac{(p_3 - p_1)\times e_2}{e_1\times e_2}.$$
@@ -285,6 +285,41 @@ between a tenth and a hundredth of a pixel. For $p_x = 1.35$ nm, $c/10 = 1.35\ti
 **Areas.** Move an outline of perimeter $P$ outward by $\varepsilon$. To first order, the area grows by the strip the outline sweeps, $P\varepsilon$; for a convex outline exactly by $P\varepsilon + \pi\varepsilon^2$ (Steiner's formula). With $\varepsilon = c/10$, an area is therefore shown with $\lceil -\log_{10}(Pc/10)\rceil$ decimals. A contour of perimeter 5.28 µm with pixels of 1.35 nm has $Pc/10 = 7.1\times10^{-4}$ µm², so 4 decimals: 0.7038 µm².
 
 **Angles** keep their fixed decimals: 2 on the image and in the list, 3 in the details. Grey values keep 6 significant digits. The files keep the precision of 1.12, whatever the screen shows.
+
+### 1.14 The image with its measurements (G18), (G19)
+
+The download *Image with … (PNG)* draws the picture as the view does, through $FV$ and a zoom, but into a canvas of its own whose pixels are those of the file. Two choices make it: how much to magnify the picture, and how large to draw the measurements over it.
+
+**How much to magnify (G18).** Write $B = FV$, the view at zoom 1 (1.9), and $s_e$ for the zoom of the file. A step $\Delta c$ of canvas units, one stored pixel width when $|\Delta c| = 1$, becomes the step $s_e B\,\Delta c$ in the file. The singular value decomposition $B = U\,\mathrm{diag}(\sigma_1, \sigma_2)\,W^{\mathsf T}$, with $U$ and $W$ orthogonal and $\sigma_1 \ge \sigma_2 > 0$, tells how far each direction is carried. A unit step along the second column of $W$ becomes one of length $\sigma_2$, the least of any direction; along the first column, one of length $\sigma_1$, the most. No direction loses pixels when every unit step becomes at least one pixel of the file, $s_e\,\sigma_2 \ge 1$. The least such zoom gives the smallest file:
+
+$$s_e = \frac{1}{\sigma_2}. \qquad \text{(G18)}$$
+
+For a $2\times2$ matrix the singular values follow from $B^{\mathsf T}B$, whose eigenvalues are $\sigma_1^2$ and $\sigma_2^2$:
+
+1. Its trace is $t = \sigma_1^2 + \sigma_2^2 = B_{11}^2 + B_{12}^2 + B_{21}^2 + B_{22}^2$, the sum of the squares of $B$'s entries.
+2. Its determinant is $\sigma_1^2\,\sigma_2^2 = \det(B^{\mathsf T}B) = (\det B)^2$.
+3. $\sigma_1^2$ and $\sigma_2^2$ are therefore the roots of $\lambda^2 - t\,\lambda + (\det B)^2 = 0$, and the larger is
+
+   $$\sigma_1 = \sqrt{\frac{t + \sqrt{t^2 - 4\,(\det B)^2}}{2}}.$$
+
+4. The smaller root would lose its digits to cancellation when $\sigma_2 \ll \sigma_1$. It is taken from the product instead: $\sigma_2 = |\det B|/\sigma_1$.
+
+The cases:
+
+- **Square pixels, no correction, no turn.** $F = V = \mathrm{diag}(1, -1)$, so $B = I$, $\sigma_1 = \sigma_2 = 1$ and $s_e = 1$. The file is the picture pixel for pixel, copied without smoothing; on the FEI test image the file's pixels equal the picture's.
+- **A turn by $\varphi$.** $R(\varphi)$ keeps lengths, so $s_e = 1$ still. The file is the turned picture's bounding box, $W\cos\varphi + H\sin\varphi$ by $W\sin\varphi + H\cos\varphi$ for $0 \le \varphi \le 90°$: 3406 × 2689 pixels for the 3072 × 2188 test image turned by 10°. The corners of the box that the picture leaves are transparent.
+- **A cross-section at $\theta$, the tilt axis along $x$.** $K$ stretches the direction across the axis by $k = 1/\sin\theta$ and keeps the axis (1.4). So $\sigma_1 = k$, $\sigma_2 = 1$ and $s_e = 1$: the columns stay as they are, and the rows are spread over $k$ times as many, interpolated. At $\theta = 52°$ the 2188 rows of the test image become 2777.
+- **Rectangular pixels.** With $p_y > p_x$, $V$ stretches $y$ by $p_y/p_x > 1$ and $s_e = 1$. With $p_y < p_x$, $\sigma_2 = p_y/p_x$ and $s_e = p_x/p_y$, so that every row keeps a pixel of its own; the columns are then interpolated.
+
+The file's size is the box of the canvas rectangle's corners $(0, 0)$, $(W, 0)$, $(0, H)$ and $(W, H)$ under $s_e B$, rounded up to whole pixels. The pan $-(x_{\min}, y_{\min})$ puts that box at the file's origin. A stored point $u$ thus lies at the file pixel $s_e B\,(u + (\tfrac12, \tfrac12)) - (x_{\min}, y_{\min})$, by (G1) as on screen (1.9). The screen's device pixel ratio does not enter: the file's pixels are the image's.
+
+**How large to draw the measurements (G19).** On screen, lines, points and labels have fixed sizes in CSS pixels at every zoom: a line 1.5 pixels wide, a label's text 12 pixels high. Relative to the picture they are largest at the zoom $s_f$ at which *Fit* shows it whole (1.9), the view the overlay is meant to read in when the picture is seen whole. There, an overlay length $L$ covers $L/s_f$ units of $B$. In the file, where $B$ is magnified by $s_e$, the same covers $L\,s_e/s_f$ pixels. The file therefore draws the overlay scaled by
+
+$$\kappa = \max\!\left(1,\ \frac{s_e}{s_f}\right). \qquad \text{(G19)}$$
+
+The file, shown whole at the size of the fitted view, then looks as the view did. The maximum keeps an image smaller than the window, which fits at $s_f > 1$, from shrinking the overlay below its size on screen: a 512-pixel image fits a window of 1300 pixels at $s_f \approx 2.5$, where $s_e/s_f$ alone would make labels 5 pixels high. For the 3072 × 2188 test image in a view of 1306 × 903 CSS pixels, $s_f = 0.404$ and $\kappa = 2.47$: lines 3.7 pixels wide and label text 30 pixels high in the file, which shown 1241 pixels wide, as the fitted view showed it, look as they did there. $s_f$ is that of the window at the time of the download.
+
+**What is drawn.** The picture as the view paints it: 8 bits through the levels (5.2), the info bar included. Over it, the measurements chosen, the contours first, each as on screen but not selected: no halo, no white points, and no hover marks, handles, cursor, previews or edge map.
 
 ## Part 2. Edge strength and snapping
 

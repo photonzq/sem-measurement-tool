@@ -5,14 +5,14 @@
 A web app for metrology on scanning electron micrographs, which runs entirely in the browser. It works on SEM images:
 
 - trace polygon contours, by clicks or by painting along an edge, which places points on it;
-- measure distances, angles at a vertex, and angles between two lines;
+- measure distances, angles at a vertex, and the gap and angle between two lines;
 - take line profiles averaged across a band of adjustable width, squared to the edge they cross, with the contours that cross them marked;
 - snap clicks to edges, which a noise-robust gradient finds;
 - correct a tilted specimen and turn the image;
 - list a contour's vertices in a table and edit them there;
 - set the brightness and contrast on a histogram of the image, the microscope's info bar left out.
 
-All of these work through one affine map from the stored pixels, so no calibration change ever moves a point on the image. The work is kept in a session file. Contours are measurements like the others, in one list. A contour downloads as a polygon file, e.g. for a mode solver, or as a GDSII layout, and a line profile as its samples or as a plot. Any selection downloads as a CSV file for a spreadsheet, one row per measurement.
+All of these work through one affine map from the stored pixels, so no calibration change ever moves a point on the image. The work is kept in a session file. Contours are measurements like the others, in one list. A contour downloads as a polygon file, e.g. for a mode solver, or as a GDSII layout, and a line profile as its samples or as a plot. Any selection downloads as a CSV file for a spreadsheet, one row per measurement, and drawn over the image as a PNG file at the image's own resolution.
 
 **Nothing leaves your computer.** The app is a static page with no server behind it. Images are read with the browser's File API and results are saved as downloads, whether the page comes from GitHub Pages or from disk.
 
@@ -36,13 +36,14 @@ It has been tested in Chromium-based browsers, both served over HTTP and opened 
 
    Set the origin if the micrometres should start somewhere particular.
 3. **Snapping** to edges is on from the start. *Snap* (S, or on the touch toolbar) is the one switch for all the help with edges: clicks and dragged points, the squaring of profiles, the markers on a profile, and strokes along an edge. Off, everything stays where it is put. The edge map (G) shows what clicks snap to. It is computed as the image opens, in a few seconds for a large image.
-4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4), *Profile* (5) and *Gap* (6). *Pan* (0), or a click on the active tool, puts the tool down again.
+4. **Trace and measure** with the tools: *Contour* (1), *Ruler* (2), *Angle* (3), *2 lines* (4) and *Profile* (5). *Pan* (0), or a click on the active tool, puts the tool down again.
 5. **Level the image** if you like. Draw a ruler along something that should be horizontal, such as the substrate, and select it. Then press *Level: horizontal* (H) or *Level: vertical* (V); these buttons, and *Tilt axis along ruler*, appear under *Measurements* while a ruler is selected. Lengths and angles do not change; directions and the exported coordinates turn with the image.
 6. **Keep the work**: *Save session* (Ctrl+S). To continue later, open the image, then *Open session…*. *Download*, under *Measurements*, saves what is selected:
    - a contour: its vertices for a mode solver, or a GDSII layout;
    - a profile: its samples, or its plot as a PNG image;
-   - a ruler or an angle: its row;
-   - several: one row each, and the vertices or a GDSII layout of the contours among them.
+   - a ruler, an angle or two lines: its row;
+   - several: one row each, and the vertices or a GDSII layout of the contours among them;
+   - any of these: the image with them drawn over it, as a PNG file.
 
    Its last entries do the same for all the measurements.
 
@@ -58,7 +59,7 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
 
 - **Pan** (0): no tool. A drag pans and the wheel zooms, and no click edits anything. The app opens with it, and a click on the active tool's button also returns to it.
 - **Contour.**
-  - A click adds a vertex at the end of the selected contour, which is drawn thicker, with a light halo and white vertices, its first vertex larger.
+  - A click adds a vertex at the end of the selected contour, which is marked by a light halo and white vertices, its first vertex larger.
   - With no contour selected, the first click starts a new one: *contour 1*, *contour 2* and so on. There is never an empty contour waiting. N is done with the selected contour, so that the next click starts a new one; it also takes up the contour tool. C closes or opens the selected contour.
   - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or exact with Alt. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
   - **Painting along an edge.** A drag that starts where no vertex lies paints along an edge. A faint magenta band, twice the search radius wide, follows the pointer, and the points the stroke will place show on the edge as it goes, with dashed lines to the vertices they join. On release they join the selected contour after its last vertex, the end of the stroke nearest it first, as one edit; with no contour selected they start a new one. A stroke may thus go either way along the edge, and several strokes and clicks make up one contour.
@@ -71,13 +72,12 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
   - A selected contour shows its measures under *Measurements*: its perimeter (or length, when open), its area and its bounding box, taken in the turned frame. Its *closed* switch and its GDS layer and datatype (1/0 unless set) are there as well.
 - **Ruler.** Two clicks. It shows the length, the components ΔX and ΔY, and the direction, counter-clockwise from +X.
 - **Angle.** Three clicks: the end of one arm, the vertex, the end of the other arm. It gives the angle at the vertex, 0–180°.
-- **2 lines.** Four clicks, two on each line, give the angle between the two lines as clicked, 0–180°, and its supplement. The lines are extended, dashed, to where they cross. This suits corners that are rounded, such as a sidewall meeting a substrate.
+- **2 lines.** Four clicks, two on each line, give the gap between the two lines and the angle between them. *show*, under the tools while this tool is in hand or two lines are selected, chooses what they show: the **gap**, the **angle**, or **both**. It sets the selected two lines, and the next ones too; the browser keeps the choice. The measurements file always has both.
+  - **The gap** is measured in micrometres, where right angles are true, along the normal of the lines' mean direction, midway between their middles. For parallel lines that is their distance, wherever the points are (MATH.md 1.10, (G17)): a waveguide's width, a layer's thickness. The normal is drawn between the lines with arrow heads, and a line is dashed out to it when it lies beyond the points.
+  - **The angle** is the one from line 1 to line 2 as clicked, 0–180°; the details give its supplement. The lines are extended, dashed, to where they cross, and an arc there shows which of the two angles it is. This suits corners that are rounded, such as a sidewall meeting a substrate. Near-parallel lines clicked the same way give a small angle; clicked opposite ways, one near 180°.
+  - **Both** draws the arrow and the arc, each with its label. Lines that cross far away, beyond 20 times their span, have no arc, and then one label beside the arrow gives the gap and the angle.
+  - The points snap as a ruler's do. Sessions of earlier versions open with their gaps as two lines that show the gap, and their angles between two lines as two lines that show the angle.
 - **Profile.** Two clicks give a line profile: the grey values along the line, averaged across a band around it. See *Line profiles* below.
-- **Gap.** Four clicks, two on each of two edges, give the gap between the lines: a waveguide's width, a layer's thickness.
-  - It is measured in micrometres, where right angles are true, along the normal of the lines' mean direction, midway between their middles. For parallel lines that is their distance, wherever the points are (MATH.md 1.10, (G17)).
-  - The readout gives the gap alone; the measurements file adds its components from line 1 to line 2.
-  - The normal is drawn between the lines with arrow heads. A line is dashed out to it when it lies beyond the points.
-  - The points snap as a ruler's do.
 
 The **points of a measurement** handle as follows:
 
@@ -89,7 +89,7 @@ The **points of a measurement** handle as follows:
 
 ## Measurements
 
-One list under *Measurements* holds them all: contours, rulers, angles, gaps and profiles, in the order made, each with its colour and its brief measures. It grows to eight rows, and scrolls beyond. Selected measurements keep their colour and are drawn thicker, with a light halo and white points (see *Overlay colours*).
+One list under *Measurements* holds them all: contours, rulers, angles, two lines and profiles, in the order made, each with its colour and its brief measures. It grows to eight rows, and scrolls beyond. Selected measurements keep their colour and width, marked by a light halo and white points (see *Overlay colours*).
 
 - **Selecting.** A click or a tap on a row selects that measurement alone. Its box, or Ctrl+click, adds it to the selection or takes it out. Shift+click selects from the row clicked last, and Ctrl+A selects all.
 - **The one edited.** A measurement selected alone is the one edited, marked by a bar at the left of its row. It is the contour the contour tool extends, the profile the profile window shows, and the ruler that *Level* and *Tilt axis along ruler* take. Touching a measurement's point with its tool makes it the one edited.
@@ -101,10 +101,12 @@ One list under *Measurements* holds them all: contours, rulers, angles, gaps and
   |:--|:--|
   | a contour | its vertices, a polygon file (CSV); a GDSII file |
   | a profile | its samples, a profile file (CSV); its plot (PNG) |
-  | a ruler, an angle, an angle between lines, a gap | its row of the measurements file (CSV) |
+  | a ruler, an angle, two lines | its row of the measurements file (CSV) |
   | several | one row each in a measurements file (CSV); the vertices of the contours among them in one polygon file (CSV); a GDSII file of those contours |
+  | any of these | the image with them drawn over it (PNG) |
 
-  The menu's last entries save all the measurements in the same three ways, without selecting them.
+  The menu's last entries save all the measurements in the same ways, without selecting them.
+- **The image with the measurements** is the picture as the view shows it: its levels, tilt correction and rotation, the info bar included. It keeps the image's own resolution: pixel for pixel when the picture is neither stretched nor turned, else magnified until no direction loses pixels, so that a 52° cross-section corrected to its true height has 1/sin 52° = 1.27 times the rows (MATH.md 1.14). A turned picture leaves the corners of its box clear. The measurements are drawn as on screen, without selection marks, and keep the size they have when the whole image fits the view, never smaller than on screen: they read as on screen where the image is shown whole, as on a slide.
 
 ## Vertex window
 
@@ -198,9 +200,9 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
 Measurements are drawn in colours made to show on grey images, dark or bright:
 
 - **One colour each.** Each new measurement takes the next colour of a colour order, as MATLAB colours the lines it plots, and keeps it; the session saves it. The list shows each measurement's colour, and the profile plot marks a crossing contour in that contour's colour.
-- **Outlined lines.** Every line has a thin outline in the contrasting grey: white around a dark colour, black around a light one. No single colour stands out on dark, mid and bright grey alike, but an outlined one does.
-- **Labels on dark chips.** A value is written in white on a dark chip edged in the measurement's colour, legible on any grey. A label that would cover another moves up or down, by one to three label heights, to the nearest free place; the edge's colour still tells whose it is.
-- **Selection.** Selected measurements keep their colour, drawn thicker with a light halo, white points and a thicker chip edge.
+- **Outlined lines.** Lines are 1.5 screen pixels wide at any zoom, with an outline half a pixel wide on either side in the contrasting grey: white around a dark colour, black around a light one. No single colour stands out on dark, mid and bright grey alike, but an outlined one does.
+- **Labels on dark chips.** A value is written in white on a dark chip that fits it closely, edged in the measurement's colour by a thin line, legible on any grey. A label that would cover another moves up or down, by one to three label heights, to the nearest free place; the edge's colour still tells whose it is.
+- **Selection.** Selected measurements keep their colour and width. A light halo, a pixel wide beyond the outline, white points and a thicker chip edge mark them.
 
 *Overlay colours*, in the *Display* section, chooses the colours:
 
@@ -284,9 +286,10 @@ Off, everything stays where it is put, strokes are drawn as they go, and the two
 |:--|:--|
 | `<image>_session.json` | the session: image name and SHA-256, calibration, the measurements (contours among them), snap settings, display levels. *Open session…* takes it up again on the open image, and asks first if the image differs. |
 | `<image>_polygons.csv`, `<image>_<contour>.csv` | the vertices of several contours, or of one, in micrometres and pixels, with each contour's measures, the calibration and the matrix `px_to_um` in a commented header. *Open session…* also reads it. |
-| `<image>_measurements.csv`, `<image>_<ruler or angle>.csv` | one row per measurement: value, unit, components, points; a profile's band width and mean grey value; a contour's vertex count, area and bounding box |
+| `<image>_measurements.csv`, `<image>_<measurement>.csv` | one row per measurement: value, unit, components, the angle between two lines, points; a profile's band width and mean grey value; a contour's vertex count, area and bounding box |
 | `<image>_<profile>.csv` | the samples of one line profile |
 | `<image>_<profile>.png` | the plot of one line profile |
+| `<image>_with_measurements.png`, `<image>_with_selected.png`, `<image>_with_<measurement>.png` | the picture as the view shows it, at the image's own resolution, with all, the selected or one of the measurements drawn over it |
 | `<image>_<contour>_line_fit.csv` | a straight line fitted to the selected vertices of a contour, with their residuals and the figures |
 | `<image>.gds`, `<image>_<contour>.gds` | contours as a GDSII layout, for KLayout, gdstk, GDSFactory and other layout tools; written only |
 
@@ -404,7 +407,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | Input | Action |
 |:--|:--|
 | 0 | no tool: drag to pan, wheel to zoom (also a click on the active tool's button) |
-| 1 2 3 4 5 6 | tools: contour, ruler, angle (3 clicks), angle between 2 lines (4 clicks), line profile, gap between 2 parallel lines (4 clicks) |
+| 1 2 3 4 5 | tools: contour, ruler, angle (3 clicks), 2 lines: their gap, angle or both (4 clicks), line profile |
 | click | contour: add a vertex to the selected contour, or start a new one; other tools: place the next point (snapped with Snap on, except a profile's ends) |
 | Ctrl+click | contour: insert a vertex into the nearest segment |
 | drag along an edge | contour: points on the edge under the band, one every point spacing, after the last vertex from the end of the stroke nearest it; a plain drag from a vertex moves it instead |
@@ -474,7 +477,7 @@ The page does not respond while an edge map is computed. A Web Worker would remo
 | `js/profile.js` | line profiles: the band, the samples, the contour crossings, squaring to an edge, markers; derivations (P1)–(P14) in the header |
 | `js/linefit.js` | the line fit: total least squares, the residuals, σ and the figures; derivations (L1)–(L4) in the header |
 | `js/trace.js` | painted edges: the stations along a stroke, the path along the edge, the criteria that place the points, the joining; derivations (T1)–(T8) in the header |
-| `js/app.js` | the user interface, mouse, pen and touch input; zooming about a point, (G16), in its comments |
+| `js/app.js` | the user interface, mouse, pen and touch input; zooming about a point, (G16), and the size of the image with its measurements, (G18) and (G19), in its comments |
 | `vendor/` | UTIF.js and pako (inflate), unmodified, with their licences |
 | `types/vendor.d.ts` | types of UTIF.js for the type check |
 | `tests/` | static checks and core tests; `local_data.example.json`, the form of the git-ignored file that names your test images |
@@ -534,7 +537,7 @@ node tests/run_static_checks.mjs --tools <folder with node_modules>
   - the gap between two lines, parallel and 2° apart, whatever the rotation;
   - levelling and the tilt axis along a line;
   - contour measures.
-- **Files.** Round trips of the polygon, measurements and session files (GDS layers, display levels and profile band widths included), the profile file, and the refusal of bad ones.
+- **Files.** Round trips of the polygon, measurements and session files (GDS layers, display levels, profile band widths and what two lines show included), the profile file, and the refusal of bad ones. Earlier sessions' gaps and angles between two lines are read as two lines.
 - **GDSII.**
   - The eight-byte reals against bytes computed exactly in Python, which are also what gdstk and KLayout write for the units.
   - 2000 random values read back exactly.
@@ -635,6 +638,7 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - One cell, without hierarchy; paths have flush ends.
   - Labels are ASCII: other characters become "?".
   - The app writes GDS files but does not read them.
+- **The image with the measurements.** A label near the picture's border is cut where it runs past it. A large image, magnified for its correction or turned, may pass the browser's canvas limits (below), and is then not saved.
 - **Size and responsiveness.** The edge map blocks the page for seconds on large images. Browsers limit canvas sizes, to 32 767 px per side in Chromium, and very large images exceed the memory budget (MATH.md, 3.4).
 
 ---

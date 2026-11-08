@@ -106,16 +106,17 @@
  * a polyline; ``layer`` is its GDSII layer and datatype, [1, 0] when absent.  ``color`` is the place
  * of a measurement's colour in the colour order of the overlay, 0, 1, 2, ... (app.js).
  * @typedef {{name: string, kind: "contour", closed: boolean, points: Point[], layer?: [number, number], color?: number,
- *   width?: undefined, markers?: undefined}} Contour
+ *   width?: undefined, markers?: undefined, show?: undefined}} Contour
  */
-/** The kinds of measurement with a set number of points (MEASURE_POINTS). @typedef {"ruler"|"angle"|"line-angle"|"gap"|"profile"} FixedKind */
+/** The kinds of measurement with a set number of points (MEASURE_POINTS). @typedef {"ruler"|"angle"|"lines"|"profile"} FixedKind */
+/** What two lines show: their gap (G17), the angle between them, or both. @typedef {"gap"|"angle"|"both"} LinesShow */
 /**
- * A ruler (2 points), an angle (3 points: arm end, vertex, arm end), the angle between two lines
- * or the gap between them (4 points: line 1 from, to, line 2 from, to) or a line profile (2 points,
+ * A ruler (2 points), an angle (3 points: arm end, vertex, arm end), two lines (4 points: line 1
+ * from, to, line 2 from, to; ``show``: what they show, both when absent) or a line profile (2 points,
  * ``width``: the band width in pixel widths of the corrected view, and ``markers``: up to two stored
  * points, A and B, profile.js).
- * @typedef {{name: string, kind: FixedKind, points: Point[], width?: number, markers?: Point[], color?: number,
- *   closed?: undefined, layer?: undefined}} FixedMeasurement
+ * @typedef {{name: string, kind: FixedKind, points: Point[], width?: number, markers?: Point[], show?: LinesShow,
+ *   color?: number, closed?: undefined, layer?: undefined}} FixedMeasurement
  */
 /** A measurement: a contour, or one of a set number of points. @typedef {Contour|FixedMeasurement} Measurement */
 /** @typedef {"contour"|FixedKind} MeasureKind */

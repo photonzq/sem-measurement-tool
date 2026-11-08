@@ -1,6 +1,6 @@
 "use strict";
 /* global CORRECTIONS, TRACE_CRITERIA */
-/* exported SESSION_FORMAT, MEASURE_POINTS, formatSession, parseSession */
+/* exported SESSION_FORMAT, MEASURE_POINTS, LINES_SHOW, formatSession, parseSession */
 /*
  * The session file (FORMAT.md): what it takes to resume the work on an image, as JSON.  The
  * image it belongs to (name, size and SHA-256, not the pixels), the measurement frame, the
@@ -29,7 +29,7 @@
  * @property {ImageInfo} image
  * @property {Frame} frame
  * @property {SnapSettings} snap
- * @property {Measurement[]} measurements      contours, rulers, angles and profiles, in the order of the list
+ * @property {Measurement[]} measurements      contours, rulers, angles, two lines and profiles, in the order of the list
  * @property {number} selected                 the selected measurement; -1 when none
  * @property {[number, number]|null} display   the black and white levels; null: Auto
  */
@@ -37,7 +37,11 @@
 const SESSION_FORMAT = "sem-measurement-tool session";
 const SESSION_VERSION = 1;
 /** Points of the measurements with a set number of them; a contour has any number. @type {Record<FixedKind, number>} */
-const MEASURE_POINTS = { ruler: 2, angle: 3, "line-angle": 4, gap: 4, profile: 2 };
+const MEASURE_POINTS = { ruler: 2, angle: 3, lines: 4, profile: 2 };
+/** What two lines may show. @type {LinesShow[]} */
+const LINES_SHOW = ["gap", "angle", "both"];
+/** The kinds of earlier files that are two lines now, and what they show. @type {Record<string, LinesShow>} */
+const EARLIER_LINES = { gap: "gap", "line-angle": "angle" };
 
 /**
  * @param {number} v
@@ -64,6 +68,9 @@ function measurementEntry(m) {
   const { name, kind, color } = m;
   if (m.kind === "contour") {
     return { name, kind, color, closed: m.closed, gds_layer: m.layer ?? [1, 0], points_px: storedPoints(m.points) };
+  }
+  if (m.kind === "lines") {
+    return { name, kind, color, show: m.show ?? "both", points_px: storedPoints(m.points) };
   }
   if (m.kind !== "profile") {
     return { name, kind, color, points_px: storedPoints(m.points) };
@@ -320,7 +327,10 @@ function measurementAt(value, index, names) {
     }
     return contour;
   }
-  const kind = /** @type {FixedKind} */ (o.kind);
+  // a gap or an angle between two lines of an earlier file: two lines that show it
+  const earlier = typeof o.kind === "string" && Object.prototype.hasOwnProperty.call(EARLIER_LINES, o.kind)
+    ? EARLIER_LINES[o.kind] : null;
+  const kind = /** @type {FixedKind} */ (earlier === null ? o.kind : "lines");
   if (!Object.prototype.hasOwnProperty.call(MEASURE_POINTS, kind)) {
     throw new Error(`${what}.kind must be one of contour, ${Object.keys(MEASURE_POINTS).join(", ")}`);
   }
@@ -329,6 +339,13 @@ function measurementAt(value, index, names) {
   }
   /** @type {FixedMeasurement} */
   const ms = { name, kind, color, points };
+  if (kind === "lines") {
+    const show = earlier ?? o.show ?? "both";
+    if (!LINES_SHOW.includes(/** @type {LinesShow} */ (show))) {
+      throw new Error(`${what}.show must be one of ${LINES_SHOW.join(", ")}`);
+    }
+    ms.show = /** @type {LinesShow} */ (show);
+  }
   if (kind === "profile") {
     ms.width = numberAt(o.width_px ?? 1, `${what}.width_px`, (v) => v >= 0);
     if (o.markers_px !== undefined) {
