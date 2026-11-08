@@ -95,6 +95,7 @@ const MAGNET_EDGE_PX = 32;           // how far the edge's dashed line runs beyo
 const MAGNET_MARK_PX = 9;            // the legs of the ⊥ mark where a profile held square crosses the edge
 const PICKED_NUMBERS = 8;            // more vertices picked than this: only the ends of each run numbered
 const FIT_LINE_BEYOND_PX = 16;       // the line fitted runs this far beyond its first and last vertex, on screen
+const MIPMAP_LEVELS = 8;             // (G21) the picture is halved at most this many times, to 1/256
 
 /** @returns {Frame} */
 function defaultFrame() {
@@ -132,6 +133,8 @@ const app = {
   levelDrag: null,
   /** @type {{canvas: HTMLCanvasElement, pixels: ImageData}|null} the stored image at 8 bits */
   picture: null,
+  /** @type {HTMLCanvasElement[]} the picture halved, quartered and so on: its mipmap, built as the view needs it (G21) */
+  pictureLevels: [],
   /** @type {EdgeMap|null} */
   edges: null,
   edgesKey: "",
@@ -529,13 +532,15 @@ async function sha256Hex(buffer) {
 }
 
 /**
- * A PNG, JPEG or BMP decoded by the browser, as grey values (Rec. 709), without metadata.
+ * A PNG, JPEG or BMP decoded by the browser, as grey values (Rec. 709), without metadata.  The
+ * colours are taken as stored: by default a browser converts an image tagged with a gamma (gAMA)
+ * or a colour profile to sRGB, which moved a ramp with gamma 1 by up to 73 grey levels.
  * @param {ArrayBuffer} buffer
  * @param {string} name
  * @returns {Promise<SEMImage>}
  */
 async function decodeBrowserImage(buffer, name) {
-  const bitmap = await createImageBitmap(new Blob([buffer]));
+  const bitmap = await createImageBitmap(new Blob([buffer]), { colorSpaceConversion: "none" });
   const c = document.createElement("canvas");
   c.width = bitmap.width;
   c.height = bitmap.height;
@@ -598,6 +603,45 @@ function paintPicture() {
     }
   }
   /** @type {CanvasRenderingContext2D} */ (picture.canvas.getContext("2d")).putImageData(picture.pixels, 0, 0);
+  app.pictureLevels = [];            // the mipmap follows when the view next needs it
+}
+
+/**
+ * (G21): the level of the picture's mipmap to draw when the view shrinks a stored pixel to
+ * ``shrink`` device pixels in its most shrunk direction: k for 2^-k nearest ``shrink`` on a log
+ * scale, so that what is left to the browser's bilinear sampling lies between 1/sqrt 2 and sqrt 2;
+ * 0, the picture itself, from 1/sqrt 2 up.
+ * @param {number} shrink
+ * @returns {number}
+ */
+function mipmapLevel(shrink) {
+  return shrink > 0 && shrink < 1 ? Math.min(MIPMAP_LEVELS, Math.max(0, Math.round(Math.log2(1 / shrink)))) : 0;
+}
+
+/**
+ * (G21): level ``k`` of the picture's mipmap, the picture halved k times, each level the 2 x 2
+ * average of the one before: bilinear sampling at exactly half the size takes the four pixels
+ * around each new one's centre with equal weights.  Level 0 is the picture.  The levels are built
+ * when the view first needs them after the picture was painted; level k spans W/2^k x H/2^k of its
+ * pixels, its last column or row in part when that is not whole.
+ * @param {number} k
+ * @returns {HTMLCanvasElement}
+ */
+function pictureLevel(k) {
+  const picture = /** @type {{canvas: HTMLCanvasElement}} */ (app.picture);
+  const levels = app.pictureLevels;
+  while (levels.length < k) {
+    const from = levels.length === 0 ? picture.canvas : levels[levels.length - 1];
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.ceil(from.width / 2));
+    c.height = Math.max(1, Math.ceil(from.height / 2));
+    const g = /** @type {CanvasRenderingContext2D} */ (c.getContext("2d"));
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = "low";           // plain bilinear: at half the size, the 2 x 2 average
+    g.drawImage(from, 0, 0, from.width / 2, from.height / 2);
+    levels.push(c);
+  }
+  return k === 0 ? picture.canvas : levels[k - 1];
 }
 
 /**
@@ -855,9 +899,16 @@ function draw() {
   // canvas transforms take (a, b, c, d, e, f) for x' = a x + c y + e, y' = b x + d y + f
   ctx.setTransform(dpr * m[0], dpr * m[2], dpr * m[1], dpr * m[3], dpr * tx, dpr * ty);
   ctx.imageSmoothingEnabled = Math.sqrt(Math.abs(matDet(m))) < 1.5;
-  // mipmapped when zoomed out: the pixels' noise neither aliases nor shimmers as the view turns
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(app.picture.canvas, 0, 0);
+  // zoomed out, from the mipmap's level nearest the zoom (G21): the pixels' noise neither aliases nor shimmers as the
+  // view turns, in every browser (Firefox ignores the quality above and samples a shrunk picture bilinearly)
+  const level = mipmapLevel(dpr * leastStretch(m));
+  if (level === 0) {
+    ctx.drawImage(app.picture.canvas, 0, 0);
+  } else {
+    const f = 2 ** level;
+    ctx.drawImage(pictureLevel(level), 0, 0, image.width / f, image.height / f, 0, 0, image.width, image.height);
+  }
   if (settings.edgesShown() && app.overlay !== null) {
     ctx.drawImage(app.overlay, 0, 0);
   }
@@ -7104,6 +7155,6 @@ Object.assign(window, {
     refreshProfileWindow, shownProfile, profileData, profileMean, setProfileWidth, exportProfile, exportProfilePng,
     profilePlot, selectOnly, toggleChecked, checkRange, checkAll, deleteMeasurements, downloadItems, refreshMeasurements,
     squareProfile, squareSelected, magnetPull, toggleFitWindow, currentFit, exportFit, exportImagePng, setLinesShow,
-    fitZoom, leastStretch,
+    fitZoom, leastStretch, mipmapLevel,
   },
 });

@@ -11,7 +11,7 @@ This document derives what the app computes from an image:
 - **Part 7:** painted edges: the contour tool's stroke along an edge, the path it follows, the criteria that place its points, and how they join the contour.
 - **Part 8:** line edge roughness: a straight line fitted to vertices of a contour, their residuals and the figures.
 
-Equation numbers match the comments in the code: (G1)–(G15), (G17) and (G20) in `js/transform.js`, (G16), (G18) and (G19) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) (T1)–(T8) in `js/trace.js` and (L1)–(L4) in `js/linefit.js`.
+Equation numbers match the comments in the code: (G1)–(G15), (G17) and (G20) in `js/transform.js`, (G16), (G18), (G19) and (G21) in `js/app.js`, (E1)–(E9) in `js/edges.js`, (C1) in `js/polygons.js`, (S1)–(S2) in `js/gds.js`, (Z1) and (H1) in `js/tiff.js`, (D1)–(D4) in `js/display.js`, (P1)–(P14) in `js/profile.js` (the sums of (P8) in `js/edges.js`) (T1)–(T8) in `js/trace.js` and (L1)–(L4) in `js/linefit.js`.
 
 ## Part 1. Geometry
 
@@ -192,6 +192,15 @@ At zoom 1, one stored pixel covers one screen pixel along $x$.
 $$\det M = s^2\,\det F\,\det V = s^2\,(-1)\,(-k\,p_y/p_x) > 0,$$
 
 the view is never mirrored.
+
+**Zoomed out (G21).** The browser fills each device pixel by sampling the picture at its centre, bilinearly: it weighs the $2\times2$ stored pixels around that point, with weights $w_{ij}$ that sum to 1. Let $\sigma$ be the least stretch of $d\,sFV$, $d$ the device pixel ratio (its smaller singular value, computed as in (G18)). When $\sigma < 1$, one device pixel spans $1/\sigma$ stored pixels in the most shrunk direction, and the sampling still reads only four of them.
+- **Why the picture aliases.** An SEM image carries noise from pixel to pixel, independent with a standard deviation $\nu$. A device pixel sampled bilinearly keeps $\nu\sqrt{\textstyle\sum w_{ij}^2}$ of it, between $\nu/2$ and $\nu$, however far the view is zoomed out. An average over all the $1/\sigma^2$ stored pixels it spans would keep $\nu\,\sigma$. The rest shows as grain that changes from one device pixel to the next, and moves as the view pans or turns.
+- **The mipmap.** Level $k$ is the picture halved $k$ times, each level the $2\times2$ average of the one before. Bilinear sampling at exactly half the size takes the four pixels around each new pixel's centre with equal weights, so a canvas draw makes each level. A pixel of level $k$ is the average of $2^k \times 2^k$ stored pixels, its noise $\nu/2^k$.
+- **The level drawn** is
+  $$k = \operatorname{round}\big(\log_2(1/\sigma)\big), \qquad \text{(G21)}$$
+  clipped to $0 \ldots 8$. Then $|k - \log_2(1/\sigma)| \le \tfrac12$, so what is left to the bilinear sampling, the stretch $\sigma\,2^k$, lies between $2^{-1/2}$ and $2^{1/2}$: a device pixel spans at most $\sqrt2$ pixels of the level, each already an average, and the four the sampling reads cover it. Level 0, the picture itself, is drawn from $\sigma = 2^{-1/2}$ up.
+- **Browsers.** Chromium mipmaps a shrunk picture itself when asked for high quality; Firefox does not, as it has no such setting. The app's own mipmap gives the same picture in both. Fitted in a 1366 × 768 window ($\sigma = 0.25$, level 2), the FEI image's mean step between neighbouring device pixels, $|4v - \sum_{\text{4 neighbours}}|$, measured 7.0 in Edge with its own filtering and 21.1 in Firefox. With the mipmap it measured 5.0 in both.
+- **Cost.** The levels hold $\sum_{k\ge1} 4^{-k} = \tfrac13$ of the picture's pixels. They are made on the GPU, by one canvas draw each, when the view first needs them after the picture is painted, and again after a change of levels.
 
 **Fit and calibration changes.** "Fit" maps the four corners of the canvas rectangle through $FV$, takes their bounding box and scales it into the window. A change of calibration moves $\tau$ so that the stored point under the centre of the window stays there.
 
@@ -483,7 +492,7 @@ A ridge detector that finds line centres would be a natural addition.
 | Edge map shown | the overlay picture | linear in the pixels, once |
 | Change of pixel size, tilt, correction, tilt axis, rotation, origin | new matrices; a redraw | constant |
 | The rotation slider dragged | $\varphi$ and the pan that keeps the view's centre; a redraw per displayed frame. On release, the measurement list, the notes and the windows | constant: 0.5 ms a frame on an Intel Iris Xe, with the FEI image fitted to the view and the GPU's work included |
-| Each redraw | one `drawImage` of the picture (and the overlay) through the affine transform; the vertices and labels | resampling on the GPU, through mipmaps when zoomed out (`imageSmoothingQuality` "high"), so that the pixels' noise neither aliases nor shimmers as the view turns; linear in the vertices |
+| Each redraw | one `drawImage` of the picture (and the overlay) through the affine transform; the vertices and labels | resampling on the GPU, from the app's own mipmap when zoomed out (1.9, (G21)), so that the pixels' noise neither aliases nor shimmers as the view turns, in Firefox as in Chromium; linear in the vertices |
 | Each pointer move with Snap on | one snap search (2.5, E8) | crest tests on the $\pi r^2/\lvert\det V\rvert$ stored pixels of the search ellipse: 356 for $r = 12$, $k = 1.27$ |
 | A profile shown, or dragged, or a contour crossing it edited | its samples (6.2–6.4) and crossings (6.5); the plot | $(N + 1)\,M$ bilinear values, about one per stored pixel of the band; the crossings linear in the contour vertices |
 | A profile squared (6.6): by E, or by the magnet at each pointer move while an end moves | the strongest edge along its line, and the structure tensor there; or the normal of a contour's segment | $N + 1$ bilinear values; at most $(2\lceil 6\sigma\rceil + 2)^2$ pixels, 676 at $\sigma = 2$ |

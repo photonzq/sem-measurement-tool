@@ -24,7 +24,7 @@ All of these work through one affine map from the stored pixels, so no calibrati
 - **Online** at [https://photonzq.github.io/sem-measurement-tool/](https://photonzq.github.io/sem-measurement-tool/), which GitHub Pages serves from this repository's `main` branch. The app is the repository's `index.html` with its scripts, so Pages serves it as it is; the empty `.nojekyll` file keeps Pages from processing the files. A fork or a copy is served the same way once Pages is enabled under *Settings → Pages*: *Deploy from a branch*, branch `main`, folder `/ (root)`. It is then at `https://<owner>.github.io/sem-measurement-tool/`, `<owner>` being the account or organisation that holds it.
 - **Offline.** Download the repository (*Code → Download ZIP*) or clone it, and open `index.html` in a browser; a double click is enough. Nothing needs to be installed.
 
-It has been tested in Chromium-based browsers, both served over HTTP and opened from disk in Microsoft Edge. It has not yet been tested in Firefox or Safari.
+It has been tested in Chromium-based browsers, both served over HTTP and opened from disk in Microsoft Edge, and in Firefox 159, run by script without a window. It has not yet been tested in Safari. See *Limits* for what differs in Firefox.
 
 ## Working with it
 
@@ -364,7 +364,7 @@ Tested on 17 TIFFs from an SU8200 (1280 × 960, 8-bit RGB, the three channels eq
   - **Other values**: `HV` or `AcceleratorVoltage`, `WD`, the beam current, `StageTilt` and `ScanRotation` (read as degrees), `Detector`, `Device` and the date.
 - **Thermo Fisher XML** (*FeiImage*), as Phenom desktop SEMs write it into TIFF tag 34683: `pixelWidth`, `pixelHeight`, `workingDistance` and `highVoltage`, with their units.
 
-**Other images.** Other TIFFs open without metadata: 8, 16 or 32 bits, grey, palette or RGB, in the compressions UTIF.js decodes. Only uncompressed FEI, Zeiss and Hitachi files were tested. PNG, JPEG and BMP open too, decoded by the browser. Enter the pixel size by hand.
+**Other images.** Other TIFFs open without metadata: 8, 16 or 32 bits, grey, palette or RGB, in the compressions UTIF.js decodes. Only uncompressed FEI, Zeiss and Hitachi files were tested. PNG, JPEG and BMP open too, decoded by the browser at 8 bits with their grey values as stored: a gamma or a colour profile the file carries is not applied, as a browser otherwise does for display. Enter the pixel size by hand.
 
 ## Touch screens, pens and touchpads
 
@@ -456,7 +456,7 @@ The costs, measured on the FEI test image of 3072 × 2188 pixels (6.29 Mpx above
 - **A stroke along an edge** is placed again at every move of the pointer, keeping the work of the stations it has passed: 0.5 ms a move at the end of a stroke of 364 points, 2 ms with a finger's wider band (MATH.md 7.9).
 - **Squaring a profile** takes microseconds: a search along its line and one structure tensor of a few hundred pixels. The magnet therefore runs at every move of the pointer: about 20 µs, and 0.3 ms for the whole move with the profile window open, measured in Chromium on the laptop of the rotation slider below.
 - **Calibration and rotation changes**, panning and zooming cost one GPU-drawn frame.
-- **Dragging the rotation slider** costs about 0.5 ms a frame on an Intel Iris Xe, the GPU's work included, with the FEI image fitted to the view. Zoomed out, the picture is drawn through mipmaps, so its pixels' noise neither aliases nor shimmers as it turns. With the default filtering, the step between neighbouring screen pixels was twice as large as with the mipmaps.
+- **Dragging the rotation slider** costs about 0.5 ms a frame on an Intel Iris Xe, the GPU's work included, with the FEI image fitted to the view. Zoomed out, the picture is drawn from a mipmap of its own, halved and halved again (MATH.md 1.9, (G21)), so its pixels' noise neither aliases nor shimmers as it turns, in every browser. Fitted in a 1366 × 768 window, the FEI image's step between neighbouring screen pixels measured 7.0 in Edge with its own filtering, 21.1 in Firefox, which has none, and 5.0 in both with the mipmap.
 - **Memory**: about 180 MB for that image with the overlay shown.
 
 The page does not respond while an edge map is computed. A Web Worker would remove the wait; MATH.md 3.4 lists this and the other limits.
@@ -640,6 +640,9 @@ The development tools (ESLint, TypeScript, html-validate) are only needed for th
   - Labels are ASCII: other characters become "?".
   - The app writes GDS files but does not read them.
 - **The image with the measurements.** A label near the picture's border is cut where it runs past it. A large image, magnified for its correction or turned, may pass the browser's canvas limits (below), and is then not saved.
+- **Firefox.**
+  - On Windows, Alt pressed and released by itself opens Firefox's menu bar, and a page cannot prevent it. A click while Alt is down keeps the menu closed, so Alt+click and Alt+drag are fine; Alt pressed in the middle of a drag may open it, and the next key then goes to the menu. Setting `ui.key.menuAccessKeyFocuses` to `false` in `about:config` stops it.
+  - Browsers that block reading a canvas back, for privacy, cannot open PNG, JPEG or BMP files: Firefox forks with "resist fingerprinting", such as LibreWolf, the Tor Browser and the Mullvad Browser. TIFF files are read by the app itself and are not affected. A Firefox private window read a PNG exactly.
 - **Size and responsiveness.** The edge map blocks the page for seconds on large images. Browsers limit canvas sizes, to 32 767 px per side in Chromium, and very large images exceed the memory budget (MATH.md, 3.4).
 
 ---
