@@ -42,6 +42,7 @@ const PALETTES = {
   "okabe-ito": ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"],   // colour-blind safe
 };
 const COLOURS_KEY = "sem-measurement-tool colours";       // where the browser keeps the choice (localStorage)
+const EDGE_SETTINGS_KEY = "sem-measurement-tool edge settings";   // "open" when they are shown (localStorage)
 const STATUS_KEY = "sem-measurement-tool status bar";     // "on" when the status bar is shown (localStorage)
 const FOLDED_KEY = "sem-measurement-tool folded";         // the ids of the panel's sections folded (localStorage)
 const WINDOWS_KEY = "sem-measurement-tool windows";       // where the floating windows were left, and their sizes (localStorage)
@@ -72,8 +73,7 @@ const TOOL_HINTS = {
   ruler: "Click both ends of a distance.",
   angle: "Click the end of one arm, the vertex, then the end of the other arm.",
   lines: "Click two points on one line, then two on the other; Ctrl holds the line parallel to the other.",
-  profile: "Click both ends; a magnet holds it square to the edge (Shift, or Snap off: not).  Drag an end, the band's square, " +
-    "A or B.",
+  profile: "Click both ends; a magnet squares it to the edge (Shift: not).  Drag an end, the band's square, A or B.",
 };
 /** @type {Record<MeasureKind, string>} */
 const MEASURE_NAMES = { contour: "contour", ruler: "ruler", angle: "angle", lines: "lines", profile: "profile" };
@@ -292,12 +292,7 @@ function numberFrom(id, fallback) {
 }
 
 const settings = {
-  snap: () => inputEl("snap").checked,
-  squareProfiles: () => inputEl("square-profiles").checked,
-  snapMarkers: () => inputEl("snap-markers").checked,
-  // Snap is the one switch of the help with edges: the two options above act only while it is on
-  squares: () => settings.snap() && settings.squareProfiles(),
-  settlesMarkers: () => settings.snap() && settings.snapMarkers(),
+  snap: () => inputEl("snap").checked,      // the one switch of the help with edges: clicks, the magnet, markers, strokes
   edgesShown: () => inputEl("show-edges").checked,
   sigma: () => numberFrom("sigma", 2),
   median: () => Number(selectEl("median").value),
@@ -2236,6 +2231,7 @@ function setTool(tool) {
   }
   canvas.classList.toggle("navigate", tool === "pan");
   el("tool-hint").textContent = TOOL_HINTS[tool];
+  el("stroke-settings").hidden = tool !== "contour";     // where a stroke along an edge places its points
   refreshLinesShow();
   render();
 }
@@ -2263,6 +2259,23 @@ function setLinesShow(choice) {
     refreshLinesShow();
   }
   render();
+}
+
+/** The edge detection's settings, folded at first: open as the browser kept them, which keeps them as they are left. */
+function keepEdgeSettingsOpen() {
+  const details = /** @type {HTMLDetailsElement} */ (el("edge-settings"));
+  try {
+    details.open = localStorage.getItem(EDGE_SETTINGS_KEY) === "open";
+  } catch {
+    // no storage: folded
+  }
+  details.addEventListener("toggle", () => {
+    try {
+      localStorage.setItem(EDGE_SETTINGS_KEY, details.open ? "open" : "closed");
+    } catch {
+      // no storage: as long as the page
+    }
+  });
 }
 
 /** Take up what new two lines show, as the browser kept it. */
@@ -2683,7 +2696,8 @@ function refreshFrameInputs() {
 
 function refreshFrameNotes() {
   const f = app.frame;
-  inputEl("custom-factor").disabled = f.correction !== "custom";
+  inputEl("custom-factor").hidden = f.correction !== "custom";
+  el("custom-factor-label").hidden = f.correction !== "custom";
   const note = el("factor-note");
   note.classList.remove("warn");
   const cal = app.image ? app.image.calibration : null;
@@ -3043,7 +3057,7 @@ function toggleColourWindow() {
 function snapSettings() {
   return {
     on: settings.snap(), sigmaPx: settings.sigma(), median: settings.median(), radiusPx: settings.radius(),
-    minContrast: settings.minContrast(), squareProfiles: settings.squareProfiles(), snapMarkers: settings.snapMarkers(),
+    minContrast: settings.minContrast(),
     edgeCriterion: settings.edgeCriterion(), edgeLevelPct: settings.edgeLevel(), pointSpacingPx: settings.pointSpacing(),
   };
 }
@@ -3248,8 +3262,6 @@ function loadSessionText(text, name) {
   selectOnly(session.selected);
   const s = session.snap;
   inputEl("snap").checked = s.on;
-  inputEl("square-profiles").checked = s.squareProfiles;
-  inputEl("snap-markers").checked = s.snapMarkers;
   inputEl("sigma").value = String(s.sigmaPx);
   selectEl("median").value = String(s.median);
   inputEl("radius").value = String(s.radiusPx);
@@ -3258,7 +3270,6 @@ function loadSessionText(text, name) {
   inputEl("edge-level").value = String(s.edgeLevelPct);
   inputEl("point-spacing").value = String(s.pointSpacingPx);
   showEdgeLevel();
-  showSnapOptions();
   changeFrame(() => {
     app.frame = session.frame;
   });
@@ -4526,7 +4537,7 @@ function pointAlong(points, t) {
  * @returns {number}
  */
 function settledFraction(mean, t, exact, perPixel) {
-  if (exact || !settings.settlesMarkers() || mean.length < 3) {
+  if (exact || !settings.snap() || mean.length < 3) {
     return t;
   }
   const last = mean.length - 1;
@@ -4815,7 +4826,7 @@ function squareSelected() {
  */
 function magnetPull(points, keep, held) {
   const [a, b] = points.map((p) => storedToScreen(p[0], p[1]));
-  if (!settings.squares() || Math.hypot(b[0] - a[0], b[1] - a[1]) < MAGNET_MIN_PX * handleScale()) {
+  if (!settings.snap() || Math.hypot(b[0] - a[0], b[1] - a[1]) < MAGNET_MIN_PX * handleScale()) {
     return null;
   }
   const result = squareProfile(points, keep);
@@ -6575,16 +6586,8 @@ function snapToggled() {
   if (!settings.snap()) {
     app.preview = null;
   }
-  showSnapOptions();
   previewStroke();
   refreshEdges();
-}
-
-/** The options under Snap act only while it is on: greyed while it is off. */
-function showSnapOptions() {
-  const off = !settings.snap();
-  inputEl("square-profiles").disabled = off;
-  inputEl("snap-markers").disabled = off;
 }
 
 const wrap = el("view-wrap");
@@ -6981,7 +6984,6 @@ el("profile-export").addEventListener("click", () => exportProfile());
 el("profile-png").addEventListener("click", () => exportProfilePng());
 el("profile-square").addEventListener("click", () => squareSelected());
 el("clear-markers").addEventListener("click", () => clearMarkers());
-inputEl("square-profiles").addEventListener("change", () => refreshEdges());
 inputEl("profile-width").addEventListener("change", () => setProfileWidth(Number(inputEl("profile-width").value) / unitsPerView()));
 // On the plot a press of the main button within the axes on a marker drags it; any other press
 // there is a click, which places a marker, until it moves more than 4 pixels and only reads values
@@ -7068,7 +7070,6 @@ for (const id of ["sigma", "median"]) {
 }
 selectEl("edge-criterion").addEventListener("change", () => showEdgeLevel());
 showEdgeLevel();                     // as the browser may have kept the choices over a reload
-showSnapOptions();
 for (const id of ["pixel-x", "pixel-y", "tilt", "correction", "custom-factor", "tilt-axis", "rotation"]) {
   el(id).addEventListener("change", () => frameInputsChanged());
 }
@@ -7153,6 +7154,7 @@ el("reset-origin").addEventListener("click", () => {
 
 loadColours();
 loadLinesShow();
+keepEdgeSettingsOpen();
 selectEl("palette").value = colours.palette;
 refreshFrameInputs();
 refreshMeasurements();

@@ -64,7 +64,7 @@ Every edit can be undone with Ctrl+Z and redone with Ctrl+Y. That includes point
   - Ctrl+click inserts a vertex into the nearest segment. While Ctrl is held, before any click, the segment that will receive the vertex is drawn thick in magenta, with the two edges replacing it dashed out to where the vertex will land. That point is snapped as the click will snap it, or where clicked with Shift. Over an existing vertex nothing shows, since a Ctrl+click there moves that vertex.
   - **Painting along an edge.** A drag that starts where no vertex lies paints along an edge. A faint magenta band, twice the search radius wide, follows the pointer, and the points the stroke will place show on the edge as it goes, with dashed lines to the vertices they join. On release they join the selected contour after its last vertex, the end of the stroke nearest it first, as one edit; with no contour selected they start a new one. A stroke may thus go either way along the edge, and several strokes and clicks make up one contour.
     - The stroke keeps to one edge: the two flanks of a bright line are never mixed, and of two edges in the band the one nearer its middle stays unless the other is far stronger. Where no edge stands out of the noise, as for a snap, or where the edge runs across the stroke rather than along it, no point is placed. A stroke that turns back places points only up to where it turns. Escape gives a stroke up.
-    - *stroke points at*, under *Snapping to edges*, chooses where on the edge each point goes, on a profile across the edge averaged along it over the point spacing: the **steepest slope** (the default, as clicks snap); a **threshold**, a level between the grey levels on either side (50 % unless set, higher toward the bright side); or the **crest of a bright line** beside the edge, such as the bloom at a sidewall. *point spacing* sets how far apart they are: 5 pixels of the corrected view by default.
+    - *stroke points at*, under *Snapping to edges* while the contour tool is in hand, chooses where on the edge each point goes, on a profile across the edge averaged along it over the point spacing: the **steepest slope** (the default, as clicks snap); a **threshold**, a level between the grey levels on either side (50 % unless set, higher toward the bright side); or the **crest of a bright line** beside the edge, such as the bloom at a sidewall. *point spacing* sets how far apart they are: 5 pixels of the corrected view by default.
     - **Ctrl+drag** puts the points in place of the vertices along the stretch they cover, crossed out while it paints: it redoes part of a rough or loaded outline. Of two runs of vertices there, such as the two sides of a narrow line, the nearer goes. With no vertex there, the points go into the nearest segment. It paints even when it starts on a vertex, as redoing a contour starts on it; a Ctrl+click on a vertex still selects it.
     - **Shift+drag**, or any stroke while Snap is off, places the points along the stroke as drawn, without the edge.
     - A press that moves less than 6 screen pixels, or less than a point spacing, is a click, with the keys it was pressed with; its vertex lands when the button is released. A plain drag that starts on a vertex moves it: start a plain stroke beside the vertices, or use Ctrl.
@@ -164,7 +164,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - On a touch screen nothing shows the magnet before a tap. A tap it pulls shows "⊥ edge" beside it for a moment, or the contour's name for a contour.
   - Ctrl+Z undoes the drag, or removes the new profile.
   - E squares the profile edited whatever the angle. It turns about the crossing, and keeps the profile's length and the crossing's place along it. For a moment a note beside the cursor shows what was done and the angle turned: "⊥ edge, 4.2°", or the contour's name. When there is nothing to square to, it shows "not squared", with the reason in the status bar.
-  - *square profiles to the edge they cross*, under *Snapping*, is on from the start.
+  - The magnet works while *Snap* is on, as it is from the start.
 - **The band.** It is a rectangle as seen on screen, whatever the tilt correction or rotation. Its width is in the measurement unit, or in pixels of the corrected view.
   - Widen or narrow it by dragging the white square on its side. The profile must be selected for the square to show.
   - Or type the width in the profile window.
@@ -185,7 +185,7 @@ The *Profile* tool (5) takes the grey values along a line, averaged across a ban
   - A marker can be dragged along the profile, by its line on the plot or by its tick on the image. On the image this works with any tool but *Pan* and *Contour*, as for points; a point or the band's square under the pointer comes first. Over a marker the pointer turns into a two-way arrow, and the marker gets a halo, on the plot and the image alike. A drag that starts elsewhere on the plot still reads values, and places nothing.
   - Each of these is an edit that Ctrl+Z undoes.
   - The second line under the plot gives where each marker is, the mean there, and the distance A–B. On the image, each is a thin tick across the band, in the profile's colour, with its letter, so that where it crosses the image reads closely.
-  - *snap A, B to the steepest slope*, in the window and on from the start, lets a marker settle, while *Snap* is on, where the profile is steepest within 12 pixels of where it was put: of the plot, or of the screen along the line when it is let go on the image. This is where an edge is, for an edge-to-edge distance.
+  - While *Snap* is on, as it is from the start, a marker settles where the profile is steepest within 12 pixels of where it was put: of the plot, or of the screen along the line when it is let go on the image. This is where an edge is, for an edge-to-edge distance.
     - The slope is that of the mean, smoothed from the edge map's σ up to 4 times it. The edge clicked is the one the finest of these scales finds; the coarser ones place it, and the one where it stands out of the noise best wins, as long as they find it where it was and no other edge is in their reach. A gradual edge in a noisy FIB image is thus placed nearly as well as a sharp one, and a weak edge is not given up for a stronger one nearby, nor merged with a step beside it.
     - Of two edges in reach, such as a bright line's flanks, the nearer is taken.
     - A marker snaps only where the slope stands out of the noise by more than the edge map's *min. edge strength*. As for a click on the image, the threshold rises with the search, so that a click on flat noise rarely snaps: about 4 times the noise at the default 3. The noise is measured near the click, leaving out stretches clipped to black or white and the edges there. A profile that runs mostly through a dark, quiet region thus does not lower the threshold for a noisier part, nor does a strong edge nearby raise it.
@@ -266,10 +266,12 @@ The view draws the stored image through the same map, so a change of calibration
 *Snap*, on from the start, is the one switch for all the help with edges; S, or *Snap* on the touch toolbar, turns it off and on. While it is on:
 
 - a click lands on the strongest edge nearby, and a magenta ring shows in advance where it will land; a dragged point lands there when it is let go;
-- profiles are squared, and markers settle on the steepest slope, as their options say: *square profiles to the edge they cross*, just under it, and *snap A, B to the steepest slope*, in the profile window;
+- profiles are squared to the edge they cross, and markers settle on the steepest slope;
 - strokes of the contour tool follow the edge.
 
-Off, everything stays where it is put, strokes are drawn as they go, and the two options are greyed. Shift (or Alt) does the same as Snap off for one click, release or stroke. The method is in MATH.md, Part 2:
+Off, everything stays where it is put, and strokes are drawn as they go. Shift (or Alt) does the same as Snap off for one click, release, stroke, profile end or marker.
+
+The numbers that tune the edge detection, *smoothing σ*, the *median prefilter*, the *search radius* and the *min. edge strength*, sit under *edge detection*, folded until it is opened; the browser keeps it open or folded. The settings of a stroke along an edge, *stroke points at* and *point spacing*, show while the contour tool is in hand. The method is in MATH.md, Part 2:
 
 - **Edge strength.** The gradient of a Gaussian-smoothed image, after an optional 3 × 3 or 5 × 5 median filter: *smoothing σ*, in pixels of the stored image. Larger σ resists noise better, but merges edges closer than about 2σ.
 - **Threshold.** Pure noise exceeds $c$ times the median gradient with the probability $2^{-c^2}$ per independent pixel. A click searches many pixels, though, so candidates must be $\sqrt{k^2 + \log_2 N}$ times the median, $k$ being the *min. edge strength* and $N$ about the number of independent pixels in the search. A click on flat noise then snaps about as rarely as one pixel exceeds $k$ times the median: $2^{-k^2}$, 0.2 % at the default 3. At the default radius that asks for 4.0 times the median, and 4.3 for a finger. Pixels on constant stretches, such as regions clipped to black or white, are left out of the median.
@@ -277,7 +279,7 @@ Off, everything stays where it is put, strokes are drawn as they go, and the two
 - **Where the map is computed.** The edge map is computed on the stored image, without the info bar, once per σ and median setting. The noise is independent pixel to pixel there and the probe round, so this is also the matched filter.
 - **Bright lines.** Many SEM edges appear as bright lines, which have two flanks. A click snaps to the flank nearest to it, so trace one flank consistently, or use Shift to place points on the line's centre. A stroke of the contour tool with *stroke points at: bright line* places its points on the line's crest.
 - **Strokes along an edge** (see *Tools*, *Contour*) follow the edge through their band on the edge map, and place each point on a profile across the edge by the criterion chosen. A point needs the edge to stand out by $\sqrt{k^2 + \log_2 N}$ times the median, $N$ about the number of independent pixels in its stretch of the band: 3.7 at the defaults. The threshold's levels are the medians of that profile beyond half the search radius from the edge, so a wide edge needs a wide band. MATH.md, Part 7, derives the path and the criteria.
-- **Profiles** are not snapped. While *Snap* and *square profiles to the edge they cross* are on, a magnet holds a profile square to the edge it crosses as an end moves (see *Line profiles*). The image's edge must reach *min. edge strength* times the median gradient: squaring looks along a line, not over a disc.
+- **Profiles** are not snapped. While *Snap* is on, a magnet holds a profile square to the edge it crosses as an end moves (see *Line profiles*). The image's edge must reach *min. edge strength* times the median gradient: squaring looks along a line, not over a disc.
 
 *Show the edge map* (G) overlays the edge strength in green, which shows what the snapping sees.
 
@@ -418,7 +420,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | Shift+click | place the point where clicked, without snapping, as every one is while Snap is off; Alt does the same |
 | drag a point | move a vertex or a measurement point; it snaps when released (Shift: not). A profile's end never snaps; the magnet holds the profile square about its other end instead (Shift: not). A point of 2 lines dragged with Ctrl keeps its line parallel to the other, and does not snap |
 | drag the white square | widen or narrow the band of the selected profile |
-| click on the profile plot | place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap and that option are on (Shift: as clicked) |
+| click on the profile plot | place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap is on (Shift: as clicked) |
 | drag a marker, on the plot or by its tick on the image | move it along the profile; it snaps when let go (Shift: not); on the plot, a drag that starts elsewhere reads values |
 | right click | contour: delete the vertex; other tools: delete the measurement, or cancel the one being placed |
 | wheel, touchpad pinch | zoom about the cursor |
@@ -435,7 +437,7 @@ These were checked with pointer events simulated in Chromium. They have not yet 
 | T | show or hide the vertex window of the selected contour |
 | L | show or hide the line fit window: a straight line fitted to the selected vertices, with their residuals |
 | P | show or hide the profile window, which shows the selected profile and steps aside while none is selected; it also opens for a new profile, and on a double click or double tap on a profile under *Measurements* |
-| E | square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5° of square while *Snap* and its option for profiles are on (Shift: not) |
+| E | square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5° of square while *Snap* is on (Shift: not) |
 | arrow keys | move the selected vertices by one view unit on screen (Shift: ten); in the list, the next measurement |
 | Backspace | the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements |
 | Delete | delete the selected vertices, else the selected measurements, contours included |

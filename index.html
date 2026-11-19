@@ -17,6 +17,7 @@
     --status-height: 20px;           /* one line of 12 px text, and its border */
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }        /* hidden wins over every display rule below */
   html, body { margin: 0; height: 100%; }
   body { font: 13px/1.4 Bahnschrift, Arial, "Helvetica Neue", Helvetica, system-ui, sans-serif; color: var(--text); background: var(--panel); }
   #app { display: grid; grid-template-columns: 1fr var(--panel-width); grid-template-rows: 1fr auto; height: 100vh; }
@@ -95,7 +96,6 @@
   label { user-select: none; }
   .file { font-family: ui-monospace, Consolas, monospace; font-size: 0.95em; }      /* file names: always monospace */
   #panel section > label:has(> input[type=checkbox]) { display: block; width: fit-content; }   /* a switch: a line of its own */
-  #panel section > label.sub { margin-left: 22px; }                                   /* an option under the switch above */
   label:has(> input:disabled) { color: var(--muted); }
   .note { color: var(--muted); white-space: pre-line; margin: 4px 0; }
   .note.warn { color: var(--warn); }
@@ -103,7 +103,6 @@
   #download-menu { position: fixed; z-index: 20; display: flex; flex-direction: column; min-width: 240px; max-width: 360px;
                    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
                    overflow: hidden; }
-  #download-menu[hidden] { display: none; }
   #download-menu button { border: none; border-radius: 0; background: transparent; text-align: left; padding: 6px 12px;
                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #download-menu button:hover:enabled { background: #e8edf6; }
@@ -129,7 +128,6 @@
               max-width: calc(100% - 24px); max-height: calc(100% - 24px); display: flex; flex-direction: column;
               background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
               overflow: hidden; z-index: 5; }
-  .floating[hidden] { display: none; }
   .floating header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 10px;
                      background: var(--accent); color: #fff; cursor: move; user-select: none; touch-action: none; }
   .floating header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -173,16 +171,13 @@
                              background: #fff; cursor: pointer; }
   #about { margin: 18px 0 0; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; }
   #touch-bar { position: absolute; left: 8px; top: 12px; z-index: 6; display: flex; flex-direction: column; gap: 6px; }
-  #touch-bar[hidden] { display: none; }
   #touch-bar button { width: 56px; height: 52px; padding: 2px; display: flex; flex-direction: column; align-items: center;
                       justify-content: center; font-size: 19px; line-height: 1; background: rgba(246, 246, 244, 0.94);
                       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
   #touch-bar button span { font-size: 11px; margin-top: 3px; }
   #touch-bar button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
-  #touch-bar button[hidden] { display: none; }
   #hold-menu { position: absolute; z-index: 8; display: flex; flex-direction: column; min-width: 210px; background: var(--panel);
                border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); overflow: hidden; }
-  #hold-menu[hidden] { display: none; }
   #hold-menu button { border: none; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left;
                       min-height: 46px; padding: 10px 16px; font-size: 14px; }
   #hold-menu button:last-child { border-bottom: none; }
@@ -269,9 +264,6 @@
         <button type="button" id="profile-export" title="Save the profile's samples as a CSV file">Export CSV</button>
         <button type="button" id="profile-png" title="Save the plot as a PNG image">Export PNG</button>
         <button type="button" id="profile-square" title="Turn the profile square to the edge it crosses (E)">&perp; Square</button>
-      </div>
-      <div class="row">
-        <label class="inline" title="With Snap on, a marker placed on the plot, or let go there or on the image, settles on the steepest slope of the profile nearby, unless Shift (or Alt) is held. It stays where it was put when no slope there stands out of the noise, or when the slope places the edge no better than the click"><input type="checkbox" id="snap-markers" checked> snap A, B to the steepest slope</label>
         <button type="button" id="clear-markers" title="Remove the markers A and B (Ctrl+Z brings them back)" disabled>Clear A, B</button>
       </div>
       <canvas id="profile-plot"></canvas>
@@ -368,17 +360,21 @@
 
     <section id="snapping-section">
       <h2><button type="button" class="fold" aria-expanded="true">Snapping to edges</button></h2>
-      <label title="The one switch of the help with edges: a click, or a point let go, lands on the strongest edge nearby; a profile's end is squared to the edge it crosses (the option below); markers A and B settle on the steepest slope (the option in the profile window); a stroke of the contour tool places its points on the edge. Off, everything stays where it is put, and a stroke's points are as drawn. Shift (or Alt) does the same for one action"><input type="checkbox" id="snap" checked> snap to edges <kbd>S</kbd></label>
-      <label class="sub" title="With Snap on: while an end of a profile moves, a magnet holds the profile square to the edge it crosses, a traced contour it crosses or else the image's edge, turning it about its other end: it catches within 5° of square and lets go beyond 8°, and ⊥ shows that it holds (Shift: as it is; E squares a profile whatever the angle)"><input type="checkbox" id="square-profiles" checked> square profiles to the edge they cross</label>
-      <div class="grid">
-        <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
-        <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
-        <label for="median" title="Median filter before the gradient: removes isolated noisy pixels">median prefilter</label>
-        <select id="median"><option value="0">off</option><option value="3" selected>3 &times; 3</option><option value="5">5 &times; 5</option></select>
-        <label for="radius" title="Edges are searched within this distance of the click, in pixels of the corrected view; a stroke of the contour tool along an edge searches a band this far either side of it">search radius (px)</label>
-        <input type="number" inputmode="numeric" id="radius" min="2" max="300" step="1" value="12">
-        <label for="min-contrast" title="How far an edge must stand out of the noise, k: a click on flat noise snaps about as rarely as one pixel exceeds k times the median gradient of the image, so an edge must be k times the median and more, the more pixels the search covers (4 times at the default 3 and radius 12). Markers likewise ask for more than k times the noise, the more the longer their window, and the points of a stroke along an edge for more than k times the median, the more the wider their stretch of the band; squared profiles ask for k times the median">min. edge strength (&times; median)</label>
-        <input type="number" inputmode="decimal" id="min-contrast" min="1" max="100" step="0.5" value="3">
+      <label title="The one switch of the help with edges: a click, or a point let go, lands on the strongest edge nearby; a profile's end is squared to the edge it crosses; markers A and B settle on the steepest slope; a stroke of the contour tool places its points on the edge. Off, everything stays where it is put, and a stroke's points are as drawn. Shift (or Alt) does the same for one action"><input type="checkbox" id="snap" checked> snap to edges <kbd>S</kbd></label>
+      <details id="edge-settings">
+        <summary title="How the edges are found, for the snapping of clicks, the magnet of profiles, markers and strokes">edge detection</summary>
+        <div class="grid">
+          <label for="sigma" title="Width of the Gaussian average under the gradient, in pixels of the image as stored: larger is more robust to noise but merges edges closer than about twice this width">smoothing &sigma; (px)</label>
+          <input type="number" inputmode="decimal" id="sigma" min="0.5" max="20" step="0.5" value="2">
+          <label for="median" title="Median filter before the gradient: removes isolated noisy pixels">median prefilter</label>
+          <select id="median"><option value="0">off</option><option value="3" selected>3 &times; 3</option><option value="5">5 &times; 5</option></select>
+          <label for="radius" title="Edges are searched within this distance of the click, in pixels of the corrected view; a stroke of the contour tool along an edge searches a band this far either side of it">search radius (px)</label>
+          <input type="number" inputmode="numeric" id="radius" min="2" max="300" step="1" value="12">
+          <label for="min-contrast" title="How far an edge must stand out of the noise, k: a click on flat noise snaps about as rarely as one pixel exceeds k times the median gradient of the image, so an edge must be k times the median and more, the more pixels the search covers (4 times at the default 3 and radius 12). Markers likewise ask for more than k times the noise, the more the longer their window, and the points of a stroke along an edge for more than k times the median, the more the wider their stretch of the band; squared profiles ask for k times the median">min. edge strength (&times; median)</label>
+          <input type="number" inputmode="decimal" id="min-contrast" min="1" max="100" step="0.5" value="3">
+        </div>
+      </details>
+      <div id="stroke-settings" class="grid" hidden>
         <label for="edge-criterion" title="Where a stroke of the contour tool along an edge places its points, each on a profile across the edge averaged over the point spacing: the steepest slope; the threshold, a level between the grey levels on either side of the edge; or the crest of a bright line beside it">stroke points at</label>
         <select id="edge-criterion"><option value="slope" selected>steepest slope</option><option value="threshold">threshold</option><option value="peak">bright line</option></select>
         <label for="edge-level" id="edge-level-label" title="How far the threshold lies from the grey level of the dark side toward that of the bright side, each the median of the profile beyond half the search radius from the edge: 50 % is midway, more moves the points toward the bright side" hidden>threshold level (%)</label>
@@ -405,8 +401,8 @@
           <option value="tilted-surface">tilted surface</option>
           <option value="custom">custom k</option>
         </select>
-        <label for="custom-factor">custom factor k</label>
-        <input type="number" inputmode="decimal" id="custom-factor" min="0" step="any" value="1" disabled>
+        <label for="custom-factor" id="custom-factor-label" hidden>custom factor k</label>
+        <input type="number" inputmode="decimal" id="custom-factor" min="0" step="any" value="1" hidden>
         <label for="tilt-axis" title="Direction of the stage tilt axis in the image, counter-clockwise from the horizontal: 0 when the scan is aligned with it.  The correction stretches across it.">tilt axis &alpha; (&deg;)</label>
         <input type="number" inputmode="decimal" id="tilt-axis" min="-90" max="90" step="any" value="0">
         <label for="rotation" title="Turns the corrected image counter-clockwise.  Lengths and angles do not change; exported coordinates are in the turned frame.">rotation &phi; (&deg;)</label>
@@ -487,15 +483,15 @@
           <tr><td>pen</td><td>as the mouse</td></tr>
           <tr><td><kbd>N</kbd> <kbd>C</kbd></td><td>done with the selected contour: the next click of the contour tool starts a new one; close or open the selected contour</td></tr>
           <tr><td>the list under Measurements</td><td>click or tap: select one; its box, or <kbd>Ctrl</kbd>+click: add or take out; <kbd>Shift</kbd>+click: from the row clicked last; <kbd>Ctrl</kbd>+<kbd>A</kbd>: all; double click or double tap: a profile's plot, a contour's vertices; arrow keys: the next one</td></tr>
-          <tr><td>Download</td><td>a contour: its vertices (CSV) or GDS; a profile: its samples (CSV) or its plot (PNG); a ruler or an angle: its row (CSV); several: one row each, and the vertices or GDS of the contours among them; the same for all</td></tr>
+          <tr><td>Download</td><td>a contour: its vertices (CSV) or GDS; a profile: its samples (CSV) or its plot (PNG); a ruler, an angle or two lines: its row (CSV); several: one row each, and the vertices or GDS of the contours among them; any of these: the image with them drawn over it (PNG); the same for all</td></tr>
           <tr><td><kbd>H</kbd> <kbd>V</kbd></td><td>turn the image so that the selected ruler is horizontal / vertical</td></tr>
           <tr><td><kbd>S</kbd> <kbd>G</kbd></td><td>Snap on or off: all the help with edges (clicks, profiles, markers, strokes); edge map on or off</td></tr>
           <tr><td><kbd>T</kbd></td><td>show or hide the vertex window (the selected contour)</td></tr>
           <tr><td><kbd>L</kbd></td><td>show or hide the line fit window: a straight line fitted to the selected vertices, with their residuals</td></tr>
           <tr><td><kbd>P</kbd></td><td>show or hide the profile window (the selected profile); it opens by itself for a new profile, and on a double click or double tap on a profile under Measurements</td></tr>
-          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5&deg; of square while Snap and its option for profiles are on (<kbd>Shift</kbd>: not)</td></tr>
+          <tr><td><kbd>E</kbd></td><td>square the selected profile to the edge it crosses, whatever the angle; the magnet squares new and moved profiles within 5&deg; of square while Snap is on (<kbd>Shift</kbd>: not)</td></tr>
           <tr><td>drag the square of a profile</td><td>widen or narrow its band (the profile must be selected)</td></tr>
-          <tr><td>click on the profile plot</td><td>place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap and that option are on (<kbd>Shift</kbd>: as clicked); drag a marker to move it, on the plot or by its tick on the image</td></tr>
+          <tr><td>click on the profile plot</td><td>place marker A, then B, then move the nearer one; snapped to the steepest slope while Snap is on (<kbd>Shift</kbd>: as clicked); drag a marker to move it, on the plot or by its tick on the image</td></tr>
           <tr><td>touch: press and hold a point</td><td>its menu: delete, select or insert after (a vertex); delete or rename (any measurement); show the plot or square to edge (a profile)</td></tr>
           <tr><td>arrow keys</td><td>move the selected vertices by one pixel width on screen (<kbd>Shift</kbd>: ten)</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>the last point being placed; else the selected vertices, the last vertex (contour tool) or the selected measurements</td></tr>

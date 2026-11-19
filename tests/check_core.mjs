@@ -847,8 +847,8 @@ function checkSession() {
     image: IMAGE,
     frame: { pixelNm: [1.34896, 1.34896], tiltDeg: 51.996, correction: "cross-section", customFactor: 1, axisDeg: 0.5,
       rotationDeg: -1.25, originPx: [1536.5, 1024.25] },
-    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4, squareProfiles: false, snapMarkers: false,
-      edgeCriterion: "threshold", edgeLevelPct: 35, pointSpacingPx: 3.5 },
+    snap: { on: true, sigmaPx: 2.5, median: 5, radiusPx: 15, minContrast: 4, edgeCriterion: "threshold", edgeLevelPct: 35,
+      pointSpacingPx: 3.5 },
     measurements: [
       { name: "rib", kind: "contour", color: 0, closed: true, layer: [2, 5], points: [[933.79612, 853.61149], [2136.371, 853.287], [2286.437, 965.003]] },
       { name: "ruler 1", kind: "ruler", color: 1, points: [[1, 2], [3, 4]] },
@@ -863,14 +863,13 @@ function checkSession() {
   const back = api.parseSession(text);
   const ms = back.measurements;
   const older = JSON.parse(text);
-  delete older.snap.square_profiles;
-  delete older.snap.snap_markers;
+  older.snap.square_profiles = false;          // options of earlier files, left aside: Snap alone sets them now
+  older.snap.snap_markers = false;
   delete older.snap.edge_criterion;
   delete older.snap.edge_level_pct;
   delete older.snap.point_spacing_px;
   const olderSnap = api.parseSession(JSON.stringify(older)).snap;
-  const squaredByDefault = olderSnap.squareProfiles === true;
-  checkSessionMarkers(text, ms, olderSnap);
+  checkSessionMarkers(text, ms);
   check(JSON.stringify(back.frame) === JSON.stringify(session.frame) && JSON.stringify(back.snap) === JSON.stringify(session.snap)
     && kindsKept(text, ms)
     && worstOf(ms[0].points[0], [933.7961, 853.6115]) === 0 && ms[2].name === 'slab "top", left' && ms[0].closed && !ms[2].closed
@@ -881,9 +880,9 @@ function checkSession() {
     && api.parseSession(api.formatSession({ ...session, display: null, selected: -1 }, "x")).display === null
     && api.parseSession(api.formatSession({ ...session, selected: -1 }, "x")).selected === -1
     && ms.map((m) => m.color).join() === "0,1,9,3,4,5"
-    && text.includes('"square_profiles": false') && squaredByDefault && strokesKept(text, olderSnap),
-  "session round trip: frame, snap settings (squaring profiles: absent, on; strokes' points: absent, the steepest " +
-    "slope, 50 %, 5 px), the measurements in " +
+    && !text.includes("square_profiles") && !("squareProfiles" in olderSnap) && strokesKept(text, olderSnap),
+  "session round trip: frame, snap settings (the options square_profiles and snap_markers of earlier files read and " +
+    "left aside; strokes' points: absent, the steepest slope, 50 %, 5 px), the measurements in " +
     "their order with contours among them (points to 1e-4 px, closed flags, GDS layers, 1/0 by default), a profile's band " +
     "width, what two lines show, colours (absent: the place in the list), the selected one (none: -1), display levels " +
     "(absent: Auto)");
@@ -927,19 +926,16 @@ function checkSession() {
 
 /**
  * A profile's markers A, B in the session of checkSession: written as markers_px to 1e-4 px and read back; none
- * written for the other kinds of measurement; the switch that snaps them written, and on when absent.
+ * written for the other kinds of measurement.
  * @param {string} text   the session file
  * @param {Array<object>} ms   its measurements read back, the profile last
- * @param {object} olderSnap   the snap settings read from the file without square_profiles and snap_markers
  */
-function checkSessionMarkers(text, ms, olderSnap) {
+function checkSessionMarkers(text, ms) {
   const written = JSON.parse(text).measurements;
   const others = written.slice(0, -1).every((m) => !("markers_px" in m));
   check(JSON.stringify(ms[5].markers) === "[[14.1235,21],[26,24]]" && ms[1].markers === undefined && others
-    && JSON.stringify(written[5].markers_px) === "[[14.1235,21],[26,24]]" && text.includes('"snap_markers": false')
-    && olderSnap.snapMarkers === true,
-  "session: a profile's markers A, B kept as markers_px to 1e-4 px and read back, none written for other kinds; " +
-    "snapping markers written, and on when absent");
+    && JSON.stringify(written[5].markers_px) === "[[14.1235,21],[26,24]]" && !text.includes("snap_markers"),
+  "session: a profile's markers A, B kept as markers_px to 1e-4 px and read back, none written for other kinds");
 }
 
 /** The records of a GDSII file, [type, data type, data], every length checked. */
@@ -1577,8 +1573,8 @@ function gapFiles() {
   const k = api.correctionFactor(frame);
   const ms = { name: "gap 1", kind: "lines", show: "gap", color: 2, points: [[100, 50], [400, 50], [150, 150], [350, 150]] };
   const row = api.formatMeasurementFile(IMAGE, frame, [ms]).split("\n").filter((line) => line !== "" && !line.startsWith("#"))[1];
-  const session = { image: IMAGE, frame, snap: { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3,
-    squareProfiles: true, snapMarkers: true }, measurements: [ms], selected: 0, display: null };
+  const session = { image: IMAGE, frame, snap: { on: true, sigmaPx: 2, median: 3, radiusPx: 12, minContrast: 3 },
+    measurements: [ms], selected: 0, display: null };
   const text = api.formatSession(session, "2026-10-30T12:00:00.000Z");
   const back = api.parseSession(text).measurements[0];
   let refused = false;
